@@ -1,0 +1,191 @@
+# RustyCLI - Quick Start Guide
+
+## Installation
+
+### Install Rust (if not already installed)
+```bash
+brew install rustup-init
+rustup-init
+source ~/.cargo/env
+```
+
+### Build RustyCLI
+```bash
+cd /Users/thomas.delalonde/Projects/perso/rusty_cli
+cargo build --release
+```
+
+The binary will be at: `./target/release/rustycli`
+
+## Basic Usage
+
+### Start a Process (Attached Mode)
+Attached mode displays logs in real-time:
+```bash
+./target/release/rustycli start my-app --cmd "node server.js"
+```
+
+### Start a Process (Detached Mode)
+Detached mode runs in background:
+```bash
+./target/release/rustycli start my-app --cmd "node server.js" --detach
+```
+
+### With Custom Directory
+```bash
+./target/release/rustycli start my-api \
+  --cmd "python app.py" \
+  --dir /path/to/project
+```
+
+### With Environment Variables
+```bash
+./target/release/rustycli start my-service \
+  --cmd "node server.js" \
+  --env PORT=3000 \
+  --env NODE_ENV=production \
+  --detach
+```
+
+### Check Process Status
+All processes:
+```bash
+./target/release/rustycli status
+```
+
+Specific process:
+```bash
+./target/release/rustycli status my-app
+```
+
+## File Locations
+
+### Log Files
+```
+~/.rustycli/logs/<app-name>_<timestamp>.log
+```
+
+Example:
+```bash
+tail -f ~/.rustycli/logs/my-app_20251024_120000.log
+```
+
+### PID Files
+```
+~/.rustycli/pids/<app-name>.json
+```
+
+## Common Workflows
+
+### Development Server
+```bash
+# Start in attached mode to see logs
+./target/release/rustycli start dev \
+  --cmd "npm run dev" \
+  --dir ./my-project
+```
+
+### Background Service
+```bash
+# Start detached
+./target/release/rustycli start api \
+  --cmd "python api.py" \
+  --dir ./backend \
+  --env FLASK_ENV=production \
+  --detach
+
+# Check if running
+./target/release/rustycli status api
+
+# View logs
+tail -f ~/.rustycli/logs/api_*.log
+```
+
+### Multiple Services
+```bash
+# Start multiple services
+./target/release/rustycli start frontend --cmd "npm start" --dir ./frontend --detach
+./target/release/rustycli start backend --cmd "npm start" --dir ./backend --detach
+./target/release/rustycli start worker --cmd "npm start" --dir ./worker --detach
+
+# Check all
+./target/release/rustycli status
+```
+
+## Tips
+
+### Install Globally
+```bash
+cargo install --path rustycli
+rustycli --help
+```
+
+### Alias for Convenience
+Add to your `~/.zshrc`:
+```bash
+alias rcli="/Users/thomas.delalonde/Projects/perso/rusty_cli/target/release/rustycli"
+```
+
+Then use:
+```bash
+rcli start my-app --cmd "echo hello" --detach
+rcli status
+```
+
+### Complex Commands
+For commands with complex shell syntax, create a script:
+
+**scripts/start-dev.sh:**
+```bash
+#!/bin/bash
+export NODE_ENV=development
+npm install
+npm run dev
+```
+
+Then:
+```bash
+chmod +x scripts/start-dev.sh
+./target/release/rustycli start dev --cmd "./scripts/start-dev.sh" --detach
+```
+
+## Troubleshooting
+
+### Process Won't Start
+```bash
+# Check if app name is already in use
+./target/release/rustycli status my-app
+
+# Try a different name or wait for old process to finish
+```
+
+### Can't Find Logs
+```bash
+# List all log files
+ls -lh ~/.rustycli/logs/
+
+# Find specific app logs
+ls ~/.rustycli/logs/my-app_*
+```
+
+### Process Shows as Dead
+```bash
+# Status command auto-cleans dead processes
+# Just run status again, it will be removed
+./target/release/rustycli status
+```
+
+## Next Steps
+
+- Read [README.md](README.md) for full documentation
+- Check [DEVELOPMENT.md](DEVELOPMENT.md) for contributing
+- See [PROJECT_RULES.md](PROJECT_RULES.md) for architecture
+
+## Help
+
+```bash
+./target/release/rustycli --help
+./target/release/rustycli start --help
+./target/release/rustycli status --help
+```
+
