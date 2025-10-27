@@ -154,16 +154,78 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
             // Returns a Vec of missing dependency names
             let missing = check_dependencies_running(&tracker, &dependencies)?;
             
-            // If any dependencies are missing, abort
+            // If any dependencies are missing, handle based on preferences
             if !missing.is_empty() {
-                anyhow::bail!(
-                    "Missing dependencies: {}. Start them first or use --skip-deps",
-                    missing.join(", ")
-                );
+                // Check if user wants to auto-start dependencies
+                if preferences.auto_start_deps {
+                    println!("⚠ Missing dependencies: {}", missing.join(", "));
+                    println!("Starting dependencies in parallel...\n");
+                    
+                    // Collect all dependency start tasks to run in parallel
+                    // This is faster than starting them sequentially
+                    let mut tasks = Vec::new();
+                    
+                    for dep_name in &missing {
+                        // Parse "project/app" format
+                        let parts: Vec<&str> = dep_name.split('/').collect();
+                        if parts.len() == 2 {
+                            let dep_project = parts[0].to_string();
+                            let dep_app = parts[1].to_string();
+                            let env = args.env.clone();
+                            
+                            println!("→ Starting: {}/{}", dep_project, dep_app);
+                            
+                            // Show output if user preference is to see logs in terminal
+                            let show_output = !preferences.detached_mode;
+                            
+                            // Spawn async task for this dependency
+                            // Each runs independently and in parallel
+                            let task = tokio::spawn(async move {
+                                let dep_args = StartCommandArgs {
+                                    app_name: dep_app.clone(),
+                                    project: Some(dep_project.clone()),
+                                    env,
+                                    skip_deps: false,
+                                };
+                                
+                                start_dependency(dep_args, show_output).await
+                                    .map_err(|e| format!("{}/{}: {}", dep_project, dep_app, e))
+                            });
+                            
+                            tasks.push(task);
+                        }
+                    }
+                    
+                    let results = futures::future::join_all(tasks).await;
+                    
+                    let mut errors = Vec::new();
+                    for result in results {
+                        match result {
+                            Ok(Ok(_)) => {},
+                            Ok(Err(e)) => errors.push(e),
+                            Err(e) => errors.push(format!("Task failed: {}", e)),
+                        }
+                    }
+                    
+                    if !errors.is_empty() {
+                        anyhow::bail!(
+                            "Failed to start some dependencies:\n  {}",
+                            errors.join("\n  ")
+                        );
+                    }
+                    
+                    println!("\n✓ All dependencies started successfully");
+                } else {
+                    // If auto_start_deps is false, abort with an error
+                    anyhow::bail!(
+                        "Missing dependencies: {}. Start them first or use --skip-deps",
+                        missing.join(", ")
+                    );
+                }
+            } else {
+                // All dependencies are running!
+                println!("✓ All dependencies are running");
             }
-            
-            // All dependencies are running!
-            println!("✓ All dependencies are running");
         }
     }
     
@@ -203,7 +265,8 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         working_dir: working_dir.clone(),
         command: command.clone(),
         env_vars: HashMap::new(), // We don't set custom env vars (yet)
-        detached: true,            // Always run in detached mode for start command
+        detached: true,            // Always run in detached mode (with setsid)
+        show_output: !preferences.detached_mode, // Show output if not in detached mode
     };
     
     // Step 13: Display info to the user about what we're doing
@@ -263,9 +326,168 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         "✓ Process '{}' started successfully with PID {}",
         args.app_name, spawned.pid
     );
-    println!("Process is running in detached mode");
+    
+    // Display mode information based on preferences
+    if preferences.detached_mode {
+        println!("Running in background (detached mode, no terminal output)");
+    } else {
+        println!("Running in background with output streaming (use Ctrl+C to stop viewing)");
+    }
     
     // Return Ok(()) to indicate success
+    Ok(())
+}
+
+// Helper function to start a dependency in parallel
+// Dependencies are always detached (background) but may show output based on user preference
+// Args:
+//   - args: Standard start command arguments (app_name, project, env, skip_deps)
+//   - show_output: Whether to stream process output to terminal (with colored app name)
+// Returns: Result indicating success or failure
+async fn start_dependency(args: StartCommandArgs, show_output: bool) -> Result<()> {
+    // Step 1: Load configuration files (same as main start_command)
+    let config = load_config()?;
+    let preferences = load_preferences()?;
+    
+    // Step 2: Resolve which app to start
+    // This finds the app in the config based on name and optional project
+    let resolved_app = resolve_app(&config, &args.app_name, args.project.as_deref())?;
+    
+    // Step 3: Determine which environment to use
+    // Priority: args.env > preferences.default_env
+    let environment = args
+        .env
+        .clone()
+        .unwrap_or_else(|| preferences.default_env.clone());
+    
+    // Step 4: Get the commands HashMap for the selected environment
+    // Fail if the environment doesn't exist for this app
+    let commands = match environment.as_str() {
+        "local" => resolved_app.app.commands.local.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'local' environment configured",
+                args.app_name
+            )
+        })?,
+        "docker" => resolved_app.app.commands.docker.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'docker' environment configured",
+                args.app_name
+            )
+        })?,
+        _ => anyhow::bail!("Invalid environment '{}'", environment),
+    };
+    
+    // Step 5: Get the default command name for this environment
+    // Example: "start" or "serve" for local, "run" for docker
+    let default_command = match environment.as_str() {
+        "local" => resolved_app.app.defaults.local.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have a default command for 'local' environment",
+                args.app_name
+            )
+        })?,
+        "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have a default command for 'docker' environment",
+                args.app_name
+            )
+        })?,
+        _ => unreachable!(), // We already validated environment above
+    };
+    
+    // Step 6: Look up the actual command string from the commands HashMap
+    // Example: "start" → "npm run start"
+    let command = commands
+        .get(default_command)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Default command '{}' not found for app '{}'",
+                default_command,
+                args.app_name
+            )
+        })?
+        .clone();
+    
+    // Step 7: Initialize process tracker and clean up stale PIDs
+    let tracker = ProcessTracker::new()?;
+    tracker.cleanup_dead()?;
+    
+    // Step 8: Check if this dependency is already running
+    if let Some(existing) = tracker.get_process(&args.app_name)? {
+        if tracker.is_running(existing.pid) {
+            // Already running - no need to start again
+            return Ok(());
+        } else {
+            // Stale PID file - clean it up
+            tracker.remove_process(&args.app_name)?;
+        }
+    }
+    
+    // Step 9: Check if this dependency has its own dependencies
+    // (dependencies can depend on other apps too)
+    if !args.skip_deps {
+        let dependencies = resolve_dependency_chain(&config, &resolved_app)?;
+        if !dependencies.is_empty() {
+            let missing = check_dependencies_running(&tracker, &dependencies)?;
+            if !missing.is_empty() {
+                // This dependency has missing dependencies - fail
+                anyhow::bail!("Missing dependencies: {}", missing.join(", "));
+            }
+        }
+    }
+    
+    // Step 10: Expand the working directory path
+    // This handles ~ and environment variables
+    let working_dir = expand_path(&resolved_app.app.path);
+    
+    // Step 11: Verify the directory exists
+    if !working_dir.exists() {
+        anyhow::bail!("Working directory does not exist: {}", working_dir.display());
+    }
+    
+    // Step 12: Create a log file for this dependency
+    let log_writer = Arc::new(Mutex::new(FileLogger::new(&args.app_name).await?));
+    
+    // Step 13: Build process options
+    // Note: detached is always true, show_output is passed from caller
+    let options = ProcessOptions {
+        app_name: args.app_name.clone(),
+        working_dir: working_dir.clone(),
+        command: command.clone(),
+        env_vars: HashMap::new(), // No custom env vars for dependencies
+        detached: true,            // Always run detached (with setsid)
+        show_output,               // Controlled by caller based on preferences
+    };
+    
+    // Step 14: Spawn the process
+    let spawned = spawn_process(options, log_writer.clone()).await?;
+    
+    // Step 15: Wait 2 seconds and check if process is still running
+    // This catches immediate startup failures
+    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+    
+    if !tracker.is_running(spawned.pid) {
+        anyhow::bail!("Process '{}' crashed immediately", args.app_name);
+    }
+    
+    // Step 16: Register the process in the tracker
+    let process_info = ProcessInfo {
+        app_name: args.app_name.clone(),
+        pid: spawned.pid,
+        command,
+        working_dir: working_dir.to_string_lossy().to_string(),
+        start_time: Utc::now(),
+        env_vars: HashMap::new(),
+        project: Some(resolved_app.project.clone()),
+        app_config_name: Some(resolved_app.app_name.clone()),
+        environment: Some(environment),
+        command_variant: Some(default_command.clone()),
+    };
+    
+    tracker.register_process(process_info)?;
+    
+    // Step 17: Success!
     Ok(())
 }
 

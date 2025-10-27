@@ -93,3 +93,17 @@ pub fn save_preferences(prefs: &Preferences) -> Result<()> {
     
     Ok(())
 }
+
+pub fn save_config(config: &Config) -> Result<()> {
+    let config_path = get_config_path()?;
+    
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    
+    let contents = serde_json::to_string_pretty(config)?;
+    
+    fs::write(&config_path, contents)?;
+    
+    Ok(())
+}

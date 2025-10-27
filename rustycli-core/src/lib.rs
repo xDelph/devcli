@@ -3,6 +3,7 @@
 
 pub mod commands;
 pub mod config;
+pub mod detection;
 pub mod logging;
 pub mod process;
 pub mod utils;

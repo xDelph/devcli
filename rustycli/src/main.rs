@@ -10,8 +10,8 @@ use clap::{Parser, Subcommand};
 
 // Import our command implementations from the core library
 use rustycli_core::commands::{
-    config_edit, config_init, config_list, config_show, config_validate, pref_reset, pref_set,
-    pref_show, run_command, start_command, status_command,
+    auto_add_command, config_edit, config_init, config_list, config_show, config_validate,
+    pref_reset, pref_set, pref_show, run_command, start_command, status_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -86,6 +86,12 @@ enum Commands {
         
         #[arg(long, help = "Show dependency status")]
         deps: bool, // Boolean flag: --deps
+    },
+    
+    #[command(about = "Auto-detect and add app to config")]
+    AutoAdd {
+        #[arg(long, help = "Path to detect (defaults to current directory)")]
+        path: Option<String>,
     },
     
     // The "config" subcommand with nested subcommands
@@ -237,6 +243,10 @@ async fn run() -> Result<()> {
                 show_deps: deps, // Note: rename deps → show_deps
             };
             status_command(args).await?;
+        }
+        
+        Commands::AutoAdd { path } => {
+            auto_add_command(path).await?;
         }
         
         // Handle the "config" command and its subcommands

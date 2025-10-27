@@ -115,6 +115,18 @@ pub struct Preferences {
     // #[serde(default = "default_env")] = call default_env() if missing in JSON
     #[serde(default = "default_env")]
     pub default_env: String,
+    
+    // Whether processes show output in terminal (false) or run silently (true)
+    // Note: All processes are detached (survive Ctrl+C), this only controls visibility
+    // false = show colored output in terminal, true = silent background
+    #[serde(default = "default_detached")]
+    pub detached_mode: bool,
+    
+    // Whether to automatically start missing dependencies without prompting
+    // true = auto-start dependencies when needed
+    // false = error and require manual start or --skip-deps flag
+    #[serde(default = "default_auto_start_deps")]
+    pub auto_start_deps: bool,
 }
 
 // Helper function called by serde when default_env is missing from JSON
@@ -123,12 +135,24 @@ fn default_env() -> String {
     "local".to_string()
 }
 
+// Helper function: default is true (silent background mode)
+fn default_detached() -> bool {
+    true
+}
+
+// Helper function: default is true (auto-start dependencies)
+fn default_auto_start_deps() -> bool {
+    true
+}
+
 // Implement the Default trait for Preferences
 // This allows creating a Preferences with default values using Preferences::default()
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             default_env: "local".to_string(),
+            detached_mode: true,
+            auto_start_deps: true,
         }
     }
 }

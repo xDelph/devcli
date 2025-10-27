@@ -148,7 +148,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         working_dir: working_dir.clone(),
         command: command.clone(),
         env_vars: HashMap::new(),
-        detached: true, // Always detached
+        detached: true, // Always detached (with setsid)
+        show_output: !preferences.detached_mode, // Show output based on preference
     };
     
     // Display what we're doing
