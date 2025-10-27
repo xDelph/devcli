@@ -28,10 +28,12 @@ impl FileLogger {
             .await
             .context("Failed to create log directory")?;
 
-        // Get current time and format it: 20251024_103045
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-        // Create filename: my-app_20251024_103045.log
-        let filename = format!("{}_{}.log", app_name, timestamp);
+        // Get current date (no time) to have one log file per day
+        // Format: 20251024
+        let date = Utc::now().format("%Y%m%d");
+        // Create filename: my-app_20251024.log
+        // Multiple starts of same app on same day will append to this file
+        let filename = format!("{}_{}.log", app_name, date);
         // Full path to the log file
         let log_path = log_dir.join(filename);
 

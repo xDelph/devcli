@@ -11,12 +11,20 @@ use std::path::PathBuf; // Cross-platform file path handling
 // This data gets saved to ~/.rustycli/pids/<app-name>.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
-    pub app_name: String,                  // Name identifying this process
-    pub pid: u32,                          // Process ID from the OS
-    pub command: String,                   // Command that was executed
-    pub working_dir: String,               // Directory where process runs
-    pub start_time: DateTime<Utc>,         // When the process was started (UTC timezone)
-    pub env_vars: HashMap<String, String>, // Environment variables passed to process
+    pub app_name: String,
+    pub pid: u32,
+    pub command: String,
+    pub working_dir: String,
+    pub start_time: DateTime<Utc>,
+    pub env_vars: HashMap<String, String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub app_config_name: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
+    #[serde(default)]
+    pub command_variant: Option<String>,
 }
 
 // Manages tracking of spawned processes via PID files

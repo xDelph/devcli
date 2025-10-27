@@ -1,15 +1,16 @@
 # RustyCLI
 
-A powerful command-line interface for managing spawned processes with advanced logging and process tracking capabilities.
+A powerful command-line interface for managing spawned processes with config-based management, dependency resolution, and advanced process tracking.
 
 ## Overview
 
 RustyCLI is a modular process management tool that allows you to:
-- Spawn and manage child processes with ease
-- Run processes in attached or detached mode
+- Manage processes through a centralized configuration file
+- Define and resolve process dependencies automatically
+- Run processes in local or Docker environments
 - Track running processes with persistent state
 - Access detailed logs for all spawned processes
-- Monitor process status and uptime
+- Monitor process status and uptime grouped by project
 
 ## Installation
 
@@ -47,84 +48,222 @@ Optionally, install it globally:
 cargo install --path rustycli
 ```
 
+## Getting Started
+
+### 1. Initialize Configuration
+
+Create a configuration file in `~/.rustycli/config.json`:
+
+```bash
+rustycli config init
+```
+
+This creates a template configuration that you can edit.
+
+### 2. Edit Configuration
+
+Edit your config file:
+
+```bash
+rustycli config edit
+```
+
+Example configuration structure:
+
+```json
+{
+  "projects": {
+    "my-project": {
+      "apps": {
+        "api": {
+          "type": "nodejs",
+          "path": "~/Projects/my-project/api",
+          "commands": {
+            "local": {
+              "start": "npm start",
+              "test": "npm test",
+              "build": "npm run build"
+            },
+            "docker": {
+              "build": "docker build -t my-api .",
+              "run": "docker run --name my-api -p 3000:3000 --rm my-api"
+            }
+          },
+          "dependencies": [],
+          "defaults": {
+            "local": "start",
+            "docker": "run"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 3. Validate Configuration
+
+Check your configuration is valid:
+
+```bash
+rustycli config validate
+```
+
+### 4. Set Preferences
+
+Set your default environment (local or docker):
+
+```bash
+rustycli pref set default-env local
+```
+
 ## Usage
 
-### Starting a Process
+### Starting Processes
 
-Start a process in attached mode (displays logs in real-time):
-
-```bash
-rustycli start my-app --cmd "npm start" --dir ./my-project
-```
-
-Start a process in detached mode (runs in background):
+Start a process using its default command:
 
 ```bash
-rustycli start my-api --cmd "node server.js" --dir ./api --detach
+rustycli start api
 ```
 
-With environment variables:
+Start with a specific environment:
 
 ```bash
-rustycli start my-service \
-  --cmd "python app.py" \
-  --dir ./service \
-  --env PORT=8080 \
-  --env ENV=production \
-  --detach
+rustycli start api --env docker
 ```
 
-### Checking Process Status
+If app names are ambiguous across projects, specify the project:
 
-View all running processes:
+```bash
+rustycli start api --project my-project
+```
+
+### Running Specific Commands
+
+Run a specific command variant:
+
+```bash
+rustycli run api build
+rustycli run api test
+```
+
+With environment override:
+
+```bash
+rustycli run api build --env docker
+```
+
+### Checking Status
+
+View all running processes grouped by project:
 
 ```bash
 rustycli status
 ```
 
-Check a specific process:
+Filter by project:
 
 ```bash
-rustycli status my-app
+rustycli status --project my-project
+```
+
+Show a specific app with its dependencies:
+
+```bash
+rustycli status api --deps
 ```
 
 Example output:
 
 ```
-APP NAME             PID        STATUS       UPTIME          COMMAND
-====================================================================================================
-my-app               12345      running      2h 15m          npm start
-my-api               12346      running      5m              node server.js
+PROJECT: my-project
+  [api] (local)  PID: 12345  running  2h 15m  npm start
+  [worker] (local)  PID: 12346  running  1h 30m  npm run worker
+
+PROJECT: other-project
+  [frontend] (local)  PID: 12347  running  45m  npm run dev
 ```
 
-## Known Limitations
+### Configuration Management
 
-### Command Parsing
-Currently, the CLI uses simple whitespace-based command parsing. Complex shell commands with nested quotes may not work as expected. 
+List all projects and apps:
 
-**Workaround**: Create a shell script for complex commands and call it directly:
 ```bash
-rustycli start my-app --cmd "./scripts/start.sh"
+rustycli config list
 ```
 
-This will be improved in a future version with proper shell argument parsing.
+List apps only:
+
+```bash
+rustycli config list --apps-only
+```
+
+Show details of a specific app:
+
+```bash
+rustycli config show api
+```
+
+### Preferences Management
+
+Show current preferences:
+
+```bash
+rustycli pref show
+```
+
+Set default environment:
+
+```bash
+rustycli pref set default-env docker
+```
+
+Reset preferences to defaults:
+
+```bash
+rustycli pref reset
+```
 
 ## Features
 
-### Attached Mode
+### Config-Based Management
 
-When starting a process without `--detach`, the CLI will:
-- Display real-time logs with labels `[app-name][stdout/stderr]`
-- Wait for the process to complete
-- Allow you to stop it with Ctrl+C
+All processes are defined in `~/.rustycli/config.json`:
+- Centralized configuration for all projects and apps
+- Support for multiple environments (local, docker)
+- Default commands per environment
+- Path expansion for home directory (~) and environment variables
 
-### Detached Mode
+### Dependency Resolution
 
-With the `--detach` flag:
-- Process runs independently in the background
-- Parent CLI exits immediately after spawning
-- Process continues even if terminal is closed
-- PID is tracked for later management
+Define dependencies between apps:
+
+```json
+{
+  "dependencies": [
+    {"project": "infrastructure", "app": "redis"},
+    {"project": "infrastructure", "app": "traefik"}
+  ]
+}
+```
+
+RustyCLI will:
+- Check dependencies are running before starting an app
+- Detect circular dependencies
+- Provide clear error messages for missing dependencies
+
+### Multi-Environment Support
+
+Define separate commands for different environments:
+- `local`: Commands for local development
+- `docker`: Commands for Docker containers
+
+Set your preferred environment once, or override per command.
+
+### Project Grouping
+
+Status command groups processes by project for better organization. Processes without config metadata are shown in "UNGROUPED" section.
 
 ### Log Management
 
@@ -147,6 +286,9 @@ This includes:
 - Command and working directory
 - Environment variables
 - Start time
+- Project and app metadata
+- Environment type (local/docker)
+- Command variant used
 
 ## Architecture
 
@@ -160,27 +302,30 @@ rusty_cli/
 │   └── src/main.rs     # Command routing and argument parsing
 └── rustycli-core/      # Library crate (core functionality)
     └── src/
+        ├── config/     # Configuration management
         ├── process/    # Process spawning and tracking
         ├── logging/    # Log file management
-        └── commands/   # Command implementations
+        ├── commands/   # Command implementations
+        └── utils/      # Utility functions (path expansion)
 ```
 
 ### Core Modules
 
+- **Config Manager**: Loads and validates configuration files
+- **Dependency Resolver**: Resolves and checks app dependencies
 - **Process Spawner**: Handles process creation with configurable options
 - **Process Tracker**: Manages PID tracking and process state persistence
 - **File Logger**: Manages log files with timestamps
-- **Commands**: Implements `start` and `status` commands
+- **Commands**: Implements start, run, status, config, and pref commands
 
 ## Future Roadmap
 
 Upcoming features include:
-- **Config Management**: Store app configurations in files
 - **Process Control**: `stop`, `restart`, and `kill` commands
 - **Enhanced Monitoring**: CPU/memory usage tracking
 - **Log Visualization**: Interactive log viewer and search
 - **Terminal Dashboard**: Real-time process monitoring UI
-- **Multi-app Management**: Start/stop multiple apps as groups
+- **Multi-app Management**: Start/stop multiple apps as groups with one command
 
 ## Development
 
@@ -189,4 +334,3 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for development guidelines and architecture
 ## License
 
 MIT
-

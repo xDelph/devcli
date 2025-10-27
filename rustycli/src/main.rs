@@ -1,14 +1,19 @@
 // This is the entry point for the rustycli binary
 // It handles CLI argument parsing and routes to the appropriate command
+//
+// Architecture:
+// main() → parse CLI args → match command → call command function
 
 // Import the clap library for CLI argument parsing
 // Parser and Subcommand are "derive macros" - they generate code for us
 use clap::{Parser, Subcommand};
+
 // Import our command implementations from the core library
-use rustycli_core::commands::{start_command, status_command};
+use rustycli_core::commands::{
+    config_edit, config_init, config_list, config_show, config_validate, pref_reset, pref_set,
+    pref_show, run_command, start_command, status_command,
+};
 use rustycli_core::Result; // Our error handling type
-use std::collections::HashMap; // For environment variables
-use std::path::PathBuf; // For file paths
 
 // Main CLI structure
 // #[derive(Parser)] automatically implements argument parsing
@@ -18,61 +23,138 @@ use std::path::PathBuf; // For file paths
 #[command(about = "A powerful CLI for managing spawned processes", long_about = None)]
 #[command(version)] // Automatically adds --version flag
 struct Cli {
-    // The command to run (start, status, etc.)
+    // The command to run (start, run, status, config, pref)
     #[command(subcommand)]
     command: Commands,
 }
 
 // Define the available subcommands
 // enum in Rust is like a "union" - it can be one of several variants
+// Each variant can have its own fields (like a struct)
 #[derive(Subcommand)]
 enum Commands {
     // The "start" subcommand
-    #[command(about = "Start a new process")]
+    // Example: rustycli start api-private --env docker
+    #[command(about = "Start a process using config")]
     Start {
         // Each field becomes a CLI argument
         // #[arg(...)] configures how it's parsed
-        #[arg(help = "Name of the application/process")]
+        
+        #[arg(help = "Name of the application/process from config")]
         app_name: String, // Required positional argument
-
-        #[arg(short = 'd', long, help = "Working directory for the process")]
-        dir: Option<PathBuf>, // Optional flag: --dir or -d
-        // Option<T> means it might be Some(value) or None
-        #[arg(short = 'c', long, help = "Command to execute")]
-        cmd: String, // Required flag: --cmd or -c
-
-        #[arg(short = 'e', long, help = "Environment variables (KEY=VALUE)", value_parser = parse_key_val)]
-        env: Vec<(String, String)>, // Can be specified multiple times
-        // Vec<(String, String)> is a list of (key, value) tuples
-        #[arg(long, help = "Run process in detached mode")]
-        detach: bool, // Boolean flag: --detach (no value needed)
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>, // Optional flag: --project or -p
+        // Option<String> means it might be Some("value") or None
+        
+        #[arg(short, long, help = "Environment: 'local' or 'docker' (overrides preference)")]
+        env: Option<String>, // Optional flag: --env or -e
+        
+        #[arg(long, help = "Skip dependency checks")]
+        skip_deps: bool, // Boolean flag: --skip-deps (no value needed)
     },
-
+    
+    // The "run" subcommand
+    // Example: rustycli run api-private build:production
+    #[command(about = "Run a specific command variant for an app")]
+    Run {
+        #[arg(help = "Name of the application/process from config")]
+        app_name: String,
+        
+        #[arg(help = "Command variant to run (e.g., 'build:production', 'test:apps')")]
+        command_variant: String, // Required positional argument
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+        
+        #[arg(short, long, help = "Environment: 'local' or 'docker' (overrides preference)")]
+        env: Option<String>,
+        
+        #[arg(long, help = "Skip dependency checks")]
+        skip_deps: bool,
+    },
+    
     // The "status" subcommand
+    // Example: rustycli status --project qm --deps
     #[command(about = "Show status of running processes")]
     Status {
         #[arg(help = "Optional: specific app name to check")]
         app_name: Option<String>, // Optional positional argument
+        
+        #[arg(short, long, help = "Filter by project name")]
+        project: Option<String>,
+        
+        #[arg(long, help = "Show dependency status")]
+        deps: bool, // Boolean flag: --deps
+    },
+    
+    // The "config" subcommand with nested subcommands
+    // Example: rustycli config validate
+    #[command(about = "Manage configuration")]
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction, // Nested subcommands (init, validate, etc.)
+    },
+    
+    // The "pref" subcommand with nested subcommands
+    // Example: rustycli pref set default-env local
+    #[command(about = "Manage preferences")]
+    Pref {
+        #[command(subcommand)]
+        action: PrefAction, // Nested subcommands (set, show, reset)
     },
 }
 
-// Helper function to parse KEY=VALUE strings
-// Used by the --env flag
-// &str is a string slice (borrowed reference to a string)
-fn parse_key_val(s: &str) -> Result<(String, String)> {
-    // Split on '=' character, limit to 2 parts
-    // This handles cases like "KEY=VALUE=WITH=EQUALS"
-    let parts: Vec<&str> = s.splitn(2, '=').collect();
+// Nested subcommands for "config"
+// Each becomes: rustycli config <action>
+#[derive(Subcommand)]
+enum ConfigAction {
+    #[command(about = "Initialize a new config file")]
+    Init, // No arguments
+    
+    #[command(about = "Validate the config file")]
+    Validate, // No arguments
+    
+    #[command(about = "List all projects and apps")]
+    List {
+        #[arg(short, long, help = "Filter by project name")]
+        project: Option<String>,
+        
+        #[arg(long, help = "Show only app names")]
+        apps_only: bool,
+    },
+    
+    #[command(about = "Show details of a specific app")]
+    Show {
+        #[arg(help = "App name to show")]
+        app_name: String,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
+    
+    #[command(about = "Edit the config file")]
+    Edit, // No arguments
+}
 
-    // Validate we got exactly 2 parts
-    if parts.len() != 2 {
-        // If not, return an error
-        anyhow::bail!("Environment variable must be in KEY=VALUE format");
-    }
-
-    // Convert &str to String and return as tuple
-    // (key, value)
-    Ok((parts[0].to_string(), parts[1].to_string()))
+// Nested subcommands for "pref"
+// Each becomes: rustycli pref <action>
+#[derive(Subcommand)]
+enum PrefAction {
+    #[command(about = "Set a preference value")]
+    Set {
+        #[arg(help = "Preference key (e.g., 'default-env')")]
+        key: String,
+        
+        #[arg(help = "Preference value")]
+        value: String,
+    },
+    
+    #[command(about = "Show current preferences")]
+    Show, // No arguments
+    
+    #[command(about = "Reset preferences to defaults")]
+    Reset, // No arguments
 }
 
 // Main entry point for the program
@@ -97,52 +179,84 @@ async fn run() -> Result<()> {
     // Parse command-line arguments into our Cli struct
     // This automatically handles --help, --version, validation, etc.
     let cli = Cli::parse();
-
+    
     // Match on which command was provided
     // This is like a switch statement but more powerful
     match cli.command {
+        // Handle the "start" command
         Commands::Start {
             app_name,
-            dir,
-            cmd,
+            project,
             env,
-            detach,
+            skip_deps,
         } => {
-            // If no directory was provided, use current directory
-            // unwrap_or_else takes a closure (anonymous function) for lazy evaluation
-            let working_dir = dir.unwrap_or_else(|| {
-                // Get current directory or panic if it fails
-                // expect() is like unwrap() but with a custom error message
-                std::env::current_dir().expect("Failed to get current directory")
-            });
-
-            // Convert Vec<(String, String)> to HashMap<String, String>
-            // into_iter() consumes the Vec (takes ownership)
-            // .collect() gathers the pairs into a HashMap
-            let env_vars: HashMap<String, String> = env.into_iter().collect();
-
-            // Build the arguments struct for start_command
+            // Bundle the arguments into a struct
+            // This is the pattern we use: CLI args → struct → command function
             let args = rustycli_core::commands::start::StartCommandArgs {
                 app_name,
-                working_dir,
-                command: cmd, // 'cmd' from CLI becomes 'command' in struct
-                env_vars,
-                detached: detach,
+                project,
+                env,
+                skip_deps,
             };
-
+            
             // Call the start command from our core library
             // .await waits for the async function to complete
             // ? returns any error immediately
             start_command(args).await?;
         }
-
-        Commands::Status { app_name } => {
-            // Call the status command
-            // app_name is already Option<String>, so we just pass it
-            status_command(app_name).await?;
+        
+        // Handle the "run" command
+        Commands::Run {
+            app_name,
+            command_variant,
+            project,
+            env,
+            skip_deps,
+        } => {
+            // Same pattern: bundle args into struct, call command
+            let args = rustycli_core::commands::run::RunCommandArgs {
+                app_name,
+                command_variant,
+                project,
+                env,
+                skip_deps,
+            };
+            run_command(args).await?;
         }
+        
+        // Handle the "status" command
+        Commands::Status {
+            app_name,
+            project,
+            deps,
+        } => {
+            // Bundle args and call status command
+            let args = rustycli_core::commands::status::StatusCommandArgs {
+                app_name,
+                project,
+                show_deps: deps, // Note: rename deps → show_deps
+            };
+            status_command(args).await?;
+        }
+        
+        // Handle the "config" command and its subcommands
+        Commands::Config { action } => match action {
+            // Each nested command calls its corresponding function
+            ConfigAction::Init => config_init().await?,
+            ConfigAction::Validate => config_validate().await?,
+            ConfigAction::List { project, apps_only } => config_list(project, apps_only).await?,
+            ConfigAction::Show { app_name, project } => config_show(app_name, project).await?,
+            ConfigAction::Edit => config_edit().await?,
+        },
+        
+        // Handle the "pref" command and its subcommands
+        Commands::Pref { action } => match action {
+            PrefAction::Set { key, value } => pref_set(key, value).await?,
+            PrefAction::Show => pref_show().await?,
+            PrefAction::Reset => pref_reset().await?,
+        },
     }
-
+    
     // Return Ok(()) to indicate success
     Ok(())
 }
