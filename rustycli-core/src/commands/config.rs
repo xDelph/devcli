@@ -302,11 +302,12 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                 println!("    Path: {}", app.path);
                 
                 // Show default commands (if configured)
-                let local_default = app.defaults.local.as_ref().map(|s| s.as_str()).unwrap_or("none");
-                let docker_default = app.defaults.docker.as_ref().map(|s| s.as_str()).unwrap_or("none");
+                let local_default = app.defaults.local.as_deref().unwrap_or("none");
+                let docker_default = app.defaults.docker.as_deref().unwrap_or("none");
+                let k8s_default = app.defaults.k8s.as_deref().unwrap_or("none");
                 println!(
-                    "    Defaults: local='{}', docker='{}'",
-                    local_default, docker_default
+                    "    Defaults: local='{}', docker='{}', k8s='{}'",
+                    local_default, docker_default, k8s_default
                 );
                 
                 // Show dependencies if any

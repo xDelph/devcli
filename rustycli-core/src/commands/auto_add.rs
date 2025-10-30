@@ -114,11 +114,13 @@ async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
             commands: Commands {
                 local: detected.local_commands.clone(),
                 docker: detected.docker_commands.clone(),
+                k8s: detected.k8s_commands.clone(),
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
+                k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
         };
         
@@ -333,11 +335,13 @@ fn add_to_config(
         commands: Commands {
             local: detected.local_commands,
             docker: detected.docker_commands,
+            k8s: detected.k8s_commands.clone(),
         },
         dependencies: Vec::new(), // No dependencies detected automatically (user must add manually)
         defaults: Defaults {
             local: detected.suggested_local_default,
             docker: detected.suggested_docker_default,
+            k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
     };
     

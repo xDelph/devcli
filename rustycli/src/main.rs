@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 // Import our command implementations from the core library
 use rustycli_core::commands::{
     auto_add_command, config_edit, config_init, config_list, config_show, config_validate,
-    pref_reset, pref_set, pref_show, run_command, start_command, status_command,
+    monitor_command, pref_reset, pref_set, pref_show, run_command, start_command, status_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -47,7 +47,7 @@ enum Commands {
         project: Option<String>, // Optional flag: --project or -p
         // Option<String> means it might be Some("value") or None
         
-        #[arg(short, long, help = "Environment: 'local' or 'docker' (overrides preference)")]
+        #[arg(short, long, help = "Environment: 'local', 'docker', or 'k8s' (overrides preference)")]
         env: Option<String>, // Optional flag: --env or -e
         
         #[arg(long, help = "Skip dependency checks")]
@@ -67,7 +67,7 @@ enum Commands {
         #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
         project: Option<String>,
         
-        #[arg(short, long, help = "Environment: 'local' or 'docker' (overrides preference)")]
+        #[arg(short, long, help = "Environment: 'local', 'docker', or 'k8s' (overrides preference)")]
         env: Option<String>,
         
         #[arg(long, help = "Skip dependency checks")]
@@ -92,6 +92,14 @@ enum Commands {
     AutoAdd {
         #[arg(long, help = "Path to detect (defaults to current directory)")]
         path: Option<String>,
+    },
+    
+    // The "monitor" subcommand
+    // Example: rustycli monitor --daemon (internal use, spawned automatically)
+    #[command(about = "Monitor process health (internal use)")]
+    Monitor {
+        #[arg(long, help = "Run as background daemon")]
+        daemon: bool,
     },
     
     // The "config" subcommand with nested subcommands
@@ -247,6 +255,11 @@ async fn run() -> Result<()> {
         
         Commands::AutoAdd { path } => {
             auto_add_command(path).await?;
+        }
+        
+        // Handle the "monitor" command
+        Commands::Monitor { daemon } => {
+            monitor_command(daemon).await?;
         }
         
         // Handle the "config" command and its subcommands

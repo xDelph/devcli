@@ -185,6 +185,7 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     
     // Initialize first column: distance from empty string to prefixes of s1
     // matrix[i][0] = i (need i deletions)
+    #[allow(clippy::needless_range_loop)]
     for i in 0..=len1 {
         matrix[i][0] = i;
     }

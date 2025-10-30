@@ -59,8 +59,15 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                 get_available_environments(&resolved_app.app)
             )
         })?,
+        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'k8s' environment configured. Available: {}",
+                args.app_name,
+                get_available_environments(&resolved_app.app)
+            )
+        })?,
         _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local' or 'docker'.",
+            "Invalid environment '{}'. Must be 'local', 'docker', or 'k8s'.",
             environment
         ),
     };
@@ -202,6 +209,11 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         process_name, spawned.pid
     );
     
+    // Ensure background monitor is running
+    // The monitor keeps process status up-to-date and cleans up dead processes
+    let binary_path = crate::process::monitor::get_rustycli_binary_path()?;
+    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
+    
     Ok(())
 }
 
@@ -215,6 +227,9 @@ fn get_available_environments(app: &crate::config::models::App) -> String {
     }
     if app.commands.docker.is_some() {
         envs.push("docker");
+    }
+    if app.commands.k8s.is_some() {
+        envs.push("k8s");
     }
     
     if envs.is_empty() {

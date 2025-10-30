@@ -55,12 +55,12 @@ pub struct App {
 }
 
 // Commands for different environments
-// Example: { "local": { "start": "npm start", "test": "npm test" }, "docker": {...} }
+// Example: { "local": { "start": "npm start" }, "docker": {...}, "k8s": {...} }
 // An app can have ANY combination of environments - doesn't need all of them
 // Examples:
 //   - Only local: { "local": {...} }
 //   - Only docker: { "docker": {...} }
-//   - Both: { "local": {...}, "docker": {...} }
+//   - All three: { "local": {...}, "docker": {...}, "k8s": {...} }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commands {
     // Local development commands (run directly on your machine)
@@ -76,6 +76,13 @@ pub struct Commands {
     // OPTIONAL: Not all apps need docker commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<HashMap<String, String>>,
+    
+    // Kubernetes commands (deploy to k8s cluster)
+    // Key = command name (e.g., "apply", "delete", "restart")
+    // Value = kubectl command (e.g., "kubectl apply -f k8s/")
+    // OPTIONAL: Not all apps need k8s commands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k8s: Option<HashMap<String, String>>,
 }
 
 // Represents a dependency on another app
@@ -91,7 +98,7 @@ pub struct Dependency {
 
 // Default command names to use when starting an app
 // Points to command names defined in the Commands struct
-// Example: { "local": "start", "docker": "run" }
+// Example: { "local": "start", "docker": "run", "k8s": "apply" }
 // Only needs defaults for environments that have commands defined
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Defaults {
@@ -104,6 +111,11 @@ pub struct Defaults {
     // OPTIONAL: Only needed if app has docker commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<String>,
+    
+    // Default command for k8s environment (must exist in commands.k8s if provided)
+    // OPTIONAL: Only needed if app has k8s commands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k8s: Option<String>,
 }
 
 // User preferences stored in ~/.rustycli/preferences.json
@@ -135,9 +147,10 @@ fn default_env() -> String {
     "local".to_string()
 }
 
-// Helper function: default is true (silent background mode)
+// Helper function: default is false (show output in terminal)
+// This allows users to see what's happening by default
 fn default_detached() -> bool {
-    true
+    false
 }
 
 // Helper function: default is true (auto-start dependencies)
@@ -151,7 +164,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             default_env: "local".to_string(),
-            detached_mode: true,
+            detached_mode: false,
             auto_start_deps: true,
         }
     }

@@ -6,6 +6,11 @@
 // 1. App Type Detection: What is the app? (nodejs, nx, python, etc.)
 // 2. Environment Detection: How can we run it? (local commands, docker, k8s)
 
+mod dockerfile;
+
+#[cfg(test)]
+mod tests;
+
 use crate::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -279,7 +284,7 @@ fn extract_app_name(path: &Path, app_type: &str) -> Result<String> {
                     // Handle scoped packages like "@scope/package-name"
                     // We only want the "package-name" part
                     if name.contains('/') {
-                        if let Some(short_name) = name.split('/').last() {
+                        if let Some(short_name) = name.split('/').next_back() {
                             return Ok(short_name.to_string());
                         }
                     }
@@ -381,6 +386,7 @@ fn detect_local_commands(path: &Path, app_type: &str) -> Result<Option<HashMap<S
 // Phase 2b: Detect Docker commands if Dockerfile exists
 // Searches for Dockerfile up to 2 levels deep
 // Generates build/run/stop commands based on app type
+// For multi-stage Dockerfiles, generates commands for each stage
 // Args:
 //   - path: App directory
 //   - app_type: The detected app type (affects port mappings)
@@ -401,7 +407,36 @@ fn detect_docker_commands(path: &Path, app_type: &str) -> Result<Option<HashMap<
         .and_then(|n| n.to_str())
         .unwrap_or("app");
     
-    // Always add a build command
+    let dockerfile_path = dockerfile.as_ref().unwrap();
+    
+    // Check if this is a multi-stage build
+    let stages = dockerfile::parse_dockerfile(dockerfile_path).unwrap_or_default();
+    
+    if !stages.is_empty() {
+        // Multi-stage Dockerfile detected!
+        // Generate commands for each stage
+        for stage in &stages {
+            let stage_name = &stage.name;
+            
+            // Build command for this specific stage
+            // Example: docker build --target test -t myapp:test .
+            commands.insert(
+                stage_name.clone(),
+                format!("docker build --target {} -t {}:{} .", stage_name, app_name, stage_name),
+            );
+            
+            // For test stages, also add a run command
+            // This allows running tests in the container
+            if stage_name.to_lowercase().contains("test") {
+                commands.insert(
+                    format!("{}-run", stage_name),
+                    format!("docker run --rm {}:{}", app_name, stage_name),
+                );
+            }
+        }
+    }
+    
+    // Always add a general build command (builds the final stage)
     commands.insert("build".to_string(), format!("docker build -t {} .", app_name));
     
     // Add run command with appropriate port mappings based on app type

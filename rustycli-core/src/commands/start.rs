@@ -69,8 +69,15 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
                 get_available_environments(&resolved_app.app)
             )
         })?,
+        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'k8s' environment configured. Available: {}",
+                args.app_name,
+                get_available_environments(&resolved_app.app)
+            )
+        })?,
         _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local' or 'docker'.",
+            "Invalid environment '{}'. Must be 'local', 'docker', or 'k8s'.",
             environment
         ),
     };
@@ -88,6 +95,12 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "App '{}' does not have a default command for 'docker' environment",
+                args.app_name
+            )
+        })?,
+        "k8s" => resolved_app.app.defaults.k8s.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have a default command for 'k8s' environment",
                 args.app_name
             )
         })?,
@@ -171,7 +184,8 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
                         if parts.len() == 2 {
                             let dep_project = parts[0].to_string();
                             let dep_app = parts[1].to_string();
-                            let env = args.env.clone();
+                            // Dependencies inherit the parent's resolved environment
+                            let env = environment.clone();
                             
                             println!("→ Starting: {}/{}", dep_project, dep_app);
                             
@@ -184,7 +198,7 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
                                 let dep_args = StartCommandArgs {
                                     app_name: dep_app.clone(),
                                     project: Some(dep_project.clone()),
-                                    env,
+                                    env: Some(env),
                                     skip_deps: false,
                                 };
                                 
@@ -334,6 +348,11 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         println!("Running in background with output streaming (use Ctrl+C to stop viewing)");
     }
     
+    // Step 18: Ensure background monitor is running
+    // The monitor keeps process status up-to-date and cleans up dead processes
+    let binary_path = crate::process::monitor::get_rustycli_binary_path()?;
+    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
+    
     // Return Ok(()) to indicate success
     Ok(())
 }
@@ -375,11 +394,17 @@ async fn start_dependency(args: StartCommandArgs, show_output: bool) -> Result<(
                 args.app_name
             )
         })?,
+        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'k8s' environment configured",
+                args.app_name
+            )
+        })?,
         _ => anyhow::bail!("Invalid environment '{}'", environment),
     };
     
     // Step 5: Get the default command name for this environment
-    // Example: "start" or "serve" for local, "run" for docker
+    // Example: "start" or "serve" for local, "run" for docker, "apply" for k8s
     let default_command = match environment.as_str() {
         "local" => resolved_app.app.defaults.local.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -390,6 +415,12 @@ async fn start_dependency(args: StartCommandArgs, show_output: bool) -> Result<(
         "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "App '{}' does not have a default command for 'docker' environment",
+                args.app_name
+            )
+        })?,
+        "k8s" => resolved_app.app.defaults.k8s.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have a default command for 'k8s' environment",
                 args.app_name
             )
         })?,
@@ -487,7 +518,12 @@ async fn start_dependency(args: StartCommandArgs, show_output: bool) -> Result<(
     
     tracker.register_process(process_info)?;
     
-    // Step 17: Success!
+    // Step 17: Ensure background monitor is running
+    // The monitor keeps process status up-to-date and cleans up dead processes
+    let binary_path = crate::process::monitor::get_rustycli_binary_path()?;
+    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
+    
+    // Step 18: Success!
     Ok(())
 }
 
@@ -502,6 +538,9 @@ fn get_available_environments(app: &crate::config::models::App) -> String {
     }
     if app.commands.docker.is_some() {
         envs.push("docker");
+    }
+    if app.commands.k8s.is_some() {
+        envs.push("k8s");
     }
     
     // Return as comma-separated string, or "none" if empty
