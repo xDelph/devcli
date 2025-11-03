@@ -234,6 +234,7 @@ async fn run() -> Result<()> {
     // This is like a switch statement but more powerful
     match cli.command {
         // Handle the "start" command
+        // Supports multiple app names (e.g., rustycli start redis.local traefik.local)
         Commands::Start {
             app_names,
             project,
@@ -242,8 +243,9 @@ async fn run() -> Result<()> {
         } => {
             // Bundle the arguments into a struct
             // This is the pattern we use: CLI args → struct → command function
+            // app_names is Vec<String> and can contain multiple app names
             let args = rustycli_core::commands::start::StartCommandArgs {
-                app_name: app_names.into_iter().next().unwrap_or_default(),
+                app_names, // Vec<String> - can contain multiple app names
                 project,
                 env,
                 skip_deps,
@@ -252,6 +254,7 @@ async fn run() -> Result<()> {
             // Call the start command from our core library
             // .await waits for the async function to complete
             // ? returns any error immediately
+            // In non-detached mode, this will keep the process alive to show logs
             start_command(args).await?;
         }
         

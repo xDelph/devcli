@@ -230,8 +230,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                             let _show_output = !preferences.detached_mode;
 
                             let task = tokio::spawn(async move {
+                                // Use StartCommandArgs structure with app_names as Vec
                                 let dep_args = crate::commands::start::StartCommandArgs {
-                                    app_name: dep_app.clone(),
+                                    app_names: vec![dep_app.clone()], // Vec with single dependency
                                     project: Some(dep_project.clone()),
                                     env: Some(env),
                                     skip_deps: false,
