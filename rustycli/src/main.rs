@@ -11,7 +11,8 @@ use clap::{Parser, Subcommand};
 // Import our command implementations from the core library
 use rustycli_core::commands::{
     auto_add_command, config_edit, config_init, config_list, config_show, config_validate,
-    monitor_command, pref_reset, pref_set, pref_show, run_command, start_command, status_command,
+    monitor_command, pref_reset, pref_set, pref_show, restart_command, run_command, 
+    start_command, status_command, stop_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -40,8 +41,8 @@ enum Commands {
         // Each field becomes a CLI argument
         // #[arg(...)] configures how it's parsed
         
-        #[arg(help = "Name of the application/process from config")]
-        app_name: String, // Required positional argument
+        #[arg(help = "Name of the application/process from config (can specify multiple)")]
+        app_names: Vec<String>, // Multiple app names can be provided
         
         #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
         project: Option<String>, // Optional flag: --project or -p
@@ -52,6 +53,41 @@ enum Commands {
         
         #[arg(long, help = "Skip dependency checks")]
         skip_deps: bool, // Boolean flag: --skip-deps (no value needed)
+    },
+    
+    // The "restart" subcommand
+    // Example: rustycli restart api-private
+    #[command(about = "Restart a running process using same config")]
+    Restart {
+        #[arg(help = "Name of the application/process to restart")]
+        app_name: String,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+        
+        #[arg(short, long, help = "Environment: 'local', 'docker', or 'k8s' (overrides existing config)")]
+        env: Option<String>,
+        
+        #[arg(long, help = "Skip dependency checks")]
+        skip_deps: bool,
+    },
+    
+    // The "stop" subcommand
+    // Example: rustycli stop api-private
+    // Example: rustycli stop --all
+    #[command(about = "Stop one or more running processes")]
+    Stop {
+        #[arg(help = "Optional: specific app name to stop")]
+        app_name: Option<String>,
+        
+        #[arg(short, long, help = "Stop all apps in a specific project")]
+        project: Option<String>,
+        
+        #[arg(long, help = "Stop all running processes")]
+        all: bool,
+        
+        #[arg(long, help = "Force kill processes (use SIGKILL instead of SIGTERM)")]
+        force: bool,
     },
     
     // The "run" subcommand
@@ -199,7 +235,7 @@ async fn run() -> Result<()> {
     match cli.command {
         // Handle the "start" command
         Commands::Start {
-            app_name,
+            app_names,
             project,
             env,
             skip_deps,
@@ -207,7 +243,7 @@ async fn run() -> Result<()> {
             // Bundle the arguments into a struct
             // This is the pattern we use: CLI args → struct → command function
             let args = rustycli_core::commands::start::StartCommandArgs {
-                app_name,
+                app_name: app_names.into_iter().next().unwrap_or_default(),
                 project,
                 env,
                 skip_deps,
@@ -217,6 +253,40 @@ async fn run() -> Result<()> {
             // .await waits for the async function to complete
             // ? returns any error immediately
             start_command(args).await?;
+        }
+        
+        // Handle the "restart" command
+        Commands::Restart {
+            app_name,
+            project,
+            env,
+            skip_deps,
+        } => {
+            let args = rustycli_core::commands::restart::RestartCommandArgs {
+                app_name,
+                project,
+                env,
+                skip_deps,
+            };
+            
+            restart_command(args).await?;
+        }
+        
+        // Handle the "stop" command
+        Commands::Stop {
+            app_name,
+            project,
+            all,
+            force,
+        } => {
+            let args = rustycli_core::commands::stop::StopCommandArgs {
+                app_name,
+                project,
+                all,
+                force,
+            };
+            
+            stop_command(args).await?;
         }
         
         // Handle the "run" command
