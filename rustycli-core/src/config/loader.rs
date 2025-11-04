@@ -2,6 +2,7 @@
 // Handles reading/writing JSON files from ~/.rustycli/
 
 use super::models::{Config, Preferences};
+use crate::utils::path::expand_tilde;
 use crate::Result;
 use std::env;
 use std::fs;
@@ -48,7 +49,16 @@ pub fn load_config() -> Result<Config> {
     
     // Parse the JSON string into a Config struct
     // serde_json::from_str automatically maps JSON fields to struct fields
-    let config: Config = serde_json::from_str(&contents)?;
+    let mut config: Config = serde_json::from_str(&contents)?;
+    
+    // Expand tilde paths in all app configurations
+    for project in config.projects.values_mut() {
+        for app in project.apps.values_mut() {
+            // Expand the app path from ~ notation to absolute path
+            let expanded_path = expand_tilde(&app.path);
+            app.path = expanded_path.to_string_lossy().to_string();
+        }
+    }
     
     Ok(config)
 }

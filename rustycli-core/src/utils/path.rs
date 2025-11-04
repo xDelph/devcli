@@ -101,6 +101,33 @@ pub fn expand_path(path: &str) -> PathBuf {
     expand_tilde(expanded_env)
 }
 
+// Contract absolute paths back to tilde notation for storage
+// Example: "/Users/username/Projects/app" becomes "~/Projects/app"
+// This makes configs more portable between machines
+pub fn contract_tilde<P: AsRef<Path>>(path: P) -> String {
+    let path = path.as_ref();
+    
+    // Try to get the HOME environment variable
+    if let Some(home) = env::var_os("HOME") {
+        let home_path = PathBuf::from(home);
+        
+        // Check if the path starts with the home directory
+        if let Ok(relative) = path.strip_prefix(&home_path) {
+            // Convert the relative path back to tilde notation
+            if relative.as_os_str().is_empty() {
+                // Path is exactly the home directory
+                return "~".to_string();
+            } else {
+                // Path is under home directory
+                return format!("~/{}", relative.display());
+            }
+        }
+    }
+    
+    // If path is not under home directory, return as-is
+    path.display().to_string()
+}
+
 // Unit tests to verify the functions work correctly
 // #[cfg(test)] means this code only compiles when running tests
 #[cfg(test)]
@@ -129,5 +156,23 @@ mod tests {
         
         // Verify the result
         assert_eq!(result, "test_value/path");
+    }
+
+    #[test]
+    fn test_contract_tilde() {
+        // Get the actual HOME value
+        let home = env::var("HOME").unwrap();
+        
+        // Test that absolute paths under home get contracted
+        let absolute_path = format!("{}/test/path", home);
+        let contracted = contract_tilde(&absolute_path);
+        
+        // Should become ~/test/path
+        assert_eq!(contracted, "~/test/path");
+        
+        // Test that paths outside home stay absolute
+        let outside_path = "/usr/local/bin";
+        let contracted_outside = contract_tilde(outside_path);
+        assert_eq!(contracted_outside, "/usr/local/bin");
     }
 }

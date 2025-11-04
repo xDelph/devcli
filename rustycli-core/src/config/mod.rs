@@ -12,7 +12,7 @@ pub mod models;
 pub mod resolver;
 
 #[cfg(test)]
-mod tests;
+mod config_tests;
 #[cfg(test)]
 mod resolver_tests;
 

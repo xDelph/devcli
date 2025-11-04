@@ -9,9 +9,10 @@
 mod dockerfile;
 
 #[cfg(test)]
-mod tests;
+mod detection_tests;
 
 use crate::Result;
+use crate::utils::path::contract_tilde;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -56,7 +57,7 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
     Ok(DetectedApp {
         app_type,
         app_name,
-        path: path.to_string_lossy().to_string(),
+        path: contract_tilde(path),
         local_commands,
         docker_commands,
         k8s_commands,
@@ -200,7 +201,7 @@ fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<Detect
     Ok(DetectedApp {
         app_type: "nx".to_string(),
         app_name,
-        path: app_path.to_string_lossy().to_string(),
+        path: contract_tilde(app_path),
         local_commands: if local_commands.is_empty() { None } else { Some(local_commands) },
         docker_commands,
         k8s_commands,
@@ -227,31 +228,76 @@ fn detect_app_type(path: &Path) -> Result<String> {
         return Ok("nodejs".to_string());
     }
     
-    // Check for Redis (redis.conf file)
+    // Check for Redis configurations (multiple patterns)
     if path.join("redis.conf").exists() {
         return Ok("redis".to_string());
     }
     
-    // Check for Traefik or Docker Compose configurations
+    // Check for Traefik configurations (multiple patterns)
+    if path.join("traefik.yml").exists() 
+        || path.join("traefik.yaml").exists() 
+        || path.join("traefik.toml").exists() {
+        return Ok("traefik".to_string());
+    }
+    
+    // Check all files in directory for additional patterns
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let file_name_str = file_name.to_string_lossy();
             
-            // Traefik configuration files
-            if file_name_str == "traefik.yml" 
-                || file_name_str == "traefik.yaml" 
-                || file_name_str == "traefik.toml" {
+            // Additional Traefik patterns
+            if file_name_str.starts_with("traefik") && 
+               (file_name_str.ends_with(".yml") || 
+                file_name_str.ends_with(".yaml") || 
+                file_name_str.ends_with(".toml")) {
                 return Ok("traefik".to_string());
+            }
+            
+            // Additional Redis patterns
+            if file_name_str.starts_with("redis") && 
+               (file_name_str.ends_with(".conf") || 
+                file_name_str.ends_with(".config")) {
+                return Ok("redis".to_string());
             }
             
             // Check docker-compose for redis or traefik services
             if file_name_str == "docker-compose.yml" || file_name_str == "docker-compose.yaml" {
                 if let Ok(content) = fs::read_to_string(entry.path()) {
-                    if content.contains("redis:") {
+                    let content_lower = content.to_lowercase();
+                    if content_lower.contains("redis:") || content_lower.contains("image: redis") {
                         return Ok("redis".to_string());
                     }
-                    if content.contains("traefik") {
+                    if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                        return Ok("traefik".to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check subdirectories for Redis and Traefik (common pattern: redis/ folder with configs)
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let dir_name = entry.file_name();
+                let dir_name_str = dir_name.to_string_lossy();
+                
+                // Check for redis/ directory with configs
+                if dir_name_str == "redis" {
+                    let redis_dir = entry.path();
+                    if redis_dir.join("redis.conf").exists() ||
+                       redis_dir.join("redis.config").exists() {
+                        return Ok("redis".to_string());
+                    }
+                }
+                
+                // Check for traefik/ directory with configs
+                if dir_name_str == "traefik" {
+                    let traefik_dir = entry.path();
+                    if traefik_dir.join("traefik.yml").exists() ||
+                       traefik_dir.join("traefik.yaml").exists() ||
+                       traefik_dir.join("traefik.toml").exists() {
                         return Ok("traefik".to_string());
                     }
                 }
@@ -360,17 +406,96 @@ fn detect_local_commands(path: &Path, app_type: &str) -> Result<Option<HashMap<S
             }
         }
         "redis" => {
-            commands.insert("start".to_string(), "redis-server".to_string());
+            let mut config_found = false;
+            
+            // Check for config files in current directory
             if path.join("redis.conf").exists() {
-                commands.insert("start-config".to_string(), "redis-server redis.conf".to_string());
+                commands.insert("start".to_string(), "redis-server redis.conf".to_string());
+                config_found = true;
+            }
+            
+            // Check for config files in redis/ subdirectory
+            if !config_found {
+                let redis_dir = path.join("redis");
+                if redis_dir.exists() {
+                    if redis_dir.join("redis.conf").exists() {
+                        commands.insert("start".to_string(), "redis-server redis/redis.conf".to_string());
+                        config_found = true;
+                    } else if redis_dir.join("redis.config").exists() {
+                        commands.insert("start".to_string(), "redis-server redis/redis.config".to_string());
+                        config_found = true;
+                    }
+                }
+            }
+            
+            // Check for any redis config files in current directory
+            if !config_found {
+                if let Ok(entries) = fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let file_name = entry.file_name();
+                        let file_name_str = file_name.to_string_lossy();
+                        if file_name_str.starts_with("redis") && 
+                           (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config")) {
+                            commands.insert("start".to_string(), format!("redis-server {}", file_name_str));
+                            config_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Fallback to generic redis-server if no config found
+            if !config_found {
+                commands.insert("start".to_string(), "redis-server".to_string());
             }
         }
         "traefik" => {
+            let mut config_found = false;
+            
+            // Check for config files in current directory
             for file in &["traefik.yml", "traefik.yaml", "traefik.toml"] {
                 if path.join(file).exists() {
                     commands.insert("start".to_string(), format!("traefik --configFile={}", file));
+                    config_found = true;
                     break;
                 }
+            }
+            
+            // Check for config files in traefik/ subdirectory
+            if !config_found {
+                let traefik_dir = path.join("traefik");
+                if traefik_dir.exists() {
+                    for file in &["traefik.yml", "traefik.yaml", "traefik.toml"] {
+                        if traefik_dir.join(file).exists() {
+                            commands.insert("start".to_string(), format!("traefik --configFile=traefik/{}", file));
+                            config_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Check for any traefik config files in current directory
+            if !config_found {
+                if let Ok(entries) = fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let file_name = entry.file_name();
+                        let file_name_str = file_name.to_string_lossy();
+                        if file_name_str.starts_with("traefik") && 
+                           (file_name_str.ends_with(".yml") || 
+                            file_name_str.ends_with(".yaml") || 
+                            file_name_str.ends_with(".toml")) {
+                            commands.insert("start".to_string(), format!("traefik --configFile={}", file_name_str));
+                            config_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Fallback if no config file found
+            if !config_found {
+                commands.insert("start".to_string(), "traefik".to_string());
             }
         }
         _ => {}
