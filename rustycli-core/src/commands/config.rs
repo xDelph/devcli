@@ -9,10 +9,11 @@
 // - rustycli config edit      - Open config in editor
 
 use crate::config::{
-    dependencies::resolve_dependency_chain, list_all_apps, load_config, resolve_app,
+    dependencies::resolve_dependency_chain, list_all_apps, load_config, resolve_app, save_config,
 };
 use crate::Result;
-use std::collections::HashSet;
+use inquire::{Select, Text};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -436,4 +437,615 @@ pub async fn config_edit() -> Result<()> {
     println!("Config file updated. Run 'rustycli config validate' to check your changes.");
     
     Ok(())
+}
+
+// Add a command to an app
+// Example: rustycli config add-command api-private local test "npm test"
+// Example: rustycli config add-command api --project qm docker build "docker build -t api ."
+// Example: rustycli config add-command (interactive mode)
+//
+// Adds a new command to the specified environment for an app
+pub async fn config_add_command(
+    app_name: Option<String>,
+    project: Option<String>,
+    environment: Option<String>,
+    command_name: Option<String>,
+    command_value: Option<String>,
+) -> Result<()> {
+    let mut config = load_config()?;
+    
+    // Interactive prompts for missing parameters
+    let (resolved_project, resolved_app_name) = if let Some(app_name) = app_name {
+        // App name provided, resolve it
+        let resolved = resolve_app(&config, &app_name, project.as_deref())?;
+        (resolved.project, resolved.app_name)
+    } else {
+        // No app name provided, prompt user to select
+        prompt_for_app(&config, project.as_deref())?
+    };
+    
+    let environment = if let Some(env) = environment {
+        // Validate provided environment
+        if !["local", "docker", "k8s"].contains(&env.as_str()) {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        }
+        env
+    } else {
+        // Prompt for environment
+        prompt_for_environment()?
+    };
+    
+    let command_name = if let Some(name) = command_name {
+        name
+    } else {
+        prompt_for_text("Enter command name:", None)?
+    };
+    
+    let command_value = if let Some(value) = command_value {
+        value
+    } else {
+        prompt_for_text("Enter command value:", None)?
+    };
+    
+    // Get mutable reference to the app
+    let app = config
+        .projects
+        .get_mut(&resolved_project)
+        .unwrap()
+        .apps
+        .get_mut(&resolved_app_name)
+        .unwrap();
+    
+    // Add command to the appropriate environment
+    match environment.as_str() {
+        "local" => {
+            if app.commands.local.is_none() {
+                app.commands.local = Some(HashMap::new());
+            }
+            app.commands.local.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+        }
+        "docker" => {
+            if app.commands.docker.is_none() {
+                app.commands.docker = Some(HashMap::new());
+            }
+            app.commands.docker.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+        }
+        "k8s" => {
+            if app.commands.k8s.is_none() {
+                app.commands.k8s = Some(HashMap::new());
+            }
+            app.commands.k8s.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+        }
+        _ => unreachable!(),
+    }
+    
+    // Save the updated config
+    save_config(&config)?;
+    
+    println!("✓ Added command '{}' to {}/{} ({} environment)", 
+             command_name, resolved_project, resolved_app_name, environment);
+    println!("  Command: {}", command_value);
+    
+    Ok(())
+}
+
+// Remove a command from an app
+// Example: rustycli config remove-command api-private local test
+// Example: rustycli config remove-command api --project qm docker build
+// Example: rustycli config remove-command (interactive mode)
+//
+// Removes a command from the specified environment for an app
+pub async fn config_remove_command(
+    app_name: Option<String>,
+    project: Option<String>,
+    environment: Option<String>,
+    command_name: Option<String>,
+) -> Result<()> {
+    let mut config = load_config()?;
+    
+    // Interactive prompts for missing parameters
+    let (resolved_project, resolved_app_name) = if let Some(app_name) = app_name {
+        let resolved = resolve_app(&config, &app_name, project.as_deref())?;
+        (resolved.project, resolved.app_name)
+    } else {
+        prompt_for_app(&config, project.as_deref())?
+    };
+    
+    let environment = if let Some(env) = environment {
+        if !["local", "docker", "k8s"].contains(&env.as_str()) {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        }
+        env
+    } else {
+        prompt_for_environment()?
+    };
+    
+    // Get the app to check available commands
+    let app = config
+        .projects
+        .get(&resolved_project)
+        .unwrap()
+        .apps
+        .get(&resolved_app_name)
+        .unwrap();
+    
+    let command_name = if let Some(name) = command_name {
+        name
+    } else {
+        prompt_for_command(app, &environment)?
+    };
+    
+    // Get mutable reference to the app
+    let app = config
+        .projects
+        .get_mut(&resolved_project)
+        .unwrap()
+        .apps
+        .get_mut(&resolved_app_name)
+        .unwrap();
+    
+    // Remove command from the appropriate environment
+    let removed = match environment.as_str() {
+        "local" => {
+            if let Some(commands) = &mut app.commands.local {
+                commands.remove(&command_name).is_some()
+            } else {
+                false
+            }
+        }
+        "docker" => {
+            if let Some(commands) = &mut app.commands.docker {
+                commands.remove(&command_name).is_some()
+            } else {
+                false
+            }
+        }
+        "k8s" => {
+            if let Some(commands) = &mut app.commands.k8s {
+                commands.remove(&command_name).is_some()
+            } else {
+                false
+            }
+        }
+        _ => unreachable!(),
+    };
+    
+    if !removed {
+        anyhow::bail!("Command '{}' not found in {} environment for {}/{}", 
+                     command_name, environment, resolved_project, resolved_app_name);
+    }
+    
+    // Check if this was the default command and warn user
+    let was_default = match environment.as_str() {
+        "local" => app.defaults.local.as_ref() == Some(&command_name),
+        "docker" => app.defaults.docker.as_ref() == Some(&command_name),
+        "k8s" => app.defaults.k8s.as_ref() == Some(&command_name),
+        _ => false,
+    };
+    
+    if was_default {
+        // Clear the default since the command no longer exists
+        match environment.as_str() {
+            "local" => app.defaults.local = None,
+            "docker" => app.defaults.docker = None,
+            "k8s" => app.defaults.k8s = None,
+            _ => unreachable!(),
+        }
+        println!("⚠ Warning: '{}' was the default {} command. Default cleared.", 
+                command_name, environment);
+    }
+    
+    // Save the updated config
+    save_config(&config)?;
+    
+    println!("✓ Removed command '{}' from {}/{} ({} environment)", 
+             command_name, resolved_project, resolved_app_name, environment);
+    
+    Ok(())
+}
+
+// Set the default command for an environment
+// Example: rustycli config set-default api-private local start
+// Example: rustycli config set-default api --project qm docker run
+// Example: rustycli config set-default (interactive mode)
+//
+// Sets which command should be used by default when starting an app in the specified environment
+pub async fn config_set_default(
+    app_name: Option<String>,
+    project: Option<String>,
+    environment: Option<String>,
+    command_name: Option<String>,
+) -> Result<()> {
+    let mut config = load_config()?;
+    
+    // Interactive prompts for missing parameters
+    let (resolved_project, resolved_app_name) = if let Some(app_name) = app_name {
+        let resolved = resolve_app(&config, &app_name, project.as_deref())?;
+        (resolved.project, resolved.app_name)
+    } else {
+        prompt_for_app(&config, project.as_deref())?
+    };
+    
+    let environment = if let Some(env) = environment {
+        if !["local", "docker", "k8s"].contains(&env.as_str()) {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        }
+        env
+    } else {
+        prompt_for_environment()?
+    };
+    
+    // Get the app to check available commands
+    let app = config
+        .projects
+        .get(&resolved_project)
+        .unwrap()
+        .apps
+        .get(&resolved_app_name)
+        .unwrap();
+    
+    let command_name = if let Some(name) = command_name {
+        name
+    } else {
+        prompt_for_command(app, &environment)?
+    };
+    
+    // Get mutable reference to the app
+    let app = config
+        .projects
+        .get_mut(&resolved_project)
+        .unwrap()
+        .apps
+        .get_mut(&resolved_app_name)
+        .unwrap();
+    
+    // Verify the command exists in the specified environment
+    let command_exists = match environment.as_str() {
+        "local" => {
+            app.commands.local.as_ref()
+                .map(|commands| commands.contains_key(&command_name))
+                .unwrap_or(false)
+        }
+        "docker" => {
+            app.commands.docker.as_ref()
+                .map(|commands| commands.contains_key(&command_name))
+                .unwrap_or(false)
+        }
+        "k8s" => {
+            app.commands.k8s.as_ref()
+                .map(|commands| commands.contains_key(&command_name))
+                .unwrap_or(false)
+        }
+        _ => unreachable!(),
+    };
+    
+    if !command_exists {
+        anyhow::bail!("Command '{}' not found in {} environment for {}/{}. Add it first with 'config add-command'.", 
+                     command_name, environment, resolved_project, resolved_app_name);
+    }
+    
+    // Set the default command
+    match environment.as_str() {
+        "local" => app.defaults.local = Some(command_name.clone()),
+        "docker" => app.defaults.docker = Some(command_name.clone()),
+        "k8s" => app.defaults.k8s = Some(command_name.clone()),
+        _ => unreachable!(),
+    }
+    
+    // Save the updated config
+    save_config(&config)?;
+    
+    println!("✓ Set '{}' as default {} command for {}/{}", 
+             command_name, environment, resolved_project, resolved_app_name);
+    
+    Ok(())
+}
+
+// List all commands for an app
+// Example: rustycli config list-commands api-private
+// Example: rustycli config list-commands api --project qm
+// Example: rustycli config list-commands api-private --env local
+// Example: rustycli config list-commands (interactive mode)
+//
+// Shows all available commands for an app, optionally filtered by environment
+pub async fn config_list_commands(
+    app_name: Option<String>,
+    project: Option<String>,
+    environment: Option<String>,
+) -> Result<()> {
+    let config = load_config()?;
+    
+    // Interactive prompts for missing parameters
+    let (resolved_project, resolved_app_name) = if let Some(app_name) = app_name {
+        let resolved = resolve_app(&config, &app_name, project.as_deref())?;
+        (resolved.project, resolved.app_name)
+    } else {
+        prompt_for_app(&config, project.as_deref())?
+    };
+    
+    // Validate environment filter if provided
+    if let Some(ref env) = environment {
+        if !["local", "docker", "k8s"].contains(&env.as_str()) {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        }
+    }
+    
+    // Get the app
+    let app = config
+        .projects
+        .get(&resolved_project)
+        .unwrap()
+        .apps
+        .get(&resolved_app_name)
+        .unwrap();
+    
+    println!("Commands for {}/{}", resolved_project, resolved_app_name);
+    
+    // Helper function to display commands for an environment
+    let display_env_commands = |env_name: &str, commands: &Option<HashMap<String, String>>, default: &Option<String>| {
+        if let Some(ref filter) = environment {
+            if filter != env_name {
+                return; // Skip this environment if filtering
+            }
+        }
+        
+        println!("\n{} environment:", env_name.to_uppercase());
+        
+        if let Some(commands) = commands {
+            if commands.is_empty() {
+                println!("  (no commands defined)");
+            } else {
+                for (name, cmd) in commands {
+                    let is_default = default.as_ref() == Some(name);
+                    let marker = if is_default { " (default)" } else { "" };
+                    println!("  {}: {}{}", name, cmd, marker);
+                }
+            }
+        } else {
+            println!("  (not configured)");
+        }
+    };
+    
+    // Display commands for each environment
+    display_env_commands("local", &app.commands.local, &app.defaults.local);
+    display_env_commands("docker", &app.commands.docker, &app.defaults.docker);
+    display_env_commands("k8s", &app.commands.k8s, &app.defaults.k8s);
+    
+    Ok(())
+}
+
+// Edit a specific command for an app
+// Example: rustycli config edit-command api-private local start
+// Example: rustycli config edit-command api --project qm docker build
+// Example: rustycli config edit-command (interactive mode)
+//
+// Allows interactive editing of a command's value
+pub async fn config_edit_command(
+    app_name: Option<String>,
+    project: Option<String>,
+    environment: Option<String>,
+    command_name: Option<String>,
+) -> Result<()> {
+    let mut config = load_config()?;
+    
+    // Interactive prompts for missing parameters
+    let (resolved_project, resolved_app_name) = if let Some(app_name) = app_name {
+        let resolved = resolve_app(&config, &app_name, project.as_deref())?;
+        (resolved.project, resolved.app_name)
+    } else {
+        prompt_for_app(&config, project.as_deref())?
+    };
+    
+    let environment = if let Some(env) = environment {
+        if !["local", "docker", "k8s"].contains(&env.as_str()) {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        }
+        env
+    } else {
+        prompt_for_environment()?
+    };
+    
+    // Get the app to check available commands
+    let app = config
+        .projects
+        .get(&resolved_project)
+        .unwrap()
+        .apps
+        .get(&resolved_app_name)
+        .unwrap();
+    
+    let command_name = if let Some(name) = command_name {
+        name
+    } else {
+        prompt_for_command(app, &environment)?
+    };
+    
+    // Get current command value
+    let current_value = {
+        
+        match environment.as_str() {
+            "local" => {
+                app.commands.local.as_ref()
+                    .and_then(|commands| commands.get(&command_name))
+                    .cloned()
+            }
+            "docker" => {
+                app.commands.docker.as_ref()
+                    .and_then(|commands| commands.get(&command_name))
+                    .cloned()
+            }
+            "k8s" => {
+                app.commands.k8s.as_ref()
+                    .and_then(|commands| commands.get(&command_name))
+                    .cloned()
+            }
+            _ => unreachable!(),
+        }
+    };
+    
+    let current_value = current_value.ok_or_else(|| {
+        anyhow::anyhow!("Command '{}' not found in {} environment for {}/{}. Add it first with 'config add-command'.", 
+                        command_name, environment, resolved_project, resolved_app_name)
+    })?;
+    
+    println!("Editing command: {}/{} {} {}", 
+             resolved_project, resolved_app_name, environment, command_name);
+    println!("Current value: {}", current_value);
+    println!();
+    
+    // Prompt for new value
+    print!("Enter new command (or press Enter to keep current): ");
+    use std::io::{self, Write};
+    io::stdout().flush()?;
+    
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let new_value = input.trim();
+    
+    if new_value.is_empty() {
+        println!("No changes made.");
+        return Ok(());
+    }
+    
+    // Update the command
+    let app = config
+        .projects
+        .get_mut(&resolved_project)
+        .unwrap()
+        .apps
+        .get_mut(&resolved_app_name)
+        .unwrap();
+    
+    match environment.as_str() {
+        "local" => {
+            app.commands.local.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+        }
+        "docker" => {
+            app.commands.docker.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+        }
+        "k8s" => {
+            app.commands.k8s.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+        }
+        _ => unreachable!(),
+    }
+    
+    // Save the updated config
+    save_config(&config)?;
+    
+    println!("✓ Updated command '{}' for {}/{} ({} environment)", 
+             command_name, resolved_project, resolved_app_name, environment);
+    println!("  New value: {}", new_value);
+    
+    Ok(())
+}
+
+// Helper functions for interactive prompts
+
+/// Prompt user to select a project first, then an app
+fn prompt_for_app(config: &crate::config::Config, project_filter: Option<&str>) -> Result<(String, String)> {
+    let project_name = if let Some(project) = project_filter {
+        // Project already specified, use it
+        project.to_string()
+    } else {
+        // Prompt user to select a project first
+        prompt_for_project(config)?
+    };
+    
+    // Get apps for the selected project
+    let project = config.projects.get(&project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project_name))?;
+    
+    if project.apps.is_empty() {
+        anyhow::bail!("No apps found in project '{}'", project_name);
+    }
+    
+    // Create sorted list of app names
+    let mut app_names: Vec<String> = project.apps.keys().cloned().collect();
+    app_names.sort();
+    
+    let selection = Select::new("Select an app:", app_names).prompt()?;
+    
+    Ok((project_name, selection))
+}
+
+/// Prompt user to select a project
+fn prompt_for_project(config: &crate::config::Config) -> Result<String> {
+    if config.projects.is_empty() {
+        anyhow::bail!("No projects found in config");
+    }
+    
+    // Create sorted list of project names
+    let mut project_names: Vec<String> = config.projects.keys().cloned().collect();
+    project_names.sort();
+    
+    let selection = Select::new("Select a project:", project_names).prompt()?;
+    Ok(selection)
+}
+
+/// Prompt user to select an environment
+fn prompt_for_environment() -> Result<String> {
+    let environments = vec!["local", "docker", "k8s"];
+    let selection = Select::new("Select environment:", environments).prompt()?;
+    Ok(selection.to_string())
+}
+
+/// Prompt user to select a command from available commands in an environment
+fn prompt_for_command(app: &crate::config::App, environment: &str) -> Result<String> {
+    let commands = match environment {
+        "local" => app.commands.local.as_ref(),
+        "docker" => app.commands.docker.as_ref(),
+        "k8s" => app.commands.k8s.as_ref(),
+        _ => return Err(anyhow::anyhow!("Invalid environment: {}", environment)),
+    };
+    
+    let commands = commands.ok_or_else(|| {
+        anyhow::anyhow!("No commands configured for {} environment", environment)
+    })?;
+    
+    if commands.is_empty() {
+        return Err(anyhow::anyhow!("No commands available in {} environment", environment));
+    }
+    
+    // Create sorted list of command names with default indicator
+    let default_command = match environment {
+        "local" => app.defaults.local.as_ref(),
+        "docker" => app.defaults.docker.as_ref(),
+        "k8s" => app.defaults.k8s.as_ref(),
+        _ => None,
+    };
+    
+    let mut command_names: Vec<String> = commands.keys().cloned().collect();
+    command_names.sort();
+    
+    // Add default indicator to the display
+    let display_names: Vec<String> = command_names.iter()
+        .map(|name| {
+            if Some(name) == default_command {
+                format!("{} (default)", name)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    
+    let selection = Select::new("Select command:", display_names).prompt()?;
+    
+    // Remove the " (default)" suffix if present
+    let clean_selection = if selection.ends_with(" (default)") {
+        selection.trim_end_matches(" (default)").to_string()
+    } else {
+        selection
+    };
+    
+    Ok(clean_selection)
+}
+
+/// Prompt user for a text input
+fn prompt_for_text(message: &str, default: Option<&str>) -> Result<String> {
+    let mut prompt = Text::new(message);
+    if let Some(default_val) = default {
+        prompt = prompt.with_default(default_val);
+    }
+    let input = prompt.prompt()?;
+    Ok(input)
 }

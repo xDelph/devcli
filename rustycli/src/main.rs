@@ -10,9 +10,10 @@ use clap::{Parser, Subcommand};
 
 // Import our command implementations from the core library
 use rustycli_core::commands::{
-    auto_add_command, config_edit, config_init, config_list, config_show, config_validate,
-    monitor_command, pref_reset, pref_set, pref_show, restart_command, run_command, 
-    start_command, status_command, stop_command,
+    auto_add_command, config_add_command, config_edit, config_edit_command, config_init, 
+    config_list, config_list_commands, config_remove_command, config_set_default, 
+    config_show, config_validate, monitor_command, pref_reset, pref_set, pref_show, 
+    restart_command, run_command, start_command, status_command, stop_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -185,6 +186,81 @@ enum ConfigAction {
     
     #[command(about = "Edit the config file")]
     Edit, // No arguments
+    
+    #[command(about = "Add a command to an app")]
+    AddCommand {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        environment: Option<String>,
+        
+        #[arg(help = "Command name (optional - will prompt if not provided)")]
+        command_name: Option<String>,
+        
+        #[arg(help = "Command value (optional - will prompt if not provided)")]
+        command_value: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
+    
+    #[command(about = "Remove a command from an app")]
+    RemoveCommand {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        environment: Option<String>,
+        
+        #[arg(help = "Command name (optional - will prompt if not provided)")]
+        command_name: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
+    
+    #[command(about = "Set the default command for an environment")]
+    SetDefault {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        environment: Option<String>,
+        
+        #[arg(help = "Command name (optional - will prompt if not provided)")]
+        command_name: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
+    
+    #[command(about = "List all commands for an app")]
+    ListCommands {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+        
+        #[arg(short, long, help = "Filter by environment (local, docker, k8s)")]
+        env: Option<String>,
+    },
+    
+    #[command(about = "Edit a specific command for an app")]
+    EditCommand {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        environment: Option<String>,
+        
+        #[arg(help = "Command name (optional - will prompt if not provided)")]
+        command_name: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
 }
 
 // Nested subcommands for "pref"
@@ -343,6 +419,21 @@ async fn run() -> Result<()> {
             ConfigAction::List { project, apps_only } => config_list(project, apps_only).await?,
             ConfigAction::Show { app_name, project } => config_show(app_name, project).await?,
             ConfigAction::Edit => config_edit().await?,
+            ConfigAction::AddCommand { app_name, environment, command_name, command_value, project } => {
+                config_add_command(app_name, project, environment, command_name, command_value).await?
+            },
+            ConfigAction::RemoveCommand { app_name, environment, command_name, project } => {
+                config_remove_command(app_name, project, environment, command_name).await?
+            },
+            ConfigAction::SetDefault { app_name, environment, command_name, project } => {
+                config_set_default(app_name, project, environment, command_name).await?
+            },
+            ConfigAction::ListCommands { app_name, project, env } => {
+                config_list_commands(app_name, project, env).await?
+            },
+            ConfigAction::EditCommand { app_name, environment, command_name, project } => {
+                config_edit_command(app_name, project, environment, command_name).await?
+            },
         },
         
         // Handle the "pref" command and its subcommands
