@@ -170,7 +170,7 @@ async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool,
             println!("Sending SIGTERM to process '{}' (PID: {})...", process.app_name, process.pid);
             
             if let Err(e) = Command::new("kill")
-                .args(&["-TERM", &process.pid.to_string()])
+                .args(["-TERM", &process.pid.to_string()])
                 .output()
             {
                 return Err(anyhow::anyhow!("Failed to send SIGTERM: {}", e));
@@ -198,7 +198,7 @@ async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool,
         println!("Sending SIGKILL to process '{}' (PID: {})...", process.app_name, process.pid);
         
         if let Err(e) = Command::new("kill")
-            .args(&["-KILL", &process.pid.to_string()])
+            .args(["-KILL", &process.pid.to_string()])
             .output()
         {
             return Err(anyhow::anyhow!("Failed to send SIGKILL: {}", e));

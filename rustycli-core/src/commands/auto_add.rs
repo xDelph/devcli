@@ -8,7 +8,7 @@ use crate::Result;
 use inquire::{MultiSelect, Select, Confirm, Text};
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, Write};
+
 
 // Entry point for the auto-add command
 // Detects if we're in an Nx monorepo or a single app, then handles accordingly
@@ -45,42 +45,15 @@ async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
     // Use the detection module to find all apps in apps/ and packages/ directories
     let detected_apps = crate::detection::detect_nx_apps(workspace_root)?;
     
-    // Display all detected apps with their command counts
-    println!("✓ Detected Nx monorepo with {} apps:\n", detected_apps.len());
+    // Display detected apps count
+    println!("✓ Detected Nx monorepo with {} apps", detected_apps.len());
     
-    for (idx, app) in detected_apps.iter().enumerate() {
-        let cmd_count = app.local_commands.as_ref().map(|c| c.len()).unwrap_or(0);
-        println!("  {}. {} ({} commands)", idx + 1, app.app_name, cmd_count);
-    }
-    
-    // Prompt user to select which apps to add
-    println!();
-    println!("\nSelect apps to add:");
-    println!("  - Enter numbers separated by spaces (e.g., '1 3 4')");
-    println!("  - Or type 'all' to add all apps");
-    print!("> ");
-    io::stdout().flush()?;
-    
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-    
-    // Parse user input into a list of indices
-    // "all" = select all apps
-    // "1 3 4" = select apps at indices 1, 3, and 4
-    let selected_indices: Vec<usize> = if input.to_lowercase() == "all" {
-        (0..detected_apps.len()).collect()
-    } else {
-        input
-            .split_whitespace()
-            .filter_map(|s| s.parse::<usize>().ok())
-            .filter(|&n| n > 0 && n <= detected_apps.len())
-            .map(|n| n - 1) // Convert to 0-based index
-            .collect()
-    };
+    // Use interactive multi-select for app selection
+    let selected_indices = interactive_nx_app_selection(&detected_apps)?;
     
     if selected_indices.is_empty() {
-        anyhow::bail!("No valid apps selected");
+        println!("No apps selected.");
+        return Ok(());
     }
     
     // Load existing config or create a new empty one
@@ -91,9 +64,9 @@ async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
     
-    println!("\nAdding {} app(s) to project '{}'...\n", selected_indices.len(), project_name);
+    println!("\nProcessing {} selected app(s) for project '{}'...\n", selected_indices.len(), project_name);
     
-    // Iterate through selected apps and add each one to the config
+    // Process each selected app with confirmation
     for &idx in &selected_indices {
         let detected = &detected_apps[idx];
         
@@ -105,8 +78,17 @@ async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
             continue;
         }
         
-        // Show a preview of what will be added
-        show_preview(&project_name, &detected.app_name, detected);
+        // Prompt for app name (allow user to customize)
+        let app_name = prompt_app_name(&detected.app_name)?;
+        
+        // Show preview of what will be added
+        show_preview(&project_name, &app_name, detected);
+        
+        // Confirm this specific app (default to yes)
+        if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
+            println!("Skipped {}.\n", app_name);
+            continue;
+        }
         
         // Build the App struct from detected data
         let app = App {
@@ -134,9 +116,9 @@ async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
                 apps: HashMap::new(),
             })
             .apps
-            .insert(detected.app_name.clone(), app);
+            .insert(app_name.clone(), app);
         
-        println!("✓ Added {}\n", detected.app_name);
+        println!("✓ Added {}\n", app_name);
     }
     
     // Save the updated config to disk
@@ -596,6 +578,41 @@ fn confirm_default_yes(prompt: &str) -> Result<bool> {
         .prompt()?;
     
     Ok(confirmed)
+}
+
+// Interactive Nx app selection using inquire for proper UI with arrow keys
+fn interactive_nx_app_selection(apps: &[crate::detection::DetectedApp]) -> Result<Vec<usize>> {
+    // Create display options for each app with command counts
+    let options: Vec<String> = apps
+        .iter()
+        .enumerate()
+        .map(|(idx, app)| {
+            let cmd_count = app.local_commands.as_ref().map(|c| c.len()).unwrap_or(0);
+            format!("{}. {} ({} commands)", idx + 1, app.app_name, cmd_count)
+        })
+        .collect();
+    
+    // Use inquire's MultiSelect for checkbox-style selection
+    let selected = MultiSelect::new("Select apps to add:", options.clone())
+        .with_help_message("Use ↑/↓ to navigate, Space to select/deselect, Enter to confirm")
+        .prompt();
+    
+    match selected {
+        Ok(selections) => {
+            // Convert selected display strings back to indices
+            let mut indices = Vec::new();
+            for selection in selections {
+                if let Some(index) = options.iter().position(|opt| opt == &selection) {
+                    indices.push(index);
+                }
+            }
+            Ok(indices)
+        }
+        Err(_) => {
+            // User cancelled (Ctrl+C or ESC)
+            Ok(vec![])
+        }
+    }
 }
 
 // Interactive app selection using inquire for proper UI with arrow keys

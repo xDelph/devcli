@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Refactor detection/mod.rs (800 lines → multiple focused modules)
+- [x] 1. Refactor detection/mod.rs (800 lines → multiple focused modules)
 
   - Split into detection/app_types.rs, detection/environments/, detection/nx.rs, detection/utils.rs
   - Maintain public API through re-exports in detection/mod.rs

@@ -893,16 +893,15 @@ pub async fn config_edit_command(
     println!("Current value: {}", current_value);
     println!();
     
-    // Prompt for new value
-    print!("Enter new command (or press Enter to keep current): ");
-    use std::io::{self, Write};
-    io::stdout().flush()?;
+    // Prompt for new value using inquire
+    use inquire::Text;
     
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let new_value = input.trim();
+    let new_value = Text::new("Enter new command:")
+        .with_default(&current_value)
+        .with_help_message("Press Enter to keep current value, or type a new command")
+        .prompt()?;
     
-    if new_value.is_empty() {
+    if new_value == current_value {
         println!("No changes made.");
         return Ok(());
     }

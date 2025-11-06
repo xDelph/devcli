@@ -78,7 +78,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         use std::process::Command;
         // Send SIGTERM (graceful shutdown)
         if let Err(e) = Command::new("kill")
-            .args(&["-TERM", &process.pid.to_string()])
+            .args(["-TERM", &process.pid.to_string()])
             .output()
         {
             println!("Warning: Failed to send SIGTERM: {}", e);
@@ -91,7 +91,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         if tracker.is_running(process.pid) {
             println!("Force killing process '{}'...", args.app_name);
             if let Err(e) = Command::new("kill")
-                .args(&["-KILL", &process.pid.to_string()])
+                .args(["-KILL", &process.pid.to_string()])
                 .output()
             {
                 println!("Warning: Failed to send SIGKILL: {}", e);
