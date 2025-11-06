@@ -7,7 +7,7 @@
   - Add code comments explaining module organization
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 7.1, 7.4_
 
-- [ ] 2. Refactor commands/config.rs (1,050 lines → command-specific modules)
+- [x] 2. Refactor commands/config.rs (1,050 lines → command-specific modules)
 
   - Split into commands/config/init.rs, validate.rs, list.rs, edit.rs, prompts.rs
   - Maintain public API through re-exports in commands/config/mod.rs
