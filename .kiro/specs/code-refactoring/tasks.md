@@ -29,7 +29,7 @@
   - Add unit tests for each module (in separate file)
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 7.1, 7.4_
 
-- [ ] 5. Refactor detection_tests.rs (1,100 lines → feature-based test modules)
+- [x] 5. Refactor detection_tests.rs (1,100 lines → feature-based test modules)
 
   - Split into separate test files by feature area
   - Organize tests by detection functionality (app types, environments, nx, integration)

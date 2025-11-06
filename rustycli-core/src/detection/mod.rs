@@ -20,7 +20,7 @@ mod utils;
 mod dockerfile;
 
 #[cfg(test)]
-mod detection_tests;
+mod tests;
 
 use crate::Result;
 use crate::utils::path::contract_tilde;
