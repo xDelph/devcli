@@ -1,14 +1,17 @@
-// Auto-add command - Automatically detect and configure apps
-// Scans directories to detect app type and configuration
-// Supports both single apps and Nx monorepos
+// Single app detection and addition functionality
+// Handles detection of individual applications (not in Nx monorepos)
+// Supports discovery of multiple apps in subdirectories
 
 use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
 use crate::detection::detect_app;
 use crate::Result;
-use inquire::{MultiSelect, Select, Confirm, Text};
 use std::collections::HashMap;
 use std::env;
 
+use super::interactive::{
+    prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
+    interactive_app_selection
+};
 
 // Entry point for the auto-add command
 // Detects if we're in an Nx monorepo or a single app, then handles accordingly
@@ -32,105 +35,15 @@ pub async fn auto_add_command(path: Option<String>) -> Result<()> {
     // Check if we're in an Nx monorepo by looking for nx.json
     // Nx monorepos need special handling to detect multiple apps
     if target_path.join("nx.json").exists() {
-        handle_nx_monorepo(&target_path).await
+        super::nx_monorepo::handle_nx_monorepo(&target_path).await
     } else {
         handle_single_app(&target_path).await
     }
 }
 
-// Handle detection and addition of apps in an Nx monorepo
-// Scans apps/ and packages/ directories for Nx projects
-// Allows the user to select which apps to add interactively
-async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
-    // Use the detection module to find all apps in apps/ and packages/ directories
-    let detected_apps = crate::detection::detect_nx_apps(workspace_root)?;
-    
-    // Display detected apps count
-    println!("✓ Detected Nx monorepo with {} apps", detected_apps.len());
-    
-    // Use interactive multi-select for app selection
-    let selected_indices = interactive_nx_app_selection(&detected_apps)?;
-    
-    if selected_indices.is_empty() {
-        println!("No apps selected.");
-        return Ok(());
-    }
-    
-    // Load existing config or create a new empty one
-    let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
-    });
-    
-    // Ask which project to add apps to (or create a new one)
-    let project_name = prompt_project_selection(&config)?;
-    
-    println!("\nProcessing {} selected app(s) for project '{}'...\n", selected_indices.len(), project_name);
-    
-    // Process each selected app with confirmation
-    for &idx in &selected_indices {
-        let detected = &detected_apps[idx];
-        
-        // Skip apps with no commands - they can't be run
-        if detected.local_commands.is_none() 
-            && detected.docker_commands.is_none() 
-            && detected.k8s_commands.is_none() {
-            println!("⚠ Skipping {} - no commands detected", detected.app_name);
-            continue;
-        }
-        
-        // Prompt for app name (allow user to customize)
-        let app_name = prompt_app_name(&detected.app_name)?;
-        
-        // Show preview of what will be added
-        show_preview(&project_name, &app_name, detected);
-        
-        // Confirm this specific app (default to yes)
-        if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
-            println!("Skipped {}.\n", app_name);
-            continue;
-        }
-        
-        // Build the App struct from detected data
-        let app = App {
-            app_type: detected.app_type.clone(),
-            path: detected.path.clone(),
-            commands: Commands {
-                local: detected.local_commands.clone(),
-                docker: detected.docker_commands.clone(),
-                k8s: detected.k8s_commands.clone(),
-            },
-            dependencies: Vec::new(),
-            defaults: Defaults {
-                local: detected.suggested_local_default.clone(),
-                docker: detected.suggested_docker_default.clone(),
-                k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
-            },
-        };
-        
-        // Insert the app into the config
-        // This creates the project if it doesn't exist, then adds the app
-        config
-            .projects
-            .entry(project_name.clone())
-            .or_insert_with(|| Project {
-                apps: HashMap::new(),
-            })
-            .apps
-            .insert(app_name.clone(), app);
-        
-        println!("✓ Added {}\n", app_name);
-    }
-    
-    // Save the updated config to disk
-    save_config(&config)?;
-    println!("✓ All apps added successfully!");
-    
-    Ok(())
-}
-
 // Handle detection and addition of a single app (not in an Nx monorepo)
 // Detects the app type, prompts for confirmation, and adds to config
-async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
+pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     // Check if there are multiple potential apps in subdirectories
     let discovered_apps = discover_all_apps(target_path)?;
     
@@ -429,236 +342,6 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
     Ok(())
 }
 
-// Interactive prompt for selecting an existing project or creating a new one
-// Uses inquire for proper arrow key navigation
-fn prompt_project_selection(config: &crate::config::Config) -> Result<String> {
-    // Get all project names and sort them alphabetically, but put "global" first
-    let mut projects: Vec<String> = config.projects.keys().cloned().collect();
-    projects.sort();
-    
-    // Move "global" to the front if it exists, or add it as option 1
-    let mut display_projects = Vec::new();
-    let has_global = projects.contains(&"global".to_string());
-    
-    if has_global {
-        display_projects.push("global (default)".to_string());
-        // Add other projects except global
-        for project in projects {
-            if project != "global" {
-                display_projects.push(project);
-            }
-        }
-    } else {
-        // Add "global" as first option even if it doesn't exist yet
-        display_projects.push("global (default)".to_string());
-        display_projects.extend(projects);
-    }
-    
-    // Add "Create new project" option
-    display_projects.push("Create new project".to_string());
-
-    println!();
-
-    // Use inquire's Select for arrow key navigation
-    let selection = Select::new("Which project?", display_projects.clone())
-        .with_help_message("Use ↑/↓ to navigate, Enter to select")
-        .prompt()?;
-    
-    // Handle the selection
-    if selection == "Create new project" {
-        // Prompt for new project name
-        let project_name = Text::new("New project name:")
-            .with_validator(|input: &str| {
-                if input.trim().is_empty() {
-                    Ok(inquire::validator::Validation::Invalid("Project name cannot be empty".into()))
-                } else {
-                    Ok(inquire::validator::Validation::Valid)
-                }
-            })
-            .prompt()?;
-        
-        Ok(project_name.trim().to_string())
-    } else if selection.starts_with("global") {
-        Ok("global".to_string())
-    } else {
-        Ok(selection)
-    }
-}
-
-// Prompt to confirm or edit the detected app name using inquire
-fn prompt_app_name(suggested_name: &str) -> Result<String> {
-    // Validate the suggested name first
-    if suggested_name.is_empty() {
-        return prompt_custom_app_name();
-    }
-    
-    // Use inquire's Confirm with default to true
-    let use_suggested = Confirm::new(&format!("Use app name '{}'?", suggested_name))
-        .with_default(true)
-        .with_help_message("Press Enter to accept, or 'n' to enter a custom name")
-        .prompt()?;
-    
-    if use_suggested {
-        Ok(suggested_name.to_string())
-    } else {
-        prompt_custom_app_name()
-    }
-}
-
-// Helper function to prompt for a custom app name with validation using inquire
-fn prompt_custom_app_name() -> Result<String> {
-    let app_name = Text::new("Enter app name:")
-        .with_validator(|input: &str| {
-            match validate_app_name(input) {
-                Ok(_) => Ok(inquire::validator::Validation::Valid),
-                Err(e) => Ok(inquire::validator::Validation::Invalid(e.to_string().into())),
-            }
-        })
-        .prompt()?;
-    
-    Ok(app_name)
-}
-
-// Validate app name according to rules
-// Returns Ok(()) if valid, Err with message if invalid
-pub fn validate_app_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("App name cannot be empty. Please try again.");
-    }
-    
-    if name.contains(' ') {
-        anyhow::bail!("App name cannot contain spaces. Use dashes or underscores instead.");
-    }
-    
-    // Additional validation: check for other problematic characters
-    if name.contains('/') || name.contains('\\') {
-        anyhow::bail!("App name cannot contain path separators.");
-    }
-    
-    Ok(())
-}
-
-// Display a preview of what will be added to the config
-// Shows the project/app path, type, commands, and defaults
-fn show_preview(project: &str, app_name: &str, detected: &crate::detection::DetectedApp) {
-    println!("\nPreview:");
-    println!("[{}/{}]", project, app_name);
-    println!("  type: {}", detected.app_type);
-    println!("  path: {}", detected.path);
-    
-    // Show local commands and default if available
-    if let Some(local_cmds) = &detected.local_commands {
-        println!("  local commands: {}", local_cmds.keys().cloned().collect::<Vec<_>>().join(", "));
-        if let Some(default) = &detected.suggested_local_default {
-            println!("    default: {}", default);
-        }
-    }
-    
-    // Show docker commands and default if available
-    if let Some(docker_cmds) = &detected.docker_commands {
-        println!("  docker commands: {}", docker_cmds.keys().cloned().collect::<Vec<_>>().join(", "));
-        if let Some(default) = &detected.suggested_docker_default {
-            println!("    default: {}", default);
-        }
-    }
-    
-    // Show kubernetes commands if available
-    if let Some(k8s_cmds) = &detected.k8s_commands {
-        println!("  k8s commands: {}", k8s_cmds.keys().cloned().collect::<Vec<_>>().join(", "));
-    }
-    
-    println!();
-}
-
-// Yes/no confirmation prompt with default to yes using inquire
-fn confirm_default_yes(prompt: &str) -> Result<bool> {
-    let confirmed = Confirm::new(prompt)
-        .with_default(true)
-        .with_help_message("Press Enter to confirm, or 'n' to skip")
-        .prompt()?;
-    
-    Ok(confirmed)
-}
-
-// Interactive Nx app selection using inquire for proper UI with arrow keys
-fn interactive_nx_app_selection(apps: &[crate::detection::DetectedApp]) -> Result<Vec<usize>> {
-    // Create display options for each app with command counts
-    let options: Vec<String> = apps
-        .iter()
-        .enumerate()
-        .map(|(idx, app)| {
-            let cmd_count = app.local_commands.as_ref().map(|c| c.len()).unwrap_or(0);
-            format!("{}. {} ({} commands)", idx + 1, app.app_name, cmd_count)
-        })
-        .collect();
-    
-    // Use inquire's MultiSelect for checkbox-style selection
-    let selected = MultiSelect::new("Select apps to add:", options.clone())
-        .with_help_message("Use ↑/↓ to navigate, Space to select/deselect, Enter to confirm")
-        .prompt();
-    
-    match selected {
-        Ok(selections) => {
-            // Convert selected display strings back to indices
-            let mut indices = Vec::new();
-            for selection in selections {
-                if let Some(index) = options.iter().position(|opt| opt == &selection) {
-                    indices.push(index);
-                }
-            }
-            Ok(indices)
-        }
-        Err(_) => {
-            // User cancelled (Ctrl+C or ESC)
-            Ok(vec![])
-        }
-    }
-}
-
-// Interactive app selection using inquire for proper UI with arrow keys
-fn interactive_app_selection(apps: &[crate::detection::DetectedApp]) -> Result<Vec<usize>> {
-    // Create display options for each app
-    let options: Vec<String> = apps
-        .iter()
-        .map(|app| {
-            let cmd_count = app.local_commands.as_ref().map(|c| c.len()).unwrap_or(0)
-                + app.docker_commands.as_ref().map(|c| c.len()).unwrap_or(0)
-                + app.k8s_commands.as_ref().map(|c| c.len()).unwrap_or(0);
-            
-            format!("{} ({}) - {} commands | {}", 
-                app.app_name, 
-                app.app_type, 
-                cmd_count,
-                app.path
-            )
-        })
-        .collect();
-
-    println!();
-    
-    // Use inquire's MultiSelect for checkbox-style selection with arrow keys
-    let selected = MultiSelect::new("Select apps to add:", options.clone())
-        .with_help_message("Use ↑/↓ to navigate, Space to select/deselect, Enter to confirm")
-        .prompt();
-    
-    match selected {
-        Ok(selections) => {
-            // Convert selected display strings back to indices
-            let mut indices = Vec::new();
-            for selection in selections {
-                if let Some(index) = options.iter().position(|opt| opt == &selection) {
-                    indices.push(index);
-                }
-            }
-            Ok(indices)
-        }
-        Err(_) => {
-            // User cancelled (Ctrl+C or ESC)
-            Ok(vec![])
-        }
-    }
-}
-
 // Add the detected app to the config and save it to disk
 // Args:
 //   - config: The current config (will be modified)
@@ -705,3 +388,6 @@ fn add_to_config(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "single_app_test.rs"]
+mod single_app_test;

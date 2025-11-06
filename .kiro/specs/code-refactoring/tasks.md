@@ -14,7 +14,7 @@
   - Add code comments explaining command organization
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 7.1, 7.4_
 
-- [ ] 3. Refactor commands/auto_add.rs (690 lines → functionality-based modules)
+- [x] 3. Refactor commands/auto_add.rs (690 lines → functionality-based modules)
 
   - Split into commands/auto_add/single_app.rs, nx_monorepo.rs, interactive.rs, validation.rs
   - Maintain public API through re-exports in commands/auto_add/mod.rs
@@ -26,6 +26,7 @@
   - Split into commands/start/resolver.rs, dependencies.rs, executor.rs, logging.rs
   - Maintain public API through re-exports in commands/start/mod.rs
   - Add code comments explaining responsibility organization
+  - Add unit tests for each module (in separate file)
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 7.1, 7.4_
 
 - [ ] 5. Refactor detection_tests.rs (1,100 lines → feature-based test modules)
@@ -33,10 +34,12 @@
   - Split into separate test files by feature area
   - Organize tests by detection functionality (app types, environments, nx, integration)
   - Maintain all existing test coverage
+  - Add unit tests for each module (in separate file)
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
 - [ ] 6. Refactor config/resolver_tests.rs (656 lines → focused test modules)
   - Split into separate test files by resolver functionality
   - Organize tests by resolution, dependencies, and validation concerns
   - Maintain all existing test coverage
+  - Add unit tests for each module (in separate file)
   - _Requirements: 6.1, 6.3, 6.4, 6.5_
