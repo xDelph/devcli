@@ -37,7 +37,7 @@
   - Add unit tests for each module (in separate file)
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 6. Refactor config/resolver_tests.rs (656 lines → focused test modules)
+- [x] 6. Refactor config/resolver_tests.rs (656 lines → focused test modules)
   - Split into separate test files by resolver functionality
   - Organize tests by resolution, dependencies, and validation concerns
   - Maintain all existing test coverage

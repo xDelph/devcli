@@ -14,7 +14,7 @@ pub mod resolver;
 #[cfg(test)]
 mod config_tests;
 #[cfg(test)]
-mod resolver_tests;
+mod tests;
 
 pub use loader::{load_config, load_preferences, save_config, save_preferences};
 pub use models::{App, Commands, Config, Defaults, Dependency, Preferences, Project};
