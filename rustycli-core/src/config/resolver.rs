@@ -3,6 +3,7 @@
 
 use super::models::{App, Config};
 use crate::Result;
+use inquire::Select;
 
 // Container for a resolved app with full context
 // When we find an app, we need to know both which project it's in and its data
@@ -89,12 +90,40 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
             // .collect() = gather into a Vec<String>
             let project_list: Vec<String> = matches.iter().map(|(p, _)| p.clone()).collect();
             
-            // Tell the user they need to specify which project
-            anyhow::bail!(
-                "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
-                app_name,
-                project_list.join(", ") // Join with commas: "proj1, proj2, proj3"
+            // Instead of just throwing an error, prompt the user to select
+            let prompt_message = format!(
+                "App '{}' found in multiple projects. Please select one:",
+                app_name
             );
+            
+            // Create an interactive selection prompt
+            let selection = Select::new(&prompt_message, project_list.clone())
+                .prompt();
+            
+            match selection {
+                Ok(selected_project) => {
+                    // User selected a project, find and return that app
+                    let (project, app) = matches
+                        .into_iter()
+                        .find(|(p, _)| p == &selected_project)
+                        .unwrap(); // Safe because we know it exists
+                    
+                    Ok(ResolvedApp {
+                        project,
+                        app_name: app_name.to_string(),
+                        app,
+                    })
+                }
+                Err(_) => {
+                    // User cancelled the prompt or there was an error
+                    // Fall back to the original error message
+                    anyhow::bail!(
+                        "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
+                        app_name,
+                        project_list.join(", ")
+                    );
+                }
+            }
         }
     }
 }
