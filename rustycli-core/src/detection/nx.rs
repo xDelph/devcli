@@ -99,11 +99,11 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
                     if let Ok(project_config) = serde_json::from_str::<Value>(&json_str) {
                         // Extract targets (build, serve, test, lint, etc.)
                         if let Some(targets) = project_config.get("targets").and_then(|t| t.as_object()) {
-                            // For each target, create a command like "npx nx build app-name"
+                            // For each target, create a command like "npx nx run app-name:target"
                             for (target_name, _) in targets {
                                 local_commands.insert(
                                     target_name.clone(),
-                                    format!("{} {} {}", nx_cmd, target_name, app_name),
+                                    format!("{} run {}:{}", nx_cmd, app_name, target_name),
                                 );
                             }
                             // Stop trying other commands once we successfully got targets

@@ -10,9 +10,9 @@ mod tests {
     fn create_nx_test_app(app_name: &str, has_commands: bool) -> DetectedApp {
         let local_commands = if has_commands {
             let mut commands = HashMap::new();
-            commands.insert("start".to_string(), format!("nx serve {}", app_name));
-            commands.insert("build".to_string(), format!("nx build {}", app_name));
-            commands.insert("test".to_string(), format!("nx test {}", app_name));
+            commands.insert("start".to_string(), format!("nx run {}:serve", app_name));
+            commands.insert("build".to_string(), format!("nx run {}:build", app_name));
+            commands.insert("test".to_string(), format!("nx run {}:test", app_name));
             Some(commands)
         } else {
             None
@@ -46,8 +46,8 @@ mod tests {
         assert!(commands.contains_key("test"));
         
         // Verify command format
-        assert_eq!(commands.get("start").unwrap(), "nx serve frontend");
-        assert_eq!(commands.get("build").unwrap(), "nx build frontend");
+        assert_eq!(commands.get("start").unwrap(), "nx run frontend:serve");
+        assert_eq!(commands.get("build").unwrap(), "nx run frontend:build");
         
         // Verify default suggestion
         assert_eq!(app.suggested_local_default, Some("start".to_string()));
@@ -78,11 +78,11 @@ mod tests {
         
         // Verify commands use the correct app names
         if let Some(commands) = &app1.local_commands {
-            assert_eq!(commands.get("start").unwrap(), "nx serve my-frontend-app");
+            assert_eq!(commands.get("start").unwrap(), "nx run my-frontend-app:serve");
         }
         
         if let Some(commands) = &app2.local_commands {
-            assert_eq!(commands.get("build").unwrap(), "nx build shared_utils");
+            assert_eq!(commands.get("build").unwrap(), "nx run shared_utils:build");
         }
     }
 
