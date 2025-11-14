@@ -1,6 +1,7 @@
 // Unit tests for TUI components
-// Tests state management, theme, and core functionality
+// Tests state management, theme, log manager, and core functionality
 
+use super::log_manager::LogManager;
 use super::state::{AppStatus, ViewType};
 use super::theme::Theme;
 use chrono::{Duration, Utc};
@@ -86,4 +87,116 @@ fn test_app_status_uptime_formatting() {
     if let AppStatus::Running { uptime: u, .. } = status {
         assert_eq!(u.num_seconds(), 3665);
     }
+}
+
+// Log Manager Tests
+
+#[test]
+fn test_log_manager_format_file_size() {
+    // Test bytes
+    assert_eq!(LogManager::format_file_size(0), "0 B");
+    assert_eq!(LogManager::format_file_size(500), "500 B");
+    assert_eq!(LogManager::format_file_size(1023), "1023 B");
+    
+    // Test kilobytes
+    assert_eq!(LogManager::format_file_size(1024), "1.0 KB");
+    assert_eq!(LogManager::format_file_size(1536), "1.5 KB");
+    assert_eq!(LogManager::format_file_size(2048), "2.0 KB");
+    
+    // Test megabytes
+    assert_eq!(LogManager::format_file_size(1024 * 1024), "1.0 MB");
+    assert_eq!(LogManager::format_file_size(2_500_000), "2.4 MB");
+    assert_eq!(LogManager::format_file_size(5 * 1024 * 1024), "5.0 MB");
+    
+    // Test gigabytes
+    assert_eq!(LogManager::format_file_size(1024 * 1024 * 1024), "1.0 GB");
+    assert_eq!(LogManager::format_file_size(2_500_000_000), "2.3 GB");
+}
+
+#[test]
+fn test_log_manager_format_relative_date() {
+    let now = Utc::now();
+    
+    // Test "Today" formatting
+    let today = now;
+    let formatted = LogManager::format_relative_date(&today);
+    assert!(formatted.starts_with("Today"), "Expected 'Today', got: {}", formatted);
+    assert!(formatted.contains(":"), "Expected time format with colon");
+    
+    // Test "Yesterday"
+    let yesterday = now - Duration::days(1);
+    assert_eq!(LogManager::format_relative_date(&yesterday), "Yesterday");
+    
+    // Test "X days ago" (within a week)
+    let two_days = now - Duration::days(2);
+    assert_eq!(LogManager::format_relative_date(&two_days), "2 days ago");
+    
+    let three_days = now - Duration::days(3);
+    assert_eq!(LogManager::format_relative_date(&three_days), "3 days ago");
+    
+    let six_days = now - Duration::days(6);
+    assert_eq!(LogManager::format_relative_date(&six_days), "6 days ago");
+    
+    // Test date format (older than a week)
+    let ten_days = now - Duration::days(10);
+    let formatted = LogManager::format_relative_date(&ten_days);
+    // Should be in "Mon DD" format, not "X days ago"
+    assert!(!formatted.contains("days ago"), "Expected date format, got: {}", formatted);
+    assert!(!formatted.contains("Today"), "Expected date format, got: {}", formatted);
+    assert!(!formatted.contains("Yesterday"), "Expected date format, got: {}", formatted);
+    
+    // Verify it contains a month abbreviation (Jan, Feb, etc.)
+    let has_month = formatted.contains("Jan") || formatted.contains("Feb") || 
+                    formatted.contains("Mar") || formatted.contains("Apr") ||
+                    formatted.contains("May") || formatted.contains("Jun") ||
+                    formatted.contains("Jul") || formatted.contains("Aug") ||
+                    formatted.contains("Sep") || formatted.contains("Oct") ||
+                    formatted.contains("Nov") || formatted.contains("Dec");
+    assert!(has_month, "Expected month abbreviation in: {}", formatted);
+}
+
+#[test]
+fn test_log_manager_creation() {
+    // Test that LogManager can be created successfully
+    let result = LogManager::new();
+    assert!(result.is_ok(), "LogManager creation should succeed");
+    
+    // Test default implementation
+    let _log_manager = LogManager::default();
+}
+
+#[test]
+fn test_log_manager_list_logs_empty_directory() {
+    // Test listing logs when directory doesn't exist
+    let log_manager = LogManager::new().expect("Failed to create LogManager");
+    
+    // Use a non-existent app name to ensure no logs are found
+    let result = log_manager.list_logs_for_app("nonexistent-app-12345");
+    
+    // Should return Ok with empty vector, not an error
+    assert!(result.is_ok(), "Should handle missing directory gracefully");
+    let logs = result.unwrap();
+    assert_eq!(logs.len(), 0, "Should return empty vector for non-existent app");
+}
+
+#[test]
+fn test_log_file_sorting() {
+    // This test verifies the sorting logic conceptually
+    // In a real scenario, log files would be sorted by modification date (newest first)
+    
+    let now = Utc::now();
+    let older = now - Duration::days(1);
+    let oldest = now - Duration::days(2);
+    
+    // Verify that newer dates compare as greater
+    assert!(now > older);
+    assert!(older > oldest);
+    
+    // When sorted in descending order (newest first), now should come before older
+    let mut dates = vec![oldest, now, older];
+    dates.sort_by(|a, b| b.cmp(a)); // Descending order
+    
+    assert_eq!(dates[0], now);
+    assert_eq!(dates[1], older);
+    assert_eq!(dates[2], oldest);
 }

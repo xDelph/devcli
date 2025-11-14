@@ -3,6 +3,7 @@
 // Inspired by GitUI's clean and efficient design
 
 pub mod app;
+pub mod log_manager;
 pub mod state;
 pub mod theme;
 pub mod views;
@@ -10,6 +11,7 @@ pub mod widgets;
 
 // Re-export main types for easier access
 pub use app::TuiApp;
+pub use log_manager::{LogFileInfo, LogManager};
 pub use state::{AppState, AppStatus, ProjectState, ViewType};
 pub use theme::Theme;
 pub use views::{MainView, MainTab, PanelFocus};

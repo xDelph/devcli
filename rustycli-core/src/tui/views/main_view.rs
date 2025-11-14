@@ -2,6 +2,7 @@
 // Inspired by GitUI's clean tab-based interface
 // Features: Status, Commands, and Logs tabs with project/app tree on left and details on right
 
+use crate::tui::log_manager::LogManager;
 use crate::tui::state::{AppState, AppStateData};
 use crate::tui::theme::Theme;
 use anyhow::Result;
@@ -32,6 +33,11 @@ pub struct MainView {
     /// Selected command index in the Commands tab
     /// Tracks which command is highlighted in the detail panel
     pub(crate) selected_command_idx: usize,
+    /// Selected log file index in the Logs tab
+    /// Tracks which log file is highlighted in the detail panel
+    pub(crate) selected_log_idx: usize,
+    /// Log manager for discovering log files
+    pub(crate) log_manager: LogManager,
 }
 
 /// The three main tabs in the interface
@@ -63,6 +69,8 @@ impl MainView {
             list_scroll: 0,
             detail_scroll: 0,
             selected_command_idx: 0,
+            selected_log_idx: 0,
+            log_manager: LogManager::default(),
         }
     }
 
@@ -91,6 +99,7 @@ impl MainView {
                 self.active_tab = MainTab::Logs;
                 self.detail_scroll = 0;
                 self.selected_command_idx = 0; // Reset command selection
+                self.selected_log_idx = 0; // Reset log selection
                 Ok(true)
             }
             // Tab key to switch panel focus
@@ -106,13 +115,17 @@ impl MainView {
                 match self.focus {
                     PanelFocus::AppList => {
                         state.select_previous();
-                        // Reset command selection when changing apps
+                        // Reset command and log selection when changing apps
                         self.selected_command_idx = 0;
+                        self.selected_log_idx = 0;
                     }
                     PanelFocus::DetailPanel => {
                         // In Commands tab, navigate through commands
                         if self.active_tab == MainTab::Commands {
                             self.selected_command_idx = self.selected_command_idx.saturating_sub(1);
+                        } else if self.active_tab == MainTab::Logs {
+                            // In Logs tab, navigate through log files
+                            self.selected_log_idx = self.selected_log_idx.saturating_sub(1);
                         } else {
                             // Scroll up in detail panel for other tabs
                             self.detail_scroll = self.detail_scroll.saturating_sub(1);
@@ -125,8 +138,9 @@ impl MainView {
                 match self.focus {
                     PanelFocus::AppList => {
                         state.select_next();
-                        // Reset command selection when changing apps
+                        // Reset command and log selection when changing apps
                         self.selected_command_idx = 0;
+                        self.selected_log_idx = 0;
                     }
                     PanelFocus::DetailPanel => {
                         // In Commands tab, navigate through commands
@@ -136,6 +150,16 @@ impl MainView {
                                 let total_commands = Self::count_total_commands(app);
                                 if self.selected_command_idx < total_commands.saturating_sub(1) {
                                     self.selected_command_idx += 1;
+                                }
+                            }
+                        } else if self.active_tab == MainTab::Logs {
+                            // In Logs tab, navigate through log files
+                            if let Some(app) = state.selected_app() {
+                                // Get log files to determine max index
+                                if let Ok(log_files) = self.log_manager.list_logs_for_app(&app.name) {
+                                    if self.selected_log_idx < log_files.len().saturating_sub(1) {
+                                        self.selected_log_idx += 1;
+                                    }
                                 }
                             }
                         } else {
@@ -649,7 +673,7 @@ impl MainView {
     }
 
     /// Builds the content for the logs panel
-    /// Shows available log files (placeholder for now)
+    /// Shows available log files with name, size, and date
     fn build_logs_content<'a>(&self, app: &'a AppStateData, theme: &'a Theme) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
@@ -666,11 +690,78 @@ impl MainView {
         ]));
         lines.push(Line::from("")); // Empty line for spacing
 
-        // Placeholder content - actual log file discovery will be implemented in task 5
-        lines.push(Line::from(Span::styled(
-            "Log file discovery coming soon...",
-            Style::default().fg(theme.text_dim),
-        )));
+        // Discover log files for this app
+        match self.log_manager.list_logs_for_app(&app.name) {
+            Ok(log_files) => {
+                if log_files.is_empty() {
+                    // No log files found - show helpful message
+                    lines.push(Line::from(Span::styled(
+                        "No log files found for this app.",
+                        Style::default().fg(theme.text_dim),
+                    )));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "Log files will appear here after you start the app.",
+                        Style::default().fg(theme.text_dim),
+                    )));
+                } else {
+                    // Display log files
+                    for (idx, log_file) in log_files.iter().enumerate() {
+                        // Check if this log file is selected
+                        let is_selected = idx == self.selected_log_idx
+                            && self.focus == PanelFocus::DetailPanel;
+                        
+                        // Format file size and date
+                        let size_str = LogManager::format_file_size(log_file.size);
+                        let date_str = LogManager::format_relative_date(&log_file.modified);
+                        
+                        // Choose prefix and styling based on selection
+                        let (prefix, name_style, meta_style) = if is_selected {
+                            (
+                                " >",
+                                Style::default()
+                                    .fg(theme.text)
+                                    .bg(theme.selected_bg)
+                                    .add_modifier(Modifier::BOLD),
+                                Style::default()
+                                    .fg(theme.text_dim)
+                                    .bg(theme.selected_bg),
+                            )
+                        } else {
+                            (
+                                "  ",
+                                Style::default().fg(theme.text),
+                                Style::default().fg(theme.text_dim),
+                            )
+                        };
+                        
+                        // First line: prefix + filename
+                        lines.push(Line::from(vec![
+                            Span::styled(prefix, Style::default().fg(theme.primary)),
+                            Span::styled(format!(" {}", log_file.name), name_style),
+                        ]));
+                        
+                        // Second line: size and date (indented)
+                        lines.push(Line::from(vec![
+                            Span::styled("   ", Style::default()),
+                            Span::styled(format!("{}    {}", size_str, date_str), meta_style),
+                        ]));
+                        
+                        // Empty line between log files for readability
+                        if idx < log_files.len() - 1 {
+                            lines.push(Line::from(""));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // Error reading log files - show error message
+                lines.push(Line::from(Span::styled(
+                    format!("Error reading log files: {}", e),
+                    Style::default().fg(theme.error),
+                )));
+            }
+        }
 
         lines
     }

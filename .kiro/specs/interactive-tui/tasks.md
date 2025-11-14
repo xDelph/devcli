@@ -44,7 +44,7 @@
   - Ensure no compiler warnings (handle all error cases, no unwrap() in production code)
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 5. Implement Logs tab with file browser
+- [x] 5. Implement Logs tab with file browser
 
   - Create LogManager in rustycli-core/src/tui/log_manager.rs to discover log files in ~/.rustycli/logs/
   - Render log file list with name, size, and date
