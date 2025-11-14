@@ -4,6 +4,7 @@
 
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
+use super::views::MainView;
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
 use anyhow::{Context, Result};
@@ -15,8 +16,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
+    style::Style,
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
@@ -30,6 +30,8 @@ pub struct TuiApp {
     state: AppState,
     /// Visual theme for the UI
     theme: Theme,
+    /// Main view instance
+    main_view: MainView,
     /// Process tracker for checking app status
     /// Will be used in future tasks for status updates
     #[allow(dead_code)]
@@ -54,10 +56,14 @@ impl TuiApp {
         
         // Load theme
         let theme = Theme::default();
+        
+        // Create main view
+        let main_view = MainView::new();
 
         Ok(Self {
             state,
             theme,
+            main_view,
             process_tracker,
             should_quit: false,
         })
@@ -123,6 +129,11 @@ impl TuiApp {
                 self.should_quit = true;
                 return Ok(());
             }
+            // Handle Ctrl+C to quit
+            KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+                return Ok(());
+            }
             // Go back to previous view
             KeyCode::Esc => {
                 self.handle_back();
@@ -142,24 +153,8 @@ impl TuiApp {
 
     /// Handles input for the main view
     fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            // Navigation
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.state.select_previous();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.state.select_next();
-            }
-            // Toggle project expansion
-            KeyCode::Char(' ') => {
-                self.state.toggle_project_expansion();
-            }
-            // Enter - could be used to open details or execute default action
-            KeyCode::Enter => {
-                // TODO: Implement default action (e.g., start/stop app)
-            }
-            _ => {}
-        }
+        // Delegate to the main view's input handler
+        self.main_view.handle_input(key, &mut self.state)?;
         Ok(())
     }
 
@@ -208,98 +203,8 @@ impl TuiApp {
     /// Renders the main view
     /// Shows projects, apps, and their status
     fn render_main_view(&self, frame: &mut Frame) {
-        let size = frame.size();
-
-        // Create main layout: header, content, footer
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(0),    // Content
-                Constraint::Length(3), // Footer
-            ])
-            .split(size);
-
-        // Render header
-        self.render_header(frame, chunks[0]);
-
-        // Render content
-        self.render_content(frame, chunks[1]);
-
-        // Render footer
-        self.render_footer(frame, chunks[2]);
-    }
-
-    /// Renders the header with title
-    fn render_header(&self, frame: &mut Frame, area: Rect) {
-        let title = Paragraph::new("RustyCLI - Interactive TUI")
-            .style(Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(self.theme.border)));
-        
-        frame.render_widget(title, area);
-    }
-
-    /// Renders the main content area
-    fn render_content(&self, frame: &mut Frame, area: Rect) {
-        // Build the content text
-        let mut lines = Vec::new();
-        
-        for (proj_idx, project) in self.state.projects.iter().enumerate() {
-            // Project header
-            let expansion_icon = if project.expanded { "▼" } else { "▶" };
-            let project_line = format!("{} {}", expansion_icon, project.name);
-            
-            let style = if proj_idx == self.state.selected_project_idx {
-                Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(self.theme.text)
-            };
-            
-            lines.push(Line::from(Span::styled(project_line, style)));
-
-            // Apps in project (if expanded)
-            if project.expanded {
-                for (app_idx, app) in project.apps.iter().enumerate() {
-                    let status_icon = if app.status.is_running() { "●" } else { "○" };
-                    let status_color = if app.status.is_running() {
-                        self.theme.running
-                    } else {
-                        self.theme.stopped
-                    };
-                    
-                    let is_selected = proj_idx == self.state.selected_project_idx 
-                        && app_idx == self.state.selected_app_idx;
-                    
-                    let style = if is_selected {
-                        Style::default().bg(self.theme.selected_bg).fg(self.theme.text)
-                    } else {
-                        Style::default().fg(self.theme.text)
-                    };
-                    
-                    lines.push(Line::from(vec![
-                        Span::styled(status_icon, Style::default().fg(status_color)),
-                        Span::styled(format!(" {}", app.name), style),
-                    ]));
-                }
-            }
-        }
-
-        let content = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Applications").border_style(Style::default().fg(self.theme.border)));
-        
-        frame.render_widget(content, area);
-    }
-
-    /// Renders the footer with keyboard shortcuts
-    fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let shortcuts = "↑↓/jk: Navigate  Space: Expand/Collapse  q: Quit  ?: Help";
-        let footer = Paragraph::new(shortcuts)
-            .style(Style::default().fg(self.theme.text_dim))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(self.theme.border)));
-        
-        frame.render_widget(footer, area);
+        // Delegate to the main view's render method
+        self.main_view.render(frame, &self.state, &self.theme);
     }
 
     /// Renders an error message overlay

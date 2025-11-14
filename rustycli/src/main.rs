@@ -13,7 +13,7 @@ use rustycli_core::commands::{
     auto_add_command, config_add_command, config_edit, config_edit_command, config_init, 
     config_list, config_list_commands, config_remove_command, config_set_default, 
     config_show, config_validate, monitor_command, pref_reset, pref_set, pref_show, 
-    restart_command, run_command, start_command, status_command, stop_command,
+    restart_command, run_command, start_command, status_command, stop_command, ui_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -154,6 +154,11 @@ enum Commands {
         #[command(subcommand)]
         action: PrefAction, // Nested subcommands (set, show, reset)
     },
+    
+    // The "ui" subcommand
+    // Example: rustycli ui
+    #[command(about = "Launch interactive TUI")]
+    Ui,
 }
 
 // Nested subcommands for "config"
@@ -442,6 +447,11 @@ async fn run() -> Result<()> {
             PrefAction::Show => pref_show().await?,
             PrefAction::Reset => pref_reset().await?,
         },
+        
+        // Handle the "ui" command
+        Commands::Ui => {
+            ui_command()?;
+        }
     }
     
     // Return Ok(()) to indicate success

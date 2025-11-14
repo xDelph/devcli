@@ -12,7 +12,7 @@
   - Ensure no compiler warnings (fix all unused variables, imports, dead code)
   - _Requirements: 1.1, 1.2, 1.4, 3.4_
 
-- [ ] 2. Implement main view with split-panel layout
+- [x] 2. Implement main view with split-panel layout
 
   - Create MainView in rustycli-core/src/tui/views/main_view.rs with tab system (Status, Commands, Logs)
   - Implement split-panel layout (30% left app list, 70% right details)
