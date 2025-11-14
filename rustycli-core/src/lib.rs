@@ -6,6 +6,7 @@ pub mod config;
 pub mod detection;
 pub mod logging;
 pub mod process;
+pub mod tui;
 pub mod utils;
 
 // Re-export commonly used types from the anyhow crate for error handling

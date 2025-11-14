@@ -9,6 +9,7 @@ pub mod run;
 pub mod start;
 pub mod status;
 pub mod stop;
+pub mod ui;
 
 pub use auto_add::auto_add_command;
 pub use config::{
@@ -22,3 +23,4 @@ pub use run::run_command;
 pub use start::start_command;
 pub use status::status_command;
 pub use stop::stop_command;
+pub use ui::ui_command;
