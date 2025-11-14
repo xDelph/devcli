@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Tabs},
     Frame,
 };
+use std::sync::{Arc, Mutex};
 
 /// Main view with tab-based navigation and split-panel layout
 /// Left panel (30%): Project/app tree with status indicators
@@ -63,20 +64,24 @@ impl MainView {
 
     /// Handles keyboard input for the main view
     /// Returns true if the event was handled, false otherwise
-    pub fn handle_input(&mut self, key: KeyEvent, state: &mut AppState) -> Result<bool> {
+    pub fn handle_input(&mut self, key: KeyEvent, state: &Arc<Mutex<AppState>>) -> Result<bool> {
+        // Lock the state for modification
+        // Use expect instead of context since PoisonError doesn't implement StdError
+        let mut state = state.lock().expect("Failed to lock state");
         match key.code {
             // Tab switching with number keys (1-3)
-            KeyCode::Char('1') => {
+            // Also support keyboard layout variants (e.g., French AZERTY: &=1, é=2, "=3)
+            KeyCode::Char('1') | KeyCode::Char('&') => {
                 self.active_tab = MainTab::Status;
                 self.detail_scroll = 0; // Reset scroll when switching tabs
                 Ok(true)
             }
-            KeyCode::Char('2') => {
+            KeyCode::Char('2') | KeyCode::Char('é') => {
                 self.active_tab = MainTab::Commands;
                 self.detail_scroll = 0;
                 Ok(true)
             }
-            KeyCode::Char('3') => {
+            KeyCode::Char('3') | KeyCode::Char('"') => {
                 self.active_tab = MainTab::Logs;
                 self.detail_scroll = 0;
                 Ok(true)
@@ -329,7 +334,7 @@ impl MainView {
     }
 
     /// Builds the content for the status panel
-    /// Shows app name, status, PID, uptime, type, and other details
+    /// Shows app name, status, PID, uptime, type, path, and dependencies
     fn build_status_content<'a>(&self, app: &'a AppStateData, theme: &'a Theme) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
@@ -386,6 +391,35 @@ impl MainView {
             Span::styled("Project:     ", Style::default().fg(theme.text_dim)),
             Span::styled(app.project.clone(), Style::default().fg(theme.text)),
         ]));
+
+        // Path (if available from app data)
+        if let Some(path) = &app.path {
+            lines.push(Line::from(vec![
+                Span::styled("Path:        ", Style::default().fg(theme.text_dim)),
+                Span::styled(path.clone(), Style::default().fg(theme.text)),
+            ]));
+        }
+
+        // Dependencies section
+        if !app.dependencies.is_empty() {
+            lines.push(Line::from("")); // Empty line for spacing
+            lines.push(Line::from(Span::styled(
+                "Dependencies:",
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            for dep in &app.dependencies {
+                // Show dependency with a checkmark or x based on status
+                // For now, we'll just show the dependency name
+                // TODO: Check actual dependency status
+                lines.push(Line::from(vec![
+                    Span::styled("  • ", Style::default().fg(theme.text_dim)),
+                    Span::styled(dep.clone(), Style::default().fg(theme.text)),
+                ]));
+            }
+        }
 
         lines
     }

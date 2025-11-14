@@ -21,21 +21,23 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::time::interval;
 
 /// The main TUI application struct
 /// Manages the terminal, state, and event loop
 pub struct TuiApp {
-    /// Current application state
-    state: AppState,
+    /// Current application state wrapped in Arc<Mutex<>> for thread-safe access
+    /// Arc allows multiple ownership across threads, Mutex ensures only one thread accesses at a time
+    state: Arc<Mutex<AppState>>,
     /// Visual theme for the UI
     theme: Theme,
     /// Main view instance
     main_view: MainView,
     /// Process tracker for checking app status
-    /// Will be used in future tasks for status updates
-    #[allow(dead_code)]
-    process_tracker: ProcessTracker,
+    /// Shared across threads for background status polling
+    process_tracker: Arc<ProcessTracker>,
     /// Flag to indicate the app should quit
     should_quit: bool,
 }
@@ -47,12 +49,15 @@ impl TuiApp {
         // Load configuration from disk
         let config = load_config().context("Failed to load configuration")?;
         
-        // Initialize process tracker
-        let process_tracker = ProcessTracker::new()?;
+        // Initialize process tracker wrapped in Arc for shared ownership
+        let process_tracker = Arc::new(ProcessTracker::new()?);
         
         // Create initial state from config
         let state = AppState::from_config(&config, &process_tracker)
             .context("Failed to create application state")?;
+        
+        // Wrap state in Arc<Mutex<>> for thread-safe access from background polling
+        let state = Arc::new(Mutex::new(state));
         
         // Load theme
         let theme = Theme::default();
@@ -71,7 +76,7 @@ impl TuiApp {
 
     /// Runs the TUI application
     /// Sets up the terminal, runs the event loop, and cleans up on exit
-    pub fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         // Setup terminal
         enable_raw_mode().context("Failed to enable raw mode")?;
         let mut stdout = io::stdout();
@@ -81,8 +86,15 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
+        // Start background status polling task
+        // This task runs independently and updates app statuses every 2 seconds
+        let polling_handle = self.start_status_polling();
+
         // Run the main loop
         let result = self.run_event_loop(&mut terminal);
+
+        // Stop the background polling task
+        polling_handle.abort();
 
         // Cleanup terminal
         disable_raw_mode().context("Failed to disable raw mode")?;
@@ -142,8 +154,14 @@ impl TuiApp {
             _ => {}
         }
 
+        // Get current view type by locking state briefly
+        let current_view = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.current_view.clone()
+        };
+
         // View-specific handling
-        match &self.state.current_view {
+        match &current_view {
             ViewType::Main => self.handle_main_view_input(key),
             ViewType::CommandList { .. } => self.handle_command_list_input(key),
             ViewType::LogBrowser { .. } => self.handle_log_browser_input(key),
@@ -181,30 +199,108 @@ impl TuiApp {
     fn handle_back(&mut self) {
         // For now, always return to main view
         // TODO: Implement view stack for proper back navigation
-        self.state.current_view = ViewType::Main;
+        if let Ok(mut state) = self.state.lock() {
+            state.current_view = ViewType::Main;
+        }
+    }
+
+    /// Starts a background task that polls process status every 2 seconds
+    /// This keeps the UI updated with current running states without blocking user interaction
+    /// Returns a JoinHandle that can be used to abort the task when the app exits
+    fn start_status_polling(&self) -> tokio::task::JoinHandle<()> {
+        // Clone Arc references so they can be moved into the async task
+        let state = Arc::clone(&self.state);
+        let process_tracker = Arc::clone(&self.process_tracker);
+
+        tokio::spawn(async move {
+            // Create an interval that ticks every 2 seconds
+            let mut interval = interval(Duration::from_secs(2));
+
+            loop {
+                // Wait for the next tick
+                interval.tick().await;
+
+                // Try to acquire the state lock
+                // If we can't get it immediately, skip this update cycle
+                // This prevents blocking if the main thread is using the state
+                if let Ok(mut state) = state.try_lock() {
+                    // Update status for all apps in all projects
+                    for project in &mut state.projects {
+                        for app in &mut project.apps {
+                            // Check if the app is currently running
+                            app.status = Self::check_app_status(&app.name, &process_tracker);
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Checks the current status of an app by querying the process tracker
+    /// Returns the updated AppStatus (Running with details or Stopped)
+    fn check_app_status(
+        app_name: &str,
+        process_tracker: &ProcessTracker,
+    ) -> crate::tui::state::AppStatus {
+        use crate::tui::state::AppStatus;
+
+        // Try to get process info from the tracker
+        match process_tracker.get_process(app_name) {
+            Ok(Some(process_info)) => {
+                // Verify the process is actually still running
+                if process_tracker.is_running(process_info.pid) {
+                    // Calculate uptime from start time to now
+                    let uptime = chrono::Utc::now()
+                        .signed_duration_since(process_info.start_time);
+                    
+                    AppStatus::Running {
+                        pid: process_info.pid,
+                        uptime,
+                        start_time: process_info.start_time,
+                    }
+                } else {
+                    // Process is in tracker but not running anymore
+                    AppStatus::Stopped
+                }
+            }
+            Ok(None) => {
+                // No process info found - app is stopped
+                AppStatus::Stopped
+            }
+            Err(_) => {
+                // Error checking status - mark as unknown
+                AppStatus::Unknown
+            }
+        }
     }
 
     /// Renders the UI
     /// Delegates to view-specific rendering based on current view
     fn render(&self, frame: &mut Frame) {
-        match &self.state.current_view {
-            ViewType::Main => self.render_main_view(frame),
+        // Lock the state for reading during rendering
+        // If we can't get the lock, skip this frame
+        let Ok(state) = self.state.lock() else {
+            return;
+        };
+
+        match &state.current_view {
+            ViewType::Main => self.render_main_view(frame, &state),
             ViewType::CommandList { .. } => self.render_command_list_view(frame),
             ViewType::LogBrowser { .. } => self.render_log_browser_view(frame),
             ViewType::LogViewer { .. } => self.render_log_viewer_view(frame),
         }
 
         // Render error message if present
-        if let Some(error) = &self.state.error_message {
+        if let Some(error) = &state.error_message {
             self.render_error_message(frame, error);
         }
     }
 
     /// Renders the main view
     /// Shows projects, apps, and their status
-    fn render_main_view(&self, frame: &mut Frame) {
+    fn render_main_view(&self, frame: &mut Frame, state: &AppState) {
         // Delegate to the main view's render method
-        self.main_view.render(frame, &self.state, &self.theme);
+        self.main_view.render(frame, state, &self.theme);
     }
 
     /// Renders an error message overlay

@@ -23,7 +23,7 @@
   - Ensure no compiler warnings (handle all match arms, use #[allow(dead_code)] only when necessary)
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.4, 7.1, 7.2, 7.4, 7.5_
 
-- [ ] 3. Implement Status tab with app details
+- [x] 3. Implement Status tab with app details
 
   - Render app details in right panel (name, type, status, PID, uptime, path, dependencies)
   - Implement background status polling (every 2 seconds) using tokio

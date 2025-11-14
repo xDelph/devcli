@@ -450,7 +450,7 @@ async fn run() -> Result<()> {
         
         // Handle the "ui" command
         Commands::Ui => {
-            ui_command()?;
+            ui_command().await?;
         }
     }
     

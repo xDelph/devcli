@@ -65,11 +65,18 @@ fn create_test_config() -> Config {
     Config { projects }
 }
 
+use std::sync::{Arc, Mutex};
+
 /// Helper function to create a test app state
 fn create_test_state() -> AppState {
     let config = create_test_config();
     let tracker = ProcessTracker::new().unwrap();
     AppState::from_config(&config, &tracker).unwrap()
+}
+
+/// Helper function to create a test app state wrapped in Arc<Mutex<>>
+fn create_test_state_arc() -> Arc<Mutex<AppState>> {
+    Arc::new(Mutex::new(create_test_state()))
 }
 
 #[test]
@@ -89,23 +96,23 @@ fn test_main_view_default() {
 #[test]
 fn test_tab_switching_with_number_keys() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Switch to Commands tab
     let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.active_tab, MainTab::Commands);
     
     // Switch to Logs tab
     let key = KeyEvent::new(KeyCode::Char('3'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.active_tab, MainTab::Logs);
     
     // Switch back to Status tab
     let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.active_tab, MainTab::Status);
 }
@@ -113,20 +120,20 @@ fn test_tab_switching_with_number_keys() {
 #[test]
 fn test_panel_focus_switching() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Initially focused on AppList
     assert_eq!(view.focus, PanelFocus::AppList);
     
     // Press Tab to switch to DetailPanel
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.focus, PanelFocus::DetailPanel);
     
     // Press Tab again to switch back to AppList
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.focus, PanelFocus::AppList);
 }
@@ -134,95 +141,100 @@ fn test_panel_focus_switching() {
 #[test]
 fn test_navigation_in_app_list() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Ensure focus is on app list
     view.focus = PanelFocus::AppList;
     
-    let initial_project_idx = state.selected_project_idx;
-    let initial_app_idx = state.selected_app_idx;
+    let initial_project_idx = state.lock().unwrap().selected_project_idx;
+    let initial_app_idx = state.lock().unwrap().selected_app_idx;
     
     // Press down arrow
     let key = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     // Selection should have changed
+    let state_locked = state.lock().unwrap();
     assert!(
-        state.selected_project_idx != initial_project_idx 
-        || state.selected_app_idx != initial_app_idx
+        state_locked.selected_project_idx != initial_project_idx 
+        || state_locked.selected_app_idx != initial_app_idx
     );
 }
 
 #[test]
 fn test_navigation_with_vim_keys() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     view.focus = PanelFocus::AppList;
     
-    let initial_project_idx = state.selected_project_idx;
-    let initial_app_idx = state.selected_app_idx;
+    let initial_project_idx = state.lock().unwrap().selected_project_idx;
+    let initial_app_idx = state.lock().unwrap().selected_app_idx;
     
     // Press 'j' (vim down)
     let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     // Selection should have changed
-    assert!(
-        state.selected_project_idx != initial_project_idx 
-        || state.selected_app_idx != initial_app_idx
-    );
+    {
+        let state_locked = state.lock().unwrap();
+        assert!(
+            state_locked.selected_project_idx != initial_project_idx 
+            || state_locked.selected_app_idx != initial_app_idx
+        );
+    }
     
     // Press 'k' (vim up)
     let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     // Should be back to initial position
-    assert_eq!(state.selected_project_idx, initial_project_idx);
-    assert_eq!(state.selected_app_idx, initial_app_idx);
+    let state_locked = state.lock().unwrap();
+    assert_eq!(state_locked.selected_project_idx, initial_project_idx);
+    assert_eq!(state_locked.selected_app_idx, initial_app_idx);
 }
 
 #[test]
 fn test_space_toggles_project_expansion() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     view.focus = PanelFocus::AppList;
     
-    let initial_expanded = state.projects[0].expanded;
+    let initial_expanded = state.lock().unwrap().projects[0].expanded;
     
     // Press space
     let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     
     assert!(handled);
-    assert_eq!(state.projects[0].expanded, !initial_expanded);
+    assert_eq!(state.lock().unwrap().projects[0].expanded, !initial_expanded);
 }
 
 #[test]
 fn test_space_only_works_in_app_list() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Switch focus to detail panel
     view.focus = PanelFocus::DetailPanel;
     
-    let initial_expanded = state.projects[0].expanded;
+    let initial_expanded = state.lock().unwrap().projects[0].expanded;
     
     // Press space - should not toggle expansion
     let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     
     // Event is not handled when in detail panel
     assert!(!handled);
     // Expansion state should not change
-    assert_eq!(state.projects[0].expanded, initial_expanded);
+    assert_eq!(state.lock().unwrap().projects[0].expanded, initial_expanded);
 }
 
 #[test]
 fn test_detail_panel_scrolling() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Switch focus to detail panel
     view.focus = PanelFocus::DetailPanel;
@@ -231,13 +243,13 @@ fn test_detail_panel_scrolling() {
     
     // Press down arrow
     let key = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     assert_eq!(view.detail_scroll, 1);
     
     // Press up arrow
     let key = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     assert_eq!(view.detail_scroll, 0);
 }
@@ -245,14 +257,14 @@ fn test_detail_panel_scrolling() {
 #[test]
 fn test_scroll_reset_on_tab_switch() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Set some scroll offset
     view.detail_scroll = 5;
     
     // Switch tabs
     let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty());
-    view.handle_input(key, &mut state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
     // Scroll should be reset
     assert_eq!(view.detail_scroll, 0);
@@ -261,11 +273,11 @@ fn test_scroll_reset_on_tab_switch() {
 #[test]
 fn test_unhandled_keys_return_false() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Press an unhandled key
     let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     
     assert!(!handled);
 }
@@ -273,11 +285,11 @@ fn test_unhandled_keys_return_false() {
 #[test]
 fn test_enter_key_is_handled() {
     let mut view = MainView::new();
-    let mut state = create_test_state();
+    let state = create_test_state_arc();
     
     // Press Enter
     let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
-    let handled = view.handle_input(key, &mut state).unwrap();
+    let handled = view.handle_input(key, &state).unwrap();
     
     // Enter is handled (even if it doesn't do anything yet)
     assert!(handled);
@@ -308,4 +320,95 @@ fn test_format_duration_hours() {
     let duration = Duration::seconds(7325); // 2h 2m 5s
     let formatted = MainView::format_duration(&duration);
     assert_eq!(formatted, "2h 2m 5s");
+}
+
+// Tests for status formatting and uptime calculations
+
+#[test]
+fn test_format_duration_zero_seconds() {
+    use chrono::Duration;
+    
+    let duration = Duration::seconds(0);
+    let formatted = MainView::format_duration(&duration);
+    assert_eq!(formatted, "0s");
+}
+
+#[test]
+fn test_format_duration_exact_minute() {
+    use chrono::Duration;
+    
+    let duration = Duration::seconds(60);
+    let formatted = MainView::format_duration(&duration);
+    assert_eq!(formatted, "1m 0s");
+}
+
+#[test]
+fn test_format_duration_exact_hour() {
+    use chrono::Duration;
+    
+    let duration = Duration::seconds(3600);
+    let formatted = MainView::format_duration(&duration);
+    assert_eq!(formatted, "1h 0m 0s");
+}
+
+#[test]
+fn test_format_duration_complex() {
+    use chrono::Duration;
+    
+    let duration = Duration::seconds(3661); // 1h 1m 1s
+    let formatted = MainView::format_duration(&duration);
+    assert_eq!(formatted, "1h 1m 1s");
+}
+
+#[test]
+fn test_format_duration_large_value() {
+    use chrono::Duration;
+    
+    let duration = Duration::seconds(86400); // 24 hours
+    let formatted = MainView::format_duration(&duration);
+    assert_eq!(formatted, "24h 0m 0s");
+}
+
+#[test]
+fn test_app_state_includes_path_and_dependencies() {
+    let config = create_test_config();
+    let tracker = ProcessTracker::new().unwrap();
+    let state = AppState::from_config(&config, &tracker).unwrap();
+    
+    // Check that apps have path and dependencies fields
+    if let Some(project) = state.projects.first() {
+        if let Some(app) = project.apps.first() {
+            // Path should be set from config
+            assert!(app.path.is_some());
+            // Dependencies should be initialized (even if empty)
+            assert_eq!(app.dependencies.len(), 0);
+        }
+    }
+}
+
+#[test]
+fn test_tab_switching_with_french_keyboard() {
+    let mut view = MainView::new();
+    let state = create_test_state_arc();
+    
+    // Test French AZERTY keyboard layout keys
+    // & = 1, é = 2, " = 3
+    
+    // Switch to Commands tab with 'é' (French 2)
+    let key = KeyEvent::new(KeyCode::Char('é'), KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Commands);
+    
+    // Switch to Logs tab with '"' (French 3)
+    let key = KeyEvent::new(KeyCode::Char('"'), KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Logs);
+    
+    // Switch back to Status tab with '&' (French 1)
+    let key = KeyEvent::new(KeyCode::Char('&'), KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Status);
 }

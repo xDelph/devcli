@@ -48,6 +48,14 @@ impl AppState {
                     app_type: app_config.app_type.clone(),
                     status,
                     commands: Self::extract_commands(app_config),
+                    path: Some(app_config.path.clone()),
+                    // Extract dependency names from Dependency structs
+                    // Format as "project/app" for clarity
+                    dependencies: app_config
+                        .dependencies
+                        .iter()
+                        .map(|dep| format!("{}/{}", dep.project, dep.app))
+                        .collect(),
                 };
 
                 apps.push(app_state);
@@ -216,6 +224,10 @@ pub struct AppStateData {
     pub status: AppStatus,
     /// Available commands grouped by environment
     pub commands: HashMap<String, Vec<CommandInfo>>,
+    /// Path to the application directory
+    pub path: Option<String>,
+    /// List of dependency app names
+    pub dependencies: Vec<String>,
 }
 
 /// Information about a command

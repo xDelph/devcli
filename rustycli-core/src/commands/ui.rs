@@ -19,12 +19,14 @@ use anyhow::Result;
 /// use rustycli_core::commands::ui_command;
 /// 
 /// // Launch the TUI
-/// ui_command().expect("Failed to run TUI");
+/// # tokio_test::block_on(async {
+/// ui_command().await.expect("Failed to run TUI");
+/// # });
 /// ```
-pub fn ui_command() -> Result<()> {
+pub async fn ui_command() -> Result<()> {
     // Create and run the TUI application
     let mut app = TuiApp::new()?;
-    app.run()?;
+    app.run().await?;
     
     Ok(())
 }
