@@ -4,7 +4,7 @@
 
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
-use super::views::MainView;
+use super::views::{LogViewerView, MainView};
 use super::widgets::command_popup::{CommandPopup, PopupState};
 use crate::commands::start::{start_single_app_internal, StartCommandArgs};
 use crate::config::loader::load_config;
@@ -37,6 +37,8 @@ pub struct TuiApp {
     theme: Theme,
     /// Main view instance
     main_view: MainView,
+    /// Log viewer instance (created when viewing a log file)
+    log_viewer: Option<LogViewerView>,
     /// Process tracker for checking app status
     /// Shared across threads for background status polling
     process_tracker: Arc<ProcessTracker>,
@@ -74,6 +76,7 @@ impl TuiApp {
             state,
             theme,
             main_view,
+            log_viewer: None,
             process_tracker,
             should_quit: false,
             command_popup: None,
@@ -124,6 +127,9 @@ impl TuiApp {
         while !self.should_quit {
             // Check if a command execution was requested
             self.check_command_execution_request()?;
+            
+            // Check if we need to create a log viewer
+            self.check_log_viewer_creation()?;
             
             // Render the current state
             terminal.draw(|f| self.render(f))?;
@@ -203,8 +209,11 @@ impl TuiApp {
     }
 
     /// Handles input for the log viewer view
-    fn handle_log_viewer_input(&mut self, _key: KeyEvent) -> Result<()> {
-        // TODO: Implement log viewer navigation and search
+    fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<()> {
+        // Delegate to the log viewer's input handler
+        if let Some(viewer) = &mut self.log_viewer {
+            viewer.handle_input(key)?;
+        }
         Ok(())
     }
 
@@ -215,6 +224,13 @@ impl TuiApp {
         if self.command_popup.is_some() {
             self.command_popup = None;
             return;
+        }
+        
+        // Clean up log viewer when leaving that view
+        if let Ok(state) = self.state.lock() {
+            if matches!(state.current_view, ViewType::LogViewer { .. }) {
+                self.log_viewer = None;
+            }
         }
         
         // For now, always return to main view
@@ -263,6 +279,34 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Checks if we need to create a log viewer for the current view
+    /// Called at the start of each event loop iteration
+    fn check_log_viewer_creation(&mut self) -> Result<()> {
+        let current_view = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.current_view.clone()
+        };
+        
+        // If we're in LogViewer view but don't have a viewer instance, create one
+        if let ViewType::LogViewer { log_path } = current_view {
+            if self.log_viewer.is_none() {
+                match LogViewerView::new(log_path.clone()) {
+                    Ok(viewer) => {
+                        self.log_viewer = Some(viewer);
+                    }
+                    Err(e) => {
+                        // Failed to create viewer - set error and go back to main view
+                        let mut state = self.state.lock().expect("Failed to lock state");
+                        state.error_message = Some(format!("Failed to open log file: {}", e));
+                        state.current_view = ViewType::Main;
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
     /// Checks if a command execution was requested and creates the popup
     /// Called at the start of each event loop iteration
     fn check_command_execution_request(&mut self) -> Result<()> {
@@ -459,18 +503,24 @@ impl TuiApp {
     /// Renders the UI
     /// Delegates to view-specific rendering based on current view
     /// Also renders popup if one is active
-    fn render(&self, frame: &mut Frame) {
+    fn render(&mut self, frame: &mut Frame) {
         // Lock the state for reading during rendering
         // If we can't get the lock, skip this frame
         let Ok(state) = self.state.lock() else {
             return;
         };
 
-        match &state.current_view {
+        let current_view = state.current_view.clone();
+        
+        match &current_view {
             ViewType::Main => self.render_main_view(frame, &state),
             ViewType::CommandList { .. } => self.render_command_list_view(frame),
             ViewType::LogBrowser { .. } => self.render_log_browser_view(frame),
-            ViewType::LogViewer { .. } => self.render_log_viewer_view(frame),
+            ViewType::LogViewer { .. } => {
+                drop(state); // Release the lock before calling mutable render
+                self.render_log_viewer_view(frame);
+                return; // Early return to avoid double-locking
+            }
         }
 
         // Render error message if present (but not if popup is showing)
@@ -531,13 +581,19 @@ impl TuiApp {
         frame.render_widget(placeholder, size);
     }
 
-    /// Placeholder for log viewer view
-    fn render_log_viewer_view(&self, frame: &mut Frame) {
-        let size = frame.size();
-        let placeholder = Paragraph::new("Log Viewer View - Coming Soon")
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
-        frame.render_widget(placeholder, size);
+    /// Renders the log viewer view
+    fn render_log_viewer_view(&mut self, frame: &mut Frame) {
+        if let Some(viewer) = &mut self.log_viewer {
+            let size = frame.size();
+            viewer.render(frame, size);
+        } else {
+            // Fallback if viewer is not initialized
+            let size = frame.size();
+            let placeholder = Paragraph::new("Log Viewer - No file loaded")
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
+            frame.render_widget(placeholder, size);
+        }
     }
 
     /// Helper function to create a centered rectangle

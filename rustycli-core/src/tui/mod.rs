@@ -14,7 +14,7 @@ pub use app::TuiApp;
 pub use log_manager::{LogFileInfo, LogManager};
 pub use state::{AppState, AppStatus, ProjectState, ViewType};
 pub use theme::Theme;
-pub use views::{MainView, MainTab, PanelFocus};
+pub use views::{LogViewerView, MainView, MainTab, PanelFocus};
 pub use widgets::CommandPopup;
 
 #[cfg(test)]

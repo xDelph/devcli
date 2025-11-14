@@ -102,8 +102,23 @@ impl MainView {
                 self.selected_log_idx = 0; // Reset log selection
                 Ok(true)
             }
-            // Tab key to switch panel focus
+            // Tab key to cycle through tabs
             KeyCode::Tab => {
+                // Cycle to next tab
+                self.active_tab = match self.active_tab {
+                    MainTab::Status => MainTab::Commands,
+                    MainTab::Commands => MainTab::Logs,
+                    MainTab::Logs => MainTab::Status,
+                };
+                self.detail_scroll = 0;
+                self.selected_command_idx = 0;
+                if self.active_tab == MainTab::Logs {
+                    self.selected_log_idx = 0;
+                }
+                Ok(true)
+            }
+            // Left/Right arrows to switch panel focus
+            KeyCode::Left | KeyCode::Right => {
                 self.focus = match self.focus {
                     PanelFocus::AppList => PanelFocus::DetailPanel,
                     PanelFocus::DetailPanel => PanelFocus::AppList,
@@ -177,15 +192,31 @@ impl MainView {
             }
             // Enter key - trigger actions based on context
             KeyCode::Enter => {
-                // Only handle Enter in detail panel for Commands tab
-                if self.focus == PanelFocus::DetailPanel && self.active_tab == MainTab::Commands {
-                    // Signal that we want to execute a command
-                    // The actual execution will be handled by the app
-                    state.set_command_execution_requested(self.selected_command_idx);
+                if self.focus == PanelFocus::DetailPanel {
+                    match self.active_tab {
+                        MainTab::Commands => {
+                            // Signal that we want to execute a command
+                            // The actual execution will be handled by the app
+                            state.set_command_execution_requested(self.selected_command_idx);
+                        }
+                        MainTab::Logs => {
+                            // Open the selected log file in the log viewer
+                            if let Some(app) = state.selected_app() {
+                                if let Ok(log_files) = self.log_manager.list_logs_for_app(&app.name) {
+                                    if let Some(log_file) = log_files.get(self.selected_log_idx) {
+                                        // Transition to log viewer view
+                                        state.current_view = crate::tui::state::ViewType::LogViewer {
+                                            log_path: log_file.path.clone(),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                        MainTab::Status => {
+                            // TODO: Implement start/stop app action
+                        }
+                    }
                 }
-                // TODO: Implement other actions
-                // - In Status tab: start/stop app
-                // - In Logs tab: open log viewer
                 Ok(true)
             }
             _ => Ok(false), // Event not handled
@@ -771,13 +802,13 @@ impl MainView {
     fn render_footer(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let shortcuts = match self.active_tab {
             MainTab::Status => {
-                "↑↓/jk: Navigate  Tab: Switch Panel  1-3: Switch Tab  Space: Expand  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Space: Expand  q: Quit"
             }
             MainTab::Commands => {
-                "↑↓/jk: Navigate  Tab: Switch Panel  1-3: Switch Tab  Enter: Execute  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: Execute  q: Quit"
             }
             MainTab::Logs => {
-                "↑↓/jk: Navigate  Tab: Switch Panel  1-3: Switch Tab  Enter: View Log  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: View Log  q: Quit"
             }
         };
 

@@ -125,14 +125,14 @@ fn test_panel_focus_switching() {
     // Initially focused on AppList
     assert_eq!(view.focus, PanelFocus::AppList);
     
-    // Press Tab to switch to DetailPanel
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+    // Press Right arrow to switch to DetailPanel
+    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
     let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.focus, PanelFocus::DetailPanel);
     
-    // Press Tab again to switch back to AppList
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+    // Press Right arrow again to switch back to AppList
+    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
     let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.focus, PanelFocus::AppList);
@@ -408,6 +408,66 @@ fn test_tab_switching_with_french_keyboard() {
     
     // Switch back to Status tab with '&' (French 1)
     let key = KeyEvent::new(KeyCode::Char('&'), KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Status);
+}
+
+#[test]
+fn test_panel_switching_with_arrow_keys() {
+    let mut view = MainView::new();
+    let state = create_test_state_arc();
+    
+    // Initially focused on AppList
+    assert_eq!(view.focus, PanelFocus::AppList);
+    
+    // Press Right arrow to switch to DetailPanel
+    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.focus, PanelFocus::DetailPanel);
+    
+    // Press Right arrow again to switch back to AppList
+    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.focus, PanelFocus::AppList);
+    
+    // Press Left arrow to switch to DetailPanel
+    let key = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.focus, PanelFocus::DetailPanel);
+    
+    // Press Left arrow again to switch back to AppList
+    let key = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.focus, PanelFocus::AppList);
+}
+
+#[test]
+fn test_tab_switching_with_tab_key() {
+    let mut view = MainView::new();
+    let state = create_test_state_arc();
+    
+    // Start at Status tab
+    assert_eq!(view.active_tab, MainTab::Status);
+    
+    // Press Tab to go to Commands
+    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Commands);
+    
+    // Press Tab to go to Logs
+    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Logs);
+    
+    // Press Tab to cycle back to Status
+    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
     let handled = view.handle_input(key, &state).unwrap();
     assert!(handled);
     assert_eq!(view.active_tab, MainTab::Status);
