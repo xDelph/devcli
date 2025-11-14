@@ -33,7 +33,7 @@
   - Ensure no compiler warnings (handle async properly, no unused Results)
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3_
 
-- [ ] 4. Implement Commands tab with execution
+- [x] 4. Implement Commands tab with execution
 
   - Render command list grouped by environment (local, docker, k8s)
   - Create command execution popup in rustycli-core/src/tui/widgets/command_popup.rs with confirmation

@@ -5,6 +5,8 @@
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
 use super::views::MainView;
+use super::widgets::command_popup::{CommandPopup, PopupState};
+use crate::commands::start::{start_single_app_internal, StartCommandArgs};
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
 use anyhow::{Context, Result};
@@ -40,6 +42,9 @@ pub struct TuiApp {
     process_tracker: Arc<ProcessTracker>,
     /// Flag to indicate the app should quit
     should_quit: bool,
+    /// Optional command popup for command execution
+    /// When Some, the popup is displayed over the main view
+    command_popup: Option<CommandPopup>,
 }
 
 impl TuiApp {
@@ -71,6 +76,7 @@ impl TuiApp {
             main_view,
             process_tracker,
             should_quit: false,
+            command_popup: None,
         })
     }
 
@@ -116,6 +122,9 @@ impl TuiApp {
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
         while !self.should_quit {
+            // Check if a command execution was requested
+            self.check_command_execution_request()?;
+            
             // Render the current state
             terminal.draw(|f| self.render(f))?;
 
@@ -132,8 +141,13 @@ impl TuiApp {
     }
 
     /// Handles keyboard input events
-    /// Routes events based on the current view
+    /// Routes events based on the current view and popup state
     fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
+        // If a popup is active, handle popup-specific input first
+        if self.command_popup.is_some() {
+            return self.handle_popup_input(key);
+        }
+        
         // Global shortcuts that work in any view
         match key.code {
             // Quit the application
@@ -197,11 +211,179 @@ impl TuiApp {
     /// Handles the back action (Esc key)
     /// Returns to the previous view or main view
     fn handle_back(&mut self) {
+        // If popup is open, close it instead of going back
+        if self.command_popup.is_some() {
+            self.command_popup = None;
+            return;
+        }
+        
         // For now, always return to main view
         // TODO: Implement view stack for proper back navigation
         if let Ok(mut state) = self.state.lock() {
             state.current_view = ViewType::Main;
         }
+    }
+
+    /// Handles input when a popup is active
+    /// Returns Ok(()) to indicate the event was handled
+    fn handle_popup_input(&mut self, key: KeyEvent) -> Result<()> {
+        // Get the popup state without borrowing self
+        let popup_state = self.command_popup.as_ref().map(|p| p.state().clone());
+        
+        if let Some(state) = popup_state {
+            match state {
+                PopupState::Confirm => {
+                    match key.code {
+                        KeyCode::Enter => {
+                            // User confirmed - execute the command
+                            self.execute_command_from_popup()?;
+                        }
+                        KeyCode::Esc => {
+                            // User cancelled - close popup
+                            self.command_popup = None;
+                        }
+                        _ => {}
+                    }
+                }
+                PopupState::Executing => {
+                    // Can't interact while executing
+                    // The popup will automatically transition to success/error
+                }
+                PopupState::Success(_) | PopupState::Error(_) => {
+                    // Any key closes the result popup
+                    match key.code {
+                        KeyCode::Enter | KeyCode::Esc => {
+                            self.command_popup = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks if a command execution was requested and creates the popup
+    /// Called at the start of each event loop iteration
+    fn check_command_execution_request(&mut self) -> Result<()> {
+        // Check if there's a pending command execution request
+        let request = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.command_execution_requested
+        };
+        
+        if let Some(_command_idx) = request {
+            // Get the command details from state
+            let (app_name, project_name, command_name, command_text, environment) = {
+                let state = self.state.lock().expect("Failed to lock state");
+                
+                if let Some(app) = state.selected_app() {
+                    // Get the command at the requested index using the main_view helper
+                    if let Some((env, cmd_info)) = self.main_view.get_selected_command(app) {
+                        // Convert environment to string
+                        let env_str = env.to_string();
+                        
+                        (
+                            app.name.clone(),
+                            app.project.clone(),
+                            cmd_info.name.clone(),
+                            cmd_info.command.clone(),
+                            env_str,
+                        )
+                    } else {
+                        // Invalid command index - clear the request
+                        drop(state);
+                        let mut state = self.state.lock().expect("Failed to lock state");
+                        state.clear_command_execution_request();
+                        return Ok(());
+                    }
+                } else {
+                    // No app selected - clear the request
+                    drop(state);
+                    let mut state = self.state.lock().expect("Failed to lock state");
+                    state.clear_command_execution_request();
+                    return Ok(());
+                }
+            };
+            
+            // Create the popup
+            self.command_popup = Some(CommandPopup::new(
+                command_name,
+                command_text,
+                app_name,
+                project_name,
+                environment,
+            ));
+            
+            // Clear the request
+            let mut state = self.state.lock().expect("Failed to lock state");
+            state.clear_command_execution_request();
+        }
+        
+        Ok(())
+    }
+
+    /// Executes the command from the popup
+    /// Transitions popup to executing state, runs command, then shows result
+    fn execute_command_from_popup(&mut self) -> Result<()> {
+        if let Some(popup) = &mut self.command_popup {
+            // Transition to executing state
+            popup.set_executing();
+            
+            // Get command details from popup for execution
+            // We need to clone these to avoid borrow checker issues
+            let popup_clone = popup.clone();
+            
+            // Execute the command asynchronously
+            // For now, we'll use a blocking approach since we're in the event loop
+            // In a real implementation, this would be spawned as a background task
+            let result = self.execute_command_blocking(&popup_clone);
+            
+            // Update popup with result
+            match result {
+                Ok(message) => {
+                    if let Some(popup) = &mut self.command_popup {
+                        popup.set_success(message);
+                    }
+                    
+                    // Update app status in state after successful start
+                    // The background polling will pick up the new status
+                }
+                Err(e) => {
+                    if let Some(popup) = &mut self.command_popup {
+                        popup.set_error(format!("Failed to execute command: {}", e));
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Executes a command in a blocking manner
+    /// This is a simplified version that uses the existing start_command infrastructure
+    /// Note: Currently only supports starting apps with their default commands
+    /// The command_name from the popup is used to determine which environment to use
+    fn execute_command_blocking(&self, popup: &CommandPopup) -> Result<String> {
+        // Create a runtime for the async command execution
+        // This is necessary because start_single_app_internal is async
+        let runtime = tokio::runtime::Runtime::new()?;
+        
+        // Build the command args
+        // Note: start_single_app_internal uses the default command for the environment
+        // so we just need to specify the environment
+        let args = StartCommandArgs {
+            app_names: vec![popup.app_name.clone()],
+            project: Some(popup.project.clone()),
+            env: Some(popup.environment.clone()),
+            skip_deps: false,
+        };
+        
+        // Execute the command
+        runtime.block_on(async {
+            start_single_app_internal(args, false).await?;
+            Ok(format!("Successfully started {}", popup.app_name))
+        })
     }
 
     /// Starts a background task that polls process status every 2 seconds
@@ -276,6 +458,7 @@ impl TuiApp {
 
     /// Renders the UI
     /// Delegates to view-specific rendering based on current view
+    /// Also renders popup if one is active
     fn render(&self, frame: &mut Frame) {
         // Lock the state for reading during rendering
         // If we can't get the lock, skip this frame
@@ -290,9 +473,16 @@ impl TuiApp {
             ViewType::LogViewer { .. } => self.render_log_viewer_view(frame),
         }
 
-        // Render error message if present
+        // Render error message if present (but not if popup is showing)
         if let Some(error) = &state.error_message {
-            self.render_error_message(frame, error);
+            if self.command_popup.is_none() {
+                self.render_error_message(frame, error);
+            }
+        }
+        
+        // Render command popup if active (renders on top of everything)
+        if let Some(popup) = &self.command_popup {
+            popup.render(frame, &self.theme);
         }
     }
 

@@ -25,6 +25,9 @@ pub struct AppState {
     pub error_message: Option<String>,
     /// Optional status message to display to the user
     pub status_message: Option<String>,
+    /// Command execution request (command_idx) - set when user wants to execute a command
+    /// The app will process this and show the command popup
+    pub command_execution_requested: Option<usize>,
 }
 
 impl AppState {
@@ -81,6 +84,7 @@ impl AppState {
             current_view: ViewType::Main,
             error_message: None,
             status_message: None,
+            command_execution_requested: None,
         })
     }
 
@@ -197,6 +201,18 @@ impl AppState {
         if let Some(project) = self.projects.get_mut(self.selected_project_idx) {
             project.expanded = !project.expanded;
         }
+    }
+
+    /// Sets a command execution request
+    /// This signals that the user wants to execute a command at the given index
+    pub fn set_command_execution_requested(&mut self, command_idx: usize) {
+        self.command_execution_requested = Some(command_idx);
+    }
+
+    /// Clears the command execution request
+    /// Called after the request has been processed
+    pub fn clear_command_execution_request(&mut self) {
+        self.command_execution_requested = None;
     }
 }
 

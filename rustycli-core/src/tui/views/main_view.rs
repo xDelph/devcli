@@ -29,6 +29,9 @@ pub struct MainView {
     pub(crate) list_scroll: usize,
     /// Scroll offset for the right panel details
     pub(crate) detail_scroll: usize,
+    /// Selected command index in the Commands tab
+    /// Tracks which command is highlighted in the detail panel
+    pub(crate) selected_command_idx: usize,
 }
 
 /// The three main tabs in the interface
@@ -59,6 +62,7 @@ impl MainView {
             focus: PanelFocus::AppList,
             list_scroll: 0,
             detail_scroll: 0,
+            selected_command_idx: 0,
         }
     }
 
@@ -74,16 +78,19 @@ impl MainView {
             KeyCode::Char('1') | KeyCode::Char('&') => {
                 self.active_tab = MainTab::Status;
                 self.detail_scroll = 0; // Reset scroll when switching tabs
+                self.selected_command_idx = 0; // Reset command selection
                 Ok(true)
             }
             KeyCode::Char('2') | KeyCode::Char('é') => {
                 self.active_tab = MainTab::Commands;
                 self.detail_scroll = 0;
+                self.selected_command_idx = 0; // Reset command selection
                 Ok(true)
             }
             KeyCode::Char('3') | KeyCode::Char('"') => {
                 self.active_tab = MainTab::Logs;
                 self.detail_scroll = 0;
+                self.selected_command_idx = 0; // Reset command selection
                 Ok(true)
             }
             // Tab key to switch panel focus
@@ -99,10 +106,17 @@ impl MainView {
                 match self.focus {
                     PanelFocus::AppList => {
                         state.select_previous();
+                        // Reset command selection when changing apps
+                        self.selected_command_idx = 0;
                     }
                     PanelFocus::DetailPanel => {
-                        // Scroll up in detail panel
-                        self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                        // In Commands tab, navigate through commands
+                        if self.active_tab == MainTab::Commands {
+                            self.selected_command_idx = self.selected_command_idx.saturating_sub(1);
+                        } else {
+                            // Scroll up in detail panel for other tabs
+                            self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                        }
                     }
                 }
                 Ok(true)
@@ -111,10 +125,23 @@ impl MainView {
                 match self.focus {
                     PanelFocus::AppList => {
                         state.select_next();
+                        // Reset command selection when changing apps
+                        self.selected_command_idx = 0;
                     }
                     PanelFocus::DetailPanel => {
-                        // Scroll down in detail panel
-                        self.detail_scroll = self.detail_scroll.saturating_add(1);
+                        // In Commands tab, navigate through commands
+                        if self.active_tab == MainTab::Commands {
+                            // Get total command count to limit navigation
+                            if let Some(app) = state.selected_app() {
+                                let total_commands = Self::count_total_commands(app);
+                                if self.selected_command_idx < total_commands.saturating_sub(1) {
+                                    self.selected_command_idx += 1;
+                                }
+                            }
+                        } else {
+                            // Scroll down in detail panel for other tabs
+                            self.detail_scroll = self.detail_scroll.saturating_add(1);
+                        }
                     }
                 }
                 Ok(true)
@@ -124,16 +151,55 @@ impl MainView {
                 state.toggle_project_expansion();
                 Ok(true)
             }
-            // Enter key - could trigger actions based on context
+            // Enter key - trigger actions based on context
             KeyCode::Enter => {
-                // TODO: Implement context-specific actions
+                // Only handle Enter in detail panel for Commands tab
+                if self.focus == PanelFocus::DetailPanel && self.active_tab == MainTab::Commands {
+                    // Signal that we want to execute a command
+                    // The actual execution will be handled by the app
+                    state.set_command_execution_requested(self.selected_command_idx);
+                }
+                // TODO: Implement other actions
                 // - In Status tab: start/stop app
-                // - In Commands tab: execute selected command
                 // - In Logs tab: open log viewer
                 Ok(true)
             }
             _ => Ok(false), // Event not handled
         }
+    }
+
+    /// Counts the total number of commands for an app across all environments
+    /// Used to limit command navigation in the Commands tab
+    fn count_total_commands(app: &AppStateData) -> usize {
+        app.commands.values().map(|cmds| cmds.len()).sum()
+    }
+
+    /// Gets the currently selected command info based on the selected index
+    /// Returns (environment, command_info) tuple if a valid command is selected
+    /// 
+    /// Commands are indexed sequentially across environments in order: local, docker, k8s
+    /// For example, if local has 3 commands and docker has 2:
+    /// - Index 0-2: local commands
+    /// - Index 3-4: docker commands
+    pub fn get_selected_command<'a>(
+        &self,
+        app: &'a AppStateData,
+    ) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
+        let mut current_idx = 0;
+        
+        // Iterate through environments in order: local, docker, k8s
+        for env in &["local", "docker", "k8s"] {
+            if let Some(commands) = app.commands.get(*env) {
+                // Check if the selected index falls within this environment's commands
+                if self.selected_command_idx < current_idx + commands.len() {
+                    let cmd_idx = self.selected_command_idx - current_idx;
+                    return Some((env, &commands[cmd_idx]));
+                }
+                current_idx += commands.len();
+            }
+        }
+        
+        None
     }
 
     /// Renders the main view with all its components
@@ -472,6 +538,7 @@ impl MainView {
 
     /// Builds the content for the commands panel
     /// Groups commands by environment (local, docker, k8s)
+    /// Highlights the currently selected command when detail panel has focus
     fn build_commands_content<'a>(&self, app: &'a AppStateData, theme: &'a Theme) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
@@ -496,6 +563,9 @@ impl MainView {
             return lines;
         }
 
+        // Track the global command index across all environments
+        let mut global_cmd_idx = 0;
+
         // Display commands grouped by environment
         // Order: local, docker, k8s
         for env in &["local", "docker", "k8s"] {
@@ -509,16 +579,38 @@ impl MainView {
                 )));
 
                 // List commands in this environment
-                for (idx, cmd) in commands.iter().enumerate() {
-                    let prefix = if idx == 0 { " >" } else { "  " };
+                for cmd in commands.iter() {
+                    // Check if this command is selected
+                    let is_selected = global_cmd_idx == self.selected_command_idx
+                        && self.focus == PanelFocus::DetailPanel;
+                    
+                    // Choose prefix and styling based on selection
+                    let (prefix, name_style, cmd_style) = if is_selected {
+                        (
+                            " >",
+                            Style::default()
+                                .fg(theme.text)
+                                .bg(theme.selected_bg)
+                                .add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(theme.text_dim)
+                                .bg(theme.selected_bg),
+                        )
+                    } else {
+                        (
+                            "  ",
+                            Style::default().fg(theme.text),
+                            Style::default().fg(theme.text_dim),
+                        )
+                    };
+                    
                     lines.push(Line::from(vec![
                         Span::styled(prefix, Style::default().fg(theme.primary)),
-                        Span::styled(
-                            format!(" {:<12}", cmd.name),
-                            Style::default().fg(theme.text),
-                        ),
-                        Span::styled(cmd.command.clone(), Style::default().fg(theme.text_dim)),
+                        Span::styled(format!(" {:<12}", cmd.name), name_style),
+                        Span::styled(cmd.command.clone(), cmd_style),
                     ]));
+                    
+                    global_cmd_idx += 1;
                 }
 
                 lines.push(Line::from("")); // Empty line between environments
