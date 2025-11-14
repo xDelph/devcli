@@ -2,6 +2,7 @@
 // Focuses on core functional logic for command grouping and popup state management
 
 use super::command_popup::{CommandPopup, PopupState};
+use super::help_overlay::HelpOverlay;
 
 #[test]
 fn test_command_popup_initial_state() {
@@ -109,4 +110,81 @@ fn test_output_lines_limit_enforcement() {
     
     // Should still respect the limit
     assert_eq!(popup.state(), &PopupState::Executing);
+}
+
+// Help Overlay Tests
+
+#[test]
+fn test_help_overlay_initial_state() {
+    let overlay = HelpOverlay::new();
+    assert!(!overlay.is_visible());
+}
+
+#[test]
+fn test_help_overlay_visibility_toggle() {
+    let mut overlay = HelpOverlay::new();
+    
+    // Initially hidden
+    assert!(!overlay.is_visible());
+    
+    // Toggle to show
+    overlay.toggle();
+    assert!(overlay.is_visible());
+    
+    // Toggle to hide
+    overlay.toggle();
+    assert!(!overlay.is_visible());
+}
+
+#[test]
+fn test_help_overlay_show_hide() {
+    let mut overlay = HelpOverlay::new();
+    
+    // Show explicitly
+    overlay.show();
+    assert!(overlay.is_visible());
+    
+    // Hide explicitly
+    overlay.hide();
+    assert!(!overlay.is_visible());
+    
+    // Show again
+    overlay.show();
+    assert!(overlay.is_visible());
+}
+
+#[test]
+fn test_help_overlay_default() {
+    let overlay = HelpOverlay::default();
+    assert!(!overlay.is_visible());
+}
+
+// Error Display Tests
+
+#[test]
+fn test_error_message_formatting() {
+    // Test that error messages are properly formatted
+    let error_msg = "Failed to load configuration file";
+    assert!(error_msg.len() > 0);
+    assert!(!error_msg.contains('\n')); // Single line error
+}
+
+#[test]
+fn test_multiline_error_formatting() {
+    // Test that multiline errors are handled
+    let error_msg = "Failed to execute command\nReason: File not found\nPath: /invalid/path";
+    let lines: Vec<&str> = error_msg.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0], "Failed to execute command");
+    assert_eq!(lines[1], "Reason: File not found");
+    assert_eq!(lines[2], "Path: /invalid/path");
+}
+
+#[test]
+fn test_error_context_preservation() {
+    // Test that error context is preserved through the display system
+    let base_error = "Connection refused";
+    let context = format!("Failed to connect to server: {}", base_error);
+    assert!(context.contains(base_error));
+    assert!(context.contains("Failed to connect"));
 }

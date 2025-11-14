@@ -6,6 +6,7 @@ use super::state::{AppState, ViewType};
 use super::theme::Theme;
 use super::views::{LogViewerView, MainView};
 use super::widgets::command_popup::{CommandPopup, PopupState};
+use super::widgets::help_overlay::HelpOverlay;
 use crate::commands::start::{start_single_app_internal, StartCommandArgs};
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
@@ -17,8 +18,9 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::Style,
+    layout::{Alignment, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
@@ -47,6 +49,9 @@ pub struct TuiApp {
     /// Optional command popup for command execution
     /// When Some, the popup is displayed over the main view
     command_popup: Option<CommandPopup>,
+    /// Help overlay for displaying keyboard shortcuts
+    /// Toggled with '?' key
+    help_overlay: HelpOverlay,
 }
 
 impl TuiApp {
@@ -80,6 +85,7 @@ impl TuiApp {
             process_tracker,
             should_quit: false,
             command_popup: None,
+            help_overlay: HelpOverlay::new(),
         })
     }
 
@@ -149,13 +155,46 @@ impl TuiApp {
     /// Handles keyboard input events
     /// Routes events based on the current view and popup state
     fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
+        // If help overlay is visible, handle it first
+        // Any key except '?' closes the help overlay
+        if self.help_overlay.is_visible() {
+            match key.code {
+                KeyCode::Char('?') => {
+                    self.help_overlay.toggle();
+                }
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.help_overlay.hide();
+                }
+                _ => {
+                    // Any other key also closes help
+                    self.help_overlay.hide();
+                }
+            }
+            return Ok(());
+        }
+        
         // If a popup is active, handle popup-specific input first
         if self.command_popup.is_some() {
             return self.handle_popup_input(key);
         }
         
+        // If there's an error message, any key dismisses it
+        // This allows users to acknowledge and clear error messages
+        {
+            let mut state = self.state.lock().expect("Failed to lock state");
+            if state.error_message.is_some() {
+                state.error_message = None;
+                // Don't return - let the key event continue to be processed
+            }
+        }
+        
         // Global shortcuts that work in any view
         match key.code {
+            // Show help overlay
+            KeyCode::Char('?') => {
+                self.help_overlay.toggle();
+                return Ok(());
+            }
             // Quit the application
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -281,6 +320,11 @@ impl TuiApp {
 
     /// Checks if we need to create a log viewer for the current view
     /// Called at the start of each event loop iteration
+    /// 
+    /// Error Handling:
+    /// - If log file cannot be opened, displays error in status bar
+    /// - Returns to main view to allow user to continue
+    /// - Error is non-blocking and can be dismissed
     fn check_log_viewer_creation(&mut self) -> Result<()> {
         let current_view = {
             let state = self.state.lock().expect("Failed to lock state");
@@ -296,6 +340,7 @@ impl TuiApp {
                     }
                     Err(e) => {
                         // Failed to create viewer - set error and go back to main view
+                        // This is a non-blocking error - user can dismiss and continue
                         let mut state = self.state.lock().expect("Failed to lock state");
                         state.error_message = Some(format!("Failed to open log file: {}", e));
                         state.current_view = ViewType::Main;
@@ -408,10 +453,16 @@ impl TuiApp {
     /// This is a simplified version that uses the existing start_command infrastructure
     /// Note: Currently only supports starting apps with their default commands
     /// The command_name from the popup is used to determine which environment to use
+    /// 
+    /// Error Handling:
+    /// - Runtime creation errors are propagated up
+    /// - Command execution errors are caught and formatted with context
+    /// - Errors are displayed in the popup's error state
     fn execute_command_blocking(&self, popup: &CommandPopup) -> Result<String> {
         // Create a runtime for the async command execution
         // This is necessary because start_single_app_internal is async
-        let runtime = tokio::runtime::Runtime::new()?;
+        let runtime = tokio::runtime::Runtime::new()
+            .context("Failed to create async runtime for command execution")?;
         
         // Build the command args
         // Note: start_single_app_internal uses the default command for the environment
@@ -423,9 +474,12 @@ impl TuiApp {
             skip_deps: false,
         };
         
-        // Execute the command
+        // Execute the command with proper error context
         runtime.block_on(async {
-            start_single_app_internal(args, false).await?;
+            start_single_app_internal(args, false)
+                .await
+                .context(format!("Failed to execute command '{}' for app '{}'", 
+                    popup.command_name, popup.app_name))?;
             Ok(format!("Successfully started {}", popup.app_name))
         })
     }
@@ -523,17 +577,20 @@ impl TuiApp {
             }
         }
 
-        // Render error message if present (but not if popup is showing)
+        // Render error message if present (but not if popup or help is showing)
         if let Some(error) = &state.error_message {
-            if self.command_popup.is_none() {
+            if self.command_popup.is_none() && !self.help_overlay.is_visible() {
                 self.render_error_message(frame, error);
             }
         }
         
-        // Render command popup if active (renders on top of everything)
+        // Render command popup if active (renders on top of everything except help)
         if let Some(popup) = &self.command_popup {
             popup.render(frame, &self.theme);
         }
+        
+        // Render help overlay if visible (renders on top of everything)
+        self.help_overlay.render(frame, &self.theme);
     }
 
     /// Renders the main view
@@ -543,24 +600,42 @@ impl TuiApp {
         self.main_view.render(frame, state, &self.theme);
     }
 
-    /// Renders an error message overlay
+    /// Renders an error message as a status bar at the bottom
+    /// This is for non-blocking errors that don't require user acknowledgment
+    /// The error can be dismissed by pressing any key or will auto-clear on next action
     fn render_error_message(&self, frame: &mut Frame, error: &str) {
         let size = frame.size();
         
-        // Create a centered popup area
-        let popup_area = Self::centered_rect(60, 20, size);
+        // Create a status bar at the bottom (3 lines high)
+        let status_area = Rect {
+            x: 0,
+            y: size.height.saturating_sub(3),
+            width: size.width,
+            height: 3,
+        };
         
-        let error_text = Paragraph::new(error)
-            .style(Style::default().fg(self.theme.error))
-            .alignment(Alignment::Center)
+        // Build error message with icon and instructions
+        let error_lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" ✗ Error: ", Style::default()
+                    .fg(self.theme.error)
+                    .add_modifier(Modifier::BOLD)),
+                Span::styled(error, Style::default().fg(self.theme.text)),
+                Span::styled("  [Press any key to dismiss]", Style::default()
+                    .fg(self.theme.text_dim)),
+            ]),
+        ];
+        
+        let error_widget = Paragraph::new(error_lines)
+            .style(Style::default().bg(self.theme.error).fg(self.theme.text))
             .block(
                 Block::default()
-                    .borders(Borders::ALL)
-                    .title("Error")
+                    .borders(Borders::TOP)
                     .border_style(Style::default().fg(self.theme.error))
             );
         
-        frame.render_widget(error_text, popup_area);
+        frame.render_widget(error_widget, status_area);
     }
 
     /// Placeholder for command list view
@@ -596,25 +671,4 @@ impl TuiApp {
         }
     }
 
-    /// Helper function to create a centered rectangle
-    /// Used for popups and modals
-    fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ])
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ])
-            .split(popup_layout[1])[1]
-    }
 }
