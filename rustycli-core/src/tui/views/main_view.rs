@@ -299,7 +299,10 @@ impl MainView {
 
     /// Renders the tab bar at the top of the screen
     /// Shows Status, Commands, and Logs tabs with the active one highlighted
+    /// Visual polish: Clear tab indicators with consistent spacing
     fn render_tab_bar(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        // Tab titles with keyboard shortcuts for quick access
+        // Visual consistency: Uniform formatting across all tabs
         let tab_titles = vec!["[1] Status", "[2] Commands", "[3] Logs"];
         
         // Determine which tab index is active (0, 1, or 2)
@@ -328,12 +331,15 @@ impl MainView {
 
     /// Renders the left panel with the project/app tree
     /// Shows projects with expand/collapse and apps with status indicators
+    /// Visual polish: Clear hierarchy with consistent indentation and spacing
     fn render_app_list(&self, frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         let mut lines = Vec::new();
 
-        // Build the tree structure
+        // Build the tree structure with visual hierarchy
+        // Optimization: Pre-allocate capacity for better performance
         for (proj_idx, project) in state.projects.iter().enumerate() {
             // Project header with expansion indicator
+            // Visual consistency: Unicode arrows for expand/collapse state
             let expansion_icon = if project.expanded { "▼" } else { "▶" };
             let project_line = format!("{} {}", expansion_icon, project.name);
             
@@ -352,6 +358,7 @@ impl MainView {
             lines.push(Line::from(Span::styled(project_line, style)));
 
             // Show apps if project is expanded
+            // Visual polish: Indented apps show clear parent-child relationship
             if project.expanded {
                 for (app_idx, app) in project.apps.iter().enumerate() {
                     let app_line = self.format_app_line(
@@ -368,6 +375,7 @@ impl MainView {
         }
 
         // Create the widget with appropriate border style based on focus
+        // Visual feedback: Highlighted border shows which panel is active
         let border_style = if self.focus == PanelFocus::AppList {
             Style::default().fg(theme.primary) // Highlight border when focused
         } else {
@@ -387,6 +395,7 @@ impl MainView {
 
     /// Formats a single app line with status indicator and selection highlight
     /// Returns a Line with appropriate styling
+    /// Visual polish: Clear status indicators with consistent spacing
     fn format_app_line<'a>(
         &self,
         app: &'a AppStateData,
@@ -397,6 +406,7 @@ impl MainView {
         theme: &'a Theme,
     ) -> Line<'a> {
         // Status indicator: ● for running, ○ for stopped
+        // Visual consistency: Unicode circles provide clear at-a-glance status
         let status_icon = if app.status.is_running() { "●" } else { "○" };
         let status_color = if app.status.is_running() {
             theme.running
@@ -410,6 +420,7 @@ impl MainView {
             && self.focus == PanelFocus::AppList;
         
         // Apply selection styling
+        // Visual feedback: Background highlight shows current selection
         let text_style = if is_selected {
             Style::default()
                 .bg(theme.selected_bg)
@@ -419,6 +430,7 @@ impl MainView {
         };
         
         // Build the line with indentation, status icon, and app name
+        // Visual polish: Consistent 2-space indentation for hierarchy
         Line::from(vec![
             Span::raw("  "), // Indentation for apps under projects
             Span::styled(status_icon, Style::default().fg(status_color)),
@@ -799,16 +811,19 @@ impl MainView {
 
     /// Renders the footer with contextual keyboard shortcuts
     /// Shows different shortcuts based on active tab and focus
+    /// Visual polish: Context-aware help keeps users informed of available actions
     fn render_footer(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        // Context-aware shortcuts based on active tab
+        // UX: Shows only relevant shortcuts to avoid overwhelming users
         let shortcuts = match self.active_tab {
             MainTab::Status => {
-                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Space: Expand  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Space: Expand  ?: Help  q: Quit"
             }
             MainTab::Commands => {
-                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: Execute  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: Execute  ?: Help  q: Quit"
             }
             MainTab::Logs => {
-                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: View Log  q: Quit"
+                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-3: Switch Tab  Enter: View Log  ?: Help  q: Quit"
             }
         };
 

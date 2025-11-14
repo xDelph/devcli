@@ -35,29 +35,38 @@ pub struct Theme {
 impl Theme {
     /// Creates the default theme with GitUI-inspired colors
     /// This theme works well in most terminal environments
+    /// Visual polish: Carefully chosen colors for optimal contrast and readability
     pub fn default() -> Self {
         Self {
             // Cyan for primary highlights - stands out without being harsh
+            // Used for focused borders, selected tabs, and important UI elements
             primary: Color::Cyan,
-            // Blue for secondary elements
+            // Blue for secondary elements - complements primary color
+            // Used for section headers and less prominent highlights
             secondary: Color::Blue,
-            // Green for success states
+            // Green for success states - universally recognized positive indicator
             success: Color::Green,
-            // Yellow for warnings
+            // Yellow for warnings - draws attention without alarming
             warning: Color::Yellow,
-            // Red for errors
+            // Red for errors - clear danger signal
             error: Color::Red,
-            // Bright green for running status - highly visible
+            // Bright green for running status - highly visible and positive
+            // Optimization: Uses LightGreen for better visibility in dark terminals
             running: Color::LightGreen,
-            // Dark gray for stopped status - subdued
+            // Dark gray for stopped status - subdued to indicate inactive state
+            // Visual consistency: Muted color reduces visual noise
             stopped: Color::DarkGray,
             // Dark gray background for selected items - subtle but clear
+            // Provides good contrast without being too bright
             selected_bg: Color::DarkGray,
             // Gray for borders - visible but not distracting
+            // Visual polish: Keeps focus on content, not chrome
             border: Color::Gray,
             // White for primary text - maximum readability
+            // Ensures text is crisp and easy to read
             text: Color::White,
             // Gray for dimmed text - de-emphasizes secondary info
+            // Visual hierarchy: Helps users focus on important information
             text_dim: Color::Gray,
         }
     }
