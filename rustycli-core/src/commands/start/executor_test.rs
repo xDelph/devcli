@@ -29,7 +29,7 @@ mod tests {
         };
         
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: app_name.to_string(),
             project: project.to_string(),
         };

@@ -1,7 +1,7 @@
 //! Unit tests for config listing functionality
 
 #[cfg(test)]
-mod tests {
+mod list_tests {
     use crate::config::{Config, Project, App, Commands, Defaults};
     use std::collections::HashMap;
     use std::fs;

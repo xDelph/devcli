@@ -192,8 +192,8 @@ mod tests {
         let prefs = Preferences::default();
         
         assert_eq!(prefs.default_env, "local");
-        assert_eq!(prefs.detached_mode, false); // Show output by default
-        assert_eq!(prefs.auto_start_deps, true);
+        assert!(!prefs.detached_mode); // Show output by default
+        assert!(prefs.auto_start_deps);
     }
 
     // Test: Preferences serialization
@@ -209,8 +209,8 @@ mod tests {
         let deserialized: Preferences = serde_json::from_str(&json).unwrap();
         
         assert_eq!(deserialized.default_env, "docker");
-        assert_eq!(deserialized.detached_mode, true);
-        assert_eq!(deserialized.auto_start_deps, false);
+        assert!(deserialized.detached_mode);
+        assert!(!deserialized.auto_start_deps);
     }
 
     // Test: Commands with only one environment

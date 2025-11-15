@@ -1,7 +1,7 @@
 //! Unit tests for config initialization functionality
 
 #[cfg(test)]
-mod tests {
+mod init_tests {
     #[test]
     fn test_config_init_template_structure() {
         // Test that the template contains expected structure

@@ -32,13 +32,13 @@ mod tests {
     fn test_show_preview_displays_basic_info() {
         let app = create_test_app("nodejs", "test-app");
         
-        // This test verifies that show_preview doesn't panic and handles the basic structure
-        // Since show_preview prints to stdout, we can't easily capture the output in a unit test
-        // But we can ensure it doesn't crash with valid input
-        show_preview("test-project", "custom-name", &app);
+        // Smoke test: verify show_preview doesn't panic with valid input
+        // Since show_preview prints to stdout, we can't capture output in unit tests
+        let result = std::panic::catch_unwind(|| {
+            show_preview("test-project", "custom-name", &app);
+        });
         
-        // If we get here without panicking, the function handled the input correctly
-        assert!(true);
+        assert!(result.is_ok(), "show_preview should not panic with valid input");
     }
 
     #[test]
@@ -54,11 +54,12 @@ mod tests {
             suggested_docker_default: None,
         };
         
-        // Test with minimal app data (no commands)
-        show_preview("minimal-project", "minimal-app", &app);
+        // Smoke test: verify show_preview handles minimal app data without panicking
+        let result = std::panic::catch_unwind(|| {
+            show_preview("minimal-project", "minimal-app", &app);
+        });
         
-        // If we get here without panicking, the function handled minimal data correctly
-        assert!(true);
+        assert!(result.is_ok(), "show_preview should handle minimal app data without panicking");
     }
 
     #[test]
@@ -78,11 +79,12 @@ mod tests {
             suggested_docker_default: None,
         };
         
-        // Test with K8s commands only
-        show_preview("k8s-project", "k8s-app", &app);
+        // Smoke test: verify show_preview handles K8s commands without panicking
+        let result = std::panic::catch_unwind(|| {
+            show_preview("k8s-project", "k8s-app", &app);
+        });
         
-        // If we get here without panicking, the function handled K8s commands correctly
-        assert!(true);
+        assert!(result.is_ok(), "show_preview should handle K8s commands without panicking");
     }
 
     #[test]
@@ -107,23 +109,28 @@ mod tests {
             suggested_docker_default: Some("up".to_string()),
         };
         
-        // Test with all environment types
-        show_preview("full-project", "full-app", &app);
+        // Smoke test: verify show_preview handles all environment types without panicking
+        let result = std::panic::catch_unwind(|| {
+            show_preview("full-project", "full-app", &app);
+        });
         
-        // If we get here without panicking, the function handled all environments correctly
-        assert!(true);
+        assert!(result.is_ok(), "show_preview should handle all environment types without panicking");
     }
 
     #[test]
     fn test_show_preview_with_special_characters() {
         let app = create_test_app("nodejs", "app-with-special-chars");
         
-        // Test with project and app names containing special characters
-        show_preview("project-with-dashes", "app_with_underscores", &app);
-        show_preview("project.with.dots", "app-name", &app);
+        // Smoke test: verify show_preview handles special characters without panicking
+        let result1 = std::panic::catch_unwind(|| {
+            show_preview("project-with-dashes", "app_with_underscores", &app);
+        });
+        let result2 = std::panic::catch_unwind(|| {
+            show_preview("project.with.dots", "app-name", &app);
+        });
         
-        // If we get here without panicking, the function handled special characters correctly
-        assert!(true);
+        assert!(result1.is_ok(), "show_preview should handle dashes and underscores");
+        assert!(result2.is_ok(), "show_preview should handle dots in names");
     }
 
     // Note: Testing the actual interactive prompts (prompt_project_selection, prompt_app_name, etc.)

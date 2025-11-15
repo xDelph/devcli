@@ -4,7 +4,7 @@
 mod tests {
     #[test]
     fn test_started_apps_parameter() {
-        let started_apps = vec!["app1".to_string(), "app2".to_string()];
+        let started_apps = ["app1".to_string(), "app2".to_string()];
         
         // Test that we can create the parameter structure
         assert_eq!(started_apps.len(), 2);
@@ -22,7 +22,7 @@ mod tests {
 
     #[test]
     fn test_single_started_app() {
-        let started_apps = vec!["single-app".to_string()];
+        let started_apps = ["single-app".to_string()];
         
         assert_eq!(started_apps.len(), 1);
         assert_eq!(started_apps[0], "single-app");

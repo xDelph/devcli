@@ -1,7 +1,7 @@
 //! Unit tests for config prompt functionality
 
 #[cfg(test)]
-mod tests {
+mod prompts_tests {
     use crate::config::{Config, Project, App, Commands, Defaults};
     use std::collections::HashMap;
 

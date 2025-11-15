@@ -365,8 +365,8 @@ fn test_integration_preferences() {
     
     // Step 4: Verify all fields
     assert_eq!(deserialized.default_env, "docker");
-    assert_eq!(deserialized.detached_mode, true);
-    assert_eq!(deserialized.auto_start_deps, false);
+    assert!(deserialized.detached_mode);
+    assert!(!deserialized.auto_start_deps);
 }
 
 // Test: Default preferences
@@ -376,8 +376,8 @@ fn test_integration_default_preferences() {
     
     // Verify new defaults
     assert_eq!(prefs.default_env, "local");
-    assert_eq!(prefs.detached_mode, false); // Shows output by default now
-    assert_eq!(prefs.auto_start_deps, true);
+    assert!(!prefs.detached_mode); // Shows output by default now
+    assert!(prefs.auto_start_deps);
 }
 
 // Test: List all apps across projects

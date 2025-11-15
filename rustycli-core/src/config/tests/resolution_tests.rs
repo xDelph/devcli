@@ -106,9 +106,10 @@ mod tests {
         assert!(err_msg.contains("not found in config"));
     }
 
-    // Test: Resolve ambiguous app name (same name in multiple projects)
+    // Test: Resolve ambiguous app name with project filter
+    // When the same app name exists in multiple projects, specifying the project should work
     #[test]
-    fn test_resolve_ambiguous_app() {
+    fn test_resolve_ambiguous_app_with_project_filter() {
         let mut config = Config {
             projects: HashMap::new(),
         };
@@ -141,16 +142,19 @@ mod tests {
             config.projects.insert(project_name.to_string(), Project { apps });
         }
         
-        // Should fail without project specified
-        let result = resolve_app(&config, "api", None);
-        assert!(result.is_err());
-        
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("ambiguous"));
-        
-        // Should work with project specified
+        // Should work with project specified for project1
         let result = resolve_app(&config, "api", Some("project1"));
         assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.project, "project1");
+        assert_eq!(resolved.app_name, "api");
+        
+        // Should work with project specified for project2
+        let result = resolve_app(&config, "api", Some("project2"));
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.project, "project2");
+        assert_eq!(resolved.app_name, "api");
     }
 
     // Test: List all apps

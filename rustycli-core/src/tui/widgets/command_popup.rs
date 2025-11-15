@@ -111,8 +111,8 @@ impl CommandPopup {
     pub fn render(&self, frame: &mut Frame, theme: &Theme) {
         let size = frame.size();
         
-        // Create a centered popup area (60% width, 40% height)
-        let popup_area = Self::centered_rect(60, 40, size);
+        // Create a centered popup area (50% width, 30% height for compact display)
+        let popup_area = Self::centered_rect(50, 30, size);
         
         // Clear the area behind the popup for proper modal effect
         frame.render_widget(Clear, popup_area);
@@ -129,49 +129,40 @@ impl CommandPopup {
     /// Renders the confirmation dialog
     /// Shows command details and asks user to confirm execution
     fn render_confirm(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let mut lines = Vec::new();
-        
-        // Title
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Execute Command?",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        
-        // Command details
-        lines.push(Line::from(vec![
-            Span::styled("Command:  ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("Script:   ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_text, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("App:      ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.app_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("Env:      ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.environment, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(""));
-        lines.push(Line::from(""));
-        
-        // Action buttons
-        lines.push(Line::from(vec![
-            Span::styled("[Enter] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
-            Span::styled("Execute  ", Style::default().fg(theme.text)),
-            Span::styled("[Esc] ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
-            Span::styled("Cancel", Style::default().fg(theme.text)),
-        ]));
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Execute Command?",
+                Style::default()
+                    .fg(theme.primary)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Command:  ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("Script:   ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.command_text, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("App:      ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("Env:      ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.environment, Style::default().fg(theme.text)),
+            ]),
+            Line::from(""),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[Enter] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+                Span::styled("Execute  ", Style::default().fg(theme.text)),
+                Span::styled("[Esc] ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+                Span::styled("Cancel", Style::default().fg(theme.text)),
+            ]),
+        ];
         
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
@@ -188,28 +179,25 @@ impl CommandPopup {
     /// Renders the executing state
     /// Shows a spinner or progress indicator while command runs
     fn render_executing(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let mut lines = Vec::new();
-        
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Executing...",
-            Style::default()
-                .fg(theme.warning)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        
-        lines.push(Line::from(vec![
-            Span::styled("Command: ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("App:     ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.app_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(""));
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Executing...",
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Command: ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("App:     ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(""),
+        ];
         
         // Show recent output lines if any
         if !self.output_lines.is_empty() {
@@ -245,42 +233,35 @@ impl CommandPopup {
     /// Renders the success state
     /// Shows success message and allows user to dismiss
     fn render_success(&self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
-        let mut lines = Vec::new();
-        
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "✓ Success",
-            Style::default()
-                .fg(theme.success)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        
-        lines.push(Line::from(vec![
-            Span::styled("Command: ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("App:     ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.app_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(""));
-        
-        // Show success message
-        lines.push(Line::from(Span::styled(
-            message,
-            Style::default().fg(theme.text),
-        )));
-        
-        lines.push(Line::from(""));
-        lines.push(Line::from(""));
-        
-        lines.push(Line::from(vec![
-            Span::styled("[Enter/Esc] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
-            Span::styled("Close", Style::default().fg(theme.text)),
-        ]));
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "✓ Success",
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Command: ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("App:     ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                message,
+                Style::default().fg(theme.text),
+            )),
+            Line::from(""),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[Enter/Esc] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+                Span::styled("Close", Style::default().fg(theme.text)),
+            ]),
+        ];
         
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
@@ -297,28 +278,25 @@ impl CommandPopup {
     /// Renders the error state
     /// Shows error message and allows user to dismiss
     fn render_error(&self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
-        let mut lines = Vec::new();
-        
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "✗ Error",
-            Style::default()
-                .fg(theme.error)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        
-        lines.push(Line::from(vec![
-            Span::styled("Command: ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(vec![
-            Span::styled("App:     ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.app_name, Style::default().fg(theme.text)),
-        ]));
-        
-        lines.push(Line::from(""));
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "✗ Error",
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Command: ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("App:     ", Style::default().fg(theme.text_dim)),
+                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+            ]),
+            Line::from(""),
+        ];
         
         // Show error message (may be multi-line)
         for msg_line in message.lines() {

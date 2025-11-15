@@ -193,7 +193,7 @@ fn test_log_file_sorting() {
     assert!(older > oldest);
     
     // When sorted in descending order (newest first), now should come before older
-    let mut dates = vec![oldest, now, older];
+    let mut dates = [oldest, now, older];
     dates.sort_by(|a, b| b.cmp(a)); // Descending order
     
     assert_eq!(dates[0], now);

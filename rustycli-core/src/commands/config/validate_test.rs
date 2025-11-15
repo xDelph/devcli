@@ -1,7 +1,7 @@
 //! Unit tests for config validation functionality
 
 #[cfg(test)]
-mod tests {
+mod validate_tests {
     use crate::config::{Config, Project, App, Commands, Defaults};
     use std::collections::HashMap;
     use std::fs;

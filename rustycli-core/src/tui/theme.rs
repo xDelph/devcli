@@ -36,7 +36,7 @@ impl Theme {
     /// Creates the default theme with GitUI-inspired colors
     /// This theme works well in most terminal environments
     /// Visual polish: Carefully chosen colors for optimal contrast and readability
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             // Cyan for primary highlights - stands out without being harsh
             // Used for focused borders, selected tabs, and important UI elements
@@ -83,7 +83,7 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::default()
+        Self::new()
     }
 }
 

@@ -125,7 +125,7 @@ mod tests {
             },
         };
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
@@ -139,7 +139,7 @@ mod tests {
     fn test_validate_and_get_command_missing_environment() {
         let app = create_test_app(); // No environments configured
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
@@ -155,7 +155,7 @@ mod tests {
         app.commands.local = Some(HashMap::new()); // Has environment but no default
         
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
@@ -172,7 +172,7 @@ mod tests {
         app.defaults.local = Some("start".to_string()); // Default exists but command doesn't
         
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
@@ -191,7 +191,7 @@ mod tests {
         app.defaults.local = Some("start".to_string());
         
         let resolved_app = ResolvedApp {
-            app: app,
+            app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };

@@ -19,11 +19,7 @@
 //    - Ensures clean rendering after terminal size changes
 //    - Marks UI for redraw to update layout
 //
-// 5. Loading Indicators: Visual feedback during async operations
-//    - Animated spinner provides user feedback
-//    - Prevents perceived UI freezing during command execution
-//
-// 6. Layered Rendering: Renders base view, then overlays (popup, help)
+// 5. Layered Rendering: Renders base view, then overlays (popup, help)
 //    - Efficient composition without full screen redraws
 //    - Maintains visual hierarchy and z-ordering
 //
@@ -43,6 +39,7 @@ use crate::commands::start::{start_single_app_internal, StartCommandArgs};
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
 use anyhow::{Context, Result};
+use tokio::sync::mpsc;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
     execute,
@@ -91,9 +88,29 @@ pub struct TuiApp {
     /// Last render timestamp for performance tracking
     /// Used to measure frame time and optimize rendering
     last_render: Instant,
-    /// Loading indicator state for async operations
-    /// Shows a spinner when commands are executing or data is loading
-    loading: bool,
+    /// Channel for sending command execution requests to background task
+    command_tx: mpsc::UnboundedSender<CommandRequest>,
+    /// Channel for receiving command execution results
+    command_rx: mpsc::UnboundedReceiver<CommandResult>,
+}
+
+/// Request to execute a command in the background
+#[derive(Debug, Clone)]
+struct CommandRequest {
+    app_name: String,
+    project: String,
+    environment: String,
+    #[allow(dead_code)] // Reserved for future use when implementing specific command execution
+    command_name: String,
+}
+
+/// Result of command execution
+#[derive(Debug)]
+enum CommandResult {
+    Success(String),
+    Error(String),
+    #[allow(dead_code)] // Reserved for streaming command output to popup
+    Output(String),
 }
 
 impl TuiApp {
@@ -119,6 +136,26 @@ impl TuiApp {
         // Create main view
         let main_view = MainView::new();
 
+        // Create channels for command execution
+        // Request channel: UI -> Background task
+        let (req_tx, mut req_rx) = mpsc::unbounded_channel::<CommandRequest>();
+        // Result channel: Background task -> UI
+        let (result_tx, result_rx) = mpsc::unbounded_channel::<CommandResult>();
+        
+        // Spawn background task to handle command execution
+        tokio::spawn(async move {
+            while let Some(request) = req_rx.recv().await {
+                let tx = result_tx.clone();
+                tokio::spawn(async move {
+                    let result = Self::execute_command_async(request.clone()).await;
+                    let _ = match result {
+                        Ok(msg) => tx.send(CommandResult::Success(msg)),
+                        Err(e) => tx.send(CommandResult::Error(format!("{:#}", e))),
+                    };
+                });
+            }
+        });
+
         Ok(Self {
             state,
             theme,
@@ -130,7 +167,8 @@ impl TuiApp {
             help_overlay: HelpOverlay::new(),
             needs_redraw: true, // Initial render needed
             last_render: Instant::now(),
-            loading: false,
+            command_tx: req_tx,
+            command_rx: result_rx,
         })
     }
 
@@ -183,6 +221,9 @@ impl TuiApp {
             // Check if we need to create a log viewer
             self.check_log_viewer_creation()?;
             
+            // Check for command execution results
+            self.check_command_results()?;
+            
             // Only render if something changed (dirty flag optimization)
             // This reduces CPU usage by avoiding unnecessary redraws
             if self.needs_redraw {
@@ -194,7 +235,7 @@ impl TuiApp {
 
             // Wait for an event with a timeout
             // This allows us to update the UI periodically even without user input
-            if event::poll(Duration::from_millis(250))? {
+            if event::poll(Duration::from_millis(100))? {
                 match event::read()? {
                     Event::Key(key) => {
                         self.handle_key_event(key)?;
@@ -207,12 +248,6 @@ impl TuiApp {
                         self.needs_redraw = true;
                     }
                     _ => {}
-                }
-            } else {
-                // Timeout occurred - check if we need periodic updates
-                // For example, if loading indicator is active
-                if self.loading {
-                    self.needs_redraw = true;
                 }
             }
         }
@@ -299,7 +334,7 @@ impl TuiApp {
     /// Handles input for the main view
     fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<()> {
         // Delegate to the main view's input handler
-        self.main_view.handle_input(key, &mut self.state)?;
+        self.main_view.handle_input(key, &self.state)?;
         Ok(())
     }
 
@@ -481,85 +516,78 @@ impl TuiApp {
     }
 
     /// Executes the command from the popup
-    /// Transitions popup to executing state, runs command, then shows result
-    /// Shows loading indicator during execution
+    /// Sends command to background task for async execution
     fn execute_command_from_popup(&mut self) -> Result<()> {
-        if let Some(popup) = &mut self.command_popup {
-            // Transition to executing state
-            popup.set_executing();
-            
-            // Enable loading indicator
-            self.loading = true;
-            self.needs_redraw = true;
-            
-            // Get command details from popup for execution
-            // We need to clone these to avoid borrow checker issues
-            let popup_clone = popup.clone();
-            
-            // Execute the command asynchronously
-            // For now, we'll use a blocking approach since we're in the event loop
-            // In a real implementation, this would be spawned as a background task
-            let result = self.execute_command_blocking(&popup_clone);
-            
-            // Disable loading indicator
-            self.loading = false;
-            
-            // Update popup with result
-            match result {
-                Ok(message) => {
-                    if let Some(popup) = &mut self.command_popup {
-                        popup.set_success(message);
-                    }
-                    
-                    // Update app status in state after successful start
-                    // The background polling will pick up the new status
-                }
-                Err(e) => {
-                    if let Some(popup) = &mut self.command_popup {
-                        popup.set_error(format!("Failed to execute command: {}", e));
-                    }
-                }
+        // Get command details before mutating
+        let request = if let Some(popup) = &self.command_popup {
+            CommandRequest {
+                app_name: popup.app_name.clone(),
+                project: popup.project.clone(),
+                environment: popup.environment.clone(),
+                command_name: popup.command_name.clone(),
             }
-            
-            self.needs_redraw = true;
+        } else {
+            return Ok(());
+        };
+        
+        // Transition to executing state
+        if let Some(popup) = &mut self.command_popup {
+            popup.set_executing();
         }
+        
+        // Send to background task via channel
+        self.command_tx.send(request)?;
+        
+        self.needs_redraw = true;
         
         Ok(())
     }
 
-    /// Executes a command in a blocking manner
-    /// This is a simplified version that uses the existing start_command infrastructure
-    /// Note: Currently only supports starting apps with their default commands
-    /// The command_name from the popup is used to determine which environment to use
-    /// 
-    /// Error Handling:
-    /// - Runtime creation errors are propagated up
-    /// - Command execution errors are caught and formatted with context
-    /// - Errors are displayed in the popup's error state
-    fn execute_command_blocking(&self, popup: &CommandPopup) -> Result<String> {
-        // Create a runtime for the async command execution
-        // This is necessary because start_single_app_internal is async
-        let runtime = tokio::runtime::Runtime::new()
-            .context("Failed to create async runtime for command execution")?;
-        
+    /// Executes a command asynchronously in a background task
+    /// This runs in a separate tokio task to avoid blocking the UI
+    async fn execute_command_async(request: CommandRequest) -> Result<String> {
         // Build the command args
-        // Note: start_single_app_internal uses the default command for the environment
-        // so we just need to specify the environment
         let args = StartCommandArgs {
-            app_names: vec![popup.app_name.clone()],
-            project: Some(popup.project.clone()),
-            env: Some(popup.environment.clone()),
+            app_names: vec![request.app_name.clone()],
+            project: Some(request.project.clone()),
+            env: Some(request.environment.clone()),
             skip_deps: false,
         };
         
-        // Execute the command with proper error context
-        runtime.block_on(async {
-            start_single_app_internal(args, false)
-                .await
-                .context(format!("Failed to execute command '{}' for app '{}'", 
-                    popup.command_name, popup.app_name))?;
-            Ok(format!("Successfully started {}", popup.app_name))
-        })
+        // Execute the command
+        start_single_app_internal(args, false).await?;
+        
+        Ok(format!("Successfully started {}", request.app_name))
+    }
+    
+    /// Checks for command execution results from background tasks
+    /// Updates popup state based on results
+    fn check_command_results(&mut self) -> Result<()> {
+        // Try to receive results without blocking
+        while let Ok(result) = self.command_rx.try_recv() {
+            match result {
+                CommandResult::Success(msg) => {
+                    if let Some(popup) = &mut self.command_popup {
+                        popup.set_success(msg);
+                    }
+                    self.needs_redraw = true;
+                }
+                CommandResult::Error(msg) => {
+                    if let Some(popup) = &mut self.command_popup {
+                        popup.set_error(msg);
+                    }
+                    self.needs_redraw = true;
+                }
+                CommandResult::Output(line) => {
+                    if let Some(popup) = &mut self.command_popup {
+                        popup.add_output_line(line);
+                    }
+                    self.needs_redraw = true;
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     /// Starts a background task that polls process status every 2 seconds
@@ -681,11 +709,6 @@ impl TuiApp {
             }
         }
         
-        // Render loading indicator if active (shows in bottom right corner)
-        if self.loading {
-            self.render_loading_indicator(frame);
-        }
-        
         // Render command popup if active (renders on top of everything except help)
         if let Some(popup) = &self.command_popup {
             popup.render(frame, &self.theme);
@@ -771,42 +794,6 @@ impl TuiApp {
                 .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
             frame.render_widget(placeholder, size);
         }
-    }
-
-    /// Renders a loading indicator in the bottom right corner
-    /// Shows a spinner animation during async operations
-    /// Visual polish: Provides feedback that the app is working
-    fn render_loading_indicator(&self, frame: &mut Frame) {
-        let size = frame.size();
-        
-        // Position in bottom right corner (small 10x3 area)
-        let indicator_area = Rect {
-            x: size.width.saturating_sub(12),
-            y: size.height.saturating_sub(3),
-            width: 12,
-            height: 3,
-        };
-        
-        // Animated spinner based on elapsed time
-        // Cycles through spinner frames for smooth animation
-        let elapsed = self.last_render.elapsed().as_millis();
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame_idx = (elapsed / 100) as usize % spinner_frames.len();
-        let spinner = spinner_frames[frame_idx];
-        
-        let loading_text = format!(" {} Loading", spinner);
-        
-        let loading_widget = Paragraph::new(loading_text)
-            .style(Style::default()
-                .fg(self.theme.primary)
-                .add_modifier(Modifier::BOLD))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(self.theme.primary))
-            );
-        
-        frame.render_widget(loading_widget, indicator_area);
     }
 
 }

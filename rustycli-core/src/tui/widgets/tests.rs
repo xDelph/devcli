@@ -165,7 +165,7 @@ fn test_help_overlay_default() {
 fn test_error_message_formatting() {
     // Test that error messages are properly formatted
     let error_msg = "Failed to load configuration file";
-    assert!(error_msg.len() > 0);
+    assert!(!error_msg.is_empty());
     assert!(!error_msg.contains('\n')); // Single line error
 }
 
