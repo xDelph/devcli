@@ -28,6 +28,14 @@ pub struct AppState {
     /// Command execution request (command_idx) - set when user wants to execute a command
     /// The app will process this and show the command popup
     pub command_execution_requested: Option<usize>,
+    /// Stop command request - set when user wants to stop an app
+    pub stop_requested: bool,
+    /// Restart command request - set when user wants to restart an app
+    pub restart_requested: bool,
+    /// Environment selection request - set when user wants to start with environment choice
+    pub env_selection_requested: bool,
+    /// Flag to indicate status was updated (for triggering UI redraw)
+    pub status_updated: bool,
 }
 
 impl AppState {
@@ -85,6 +93,10 @@ impl AppState {
             error_message: None,
             status_message: None,
             command_execution_requested: None,
+            stop_requested: false,
+            restart_requested: false,
+            env_selection_requested: false,
+            status_updated: false,
         })
     }
 
@@ -116,13 +128,15 @@ impl AppState {
 
         // Extract local commands
         if let Some(local_cmds) = &app.commands.local {
-            let cmd_list: Vec<CommandInfo> = local_cmds
+            let mut cmd_list: Vec<CommandInfo> = local_cmds
                 .iter()
                 .map(|(name, cmd)| CommandInfo {
                     name: name.clone(),
                     command: cmd.clone(),
                 })
                 .collect();
+            // Sort commands alphabetically by name
+            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
             if !cmd_list.is_empty() {
                 commands.insert("local".to_string(), cmd_list);
             }
@@ -130,13 +144,15 @@ impl AppState {
 
         // Extract docker commands
         if let Some(docker_cmds) = &app.commands.docker {
-            let cmd_list: Vec<CommandInfo> = docker_cmds
+            let mut cmd_list: Vec<CommandInfo> = docker_cmds
                 .iter()
                 .map(|(name, cmd)| CommandInfo {
                     name: name.clone(),
                     command: cmd.clone(),
                 })
                 .collect();
+            // Sort commands alphabetically by name
+            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
             if !cmd_list.is_empty() {
                 commands.insert("docker".to_string(), cmd_list);
             }
@@ -144,13 +160,15 @@ impl AppState {
 
         // Extract k8s commands
         if let Some(k8s_cmds) = &app.commands.k8s {
-            let cmd_list: Vec<CommandInfo> = k8s_cmds
+            let mut cmd_list: Vec<CommandInfo> = k8s_cmds
                 .iter()
                 .map(|(name, cmd)| CommandInfo {
                     name: name.clone(),
                     command: cmd.clone(),
                 })
                 .collect();
+            // Sort commands alphabetically by name
+            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
             if !cmd_list.is_empty() {
                 commands.insert("k8s".to_string(), cmd_list);
             }
@@ -213,6 +231,36 @@ impl AppState {
     /// Called after the request has been processed
     pub fn clear_command_execution_request(&mut self) {
         self.command_execution_requested = None;
+    }
+
+    /// Sets a stop request
+    pub fn set_stop_requested(&mut self) {
+        self.stop_requested = true;
+    }
+
+    /// Clears the stop request
+    pub fn clear_stop_requested(&mut self) {
+        self.stop_requested = false;
+    }
+
+    /// Sets a restart request
+    pub fn set_restart_requested(&mut self) {
+        self.restart_requested = true;
+    }
+
+    /// Clears the restart request
+    pub fn clear_restart_requested(&mut self) {
+        self.restart_requested = false;
+    }
+
+    /// Sets environment selection request
+    pub fn set_env_selection_requested(&mut self) {
+        self.env_selection_requested = true;
+    }
+
+    /// Clears environment selection request
+    pub fn clear_env_selection_requested(&mut self) {
+        self.env_selection_requested = false;
     }
 }
 

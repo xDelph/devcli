@@ -35,13 +35,13 @@ use super::theme::Theme;
 use super::views::{LogViewerView, MainView};
 use super::widgets::command_popup::{CommandPopup, PopupState};
 use super::widgets::help_overlay::HelpOverlay;
-use crate::commands::start::{start_single_app_internal, StartCommandArgs};
+
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
+    event::{self, Event, KeyCode, KeyEvent},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -88,6 +88,8 @@ pub struct TuiApp {
     /// Last render timestamp for performance tracking
     /// Used to measure frame time and optimize rendering
     last_render: Instant,
+    /// Flag to clear terminal on next render (for view transitions)
+    needs_clear: bool,
     /// Channel for sending command execution requests to background task
     command_tx: mpsc::UnboundedSender<CommandRequest>,
     /// Channel for receiving command execution results
@@ -100,8 +102,16 @@ struct CommandRequest {
     app_name: String,
     project: String,
     environment: String,
-    #[allow(dead_code)] // Reserved for future use when implementing specific command execution
-    command_name: String,
+    command_type: CommandType,
+}
+
+/// Type of command being executed
+#[derive(Debug, Clone)]
+enum CommandType {
+    Start,   // Uses start command with environment
+    Run,     // Uses run command with specific command
+    Stop,
+    Restart,
 }
 
 /// Result of command execution
@@ -109,14 +119,17 @@ struct CommandRequest {
 enum CommandResult {
     Success(String),
     Error(String),
-    #[allow(dead_code)] // Reserved for streaming command output to popup
-    Output(String),
+    LogLine(String), // New: stream log lines to popup
 }
 
 impl TuiApp {
     /// Creates a new TUI application
     /// Loads configuration and initializes state
     pub fn new() -> Result<Self> {
+        // Initialize debug logging
+        crate::tui::debug::init_debug_log();
+        crate::debug!("TuiApp::new() called");
+        
         // Load configuration from disk
         let config = load_config().context("Failed to load configuration")?;
         
@@ -147,7 +160,7 @@ impl TuiApp {
             while let Some(request) = req_rx.recv().await {
                 let tx = result_tx.clone();
                 tokio::spawn(async move {
-                    let result = Self::execute_command_async(request.clone()).await;
+                    let result = Self::execute_command_async(request.clone(), tx.clone()).await;
                     let _ = match result {
                         Ok(msg) => tx.send(CommandResult::Success(msg)),
                         Err(e) => tx.send(CommandResult::Error(format!("{:#}", e))),
@@ -167,6 +180,7 @@ impl TuiApp {
             help_overlay: HelpOverlay::new(),
             needs_redraw: true, // Initial render needed
             last_render: Instant::now(),
+            needs_clear: false,
             command_tx: req_tx,
             command_rx: result_rx,
         })
@@ -175,17 +189,21 @@ impl TuiApp {
     /// Runs the TUI application
     /// Sets up the terminal, runs the event loop, and cleans up on exit
     pub async fn run(&mut self) -> Result<()> {
+        crate::debug!("TuiApp::run() starting");
+        
         // Setup terminal
         enable_raw_mode().context("Failed to enable raw mode")?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+        // Don't enable mouse capture to avoid mouse event codes appearing
+        execute!(stdout, EnterAlternateScreen)
             .context("Failed to enter alternate screen")?;
         
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
         // Start background status polling task
-        // This task runs independently and updates app statuses every 2 seconds
+        // This task runs independently and updates app statuses
+        // It notifies the main thread when changes are detected
         let polling_handle = self.start_status_polling();
 
         // Run the main loop
@@ -198,8 +216,7 @@ impl TuiApp {
         disable_raw_mode().context("Failed to disable raw mode")?;
         execute!(
             terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
+            LeaveAlternateScreen
         )
         .context("Failed to leave alternate screen")?;
         terminal.show_cursor().context("Failed to show cursor")?;
@@ -213,16 +230,37 @@ impl TuiApp {
     fn run_event_loop<B: ratatui::backend::Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
-    ) -> Result<()> {
+    ) -> Result<()> 
+    where 
+        <B as ratatui::backend::Backend>::Error: Send + Sync + 'static,
+    {
         while !self.should_quit {
             // Check if a command execution was requested
             self.check_command_execution_request()?;
+            
+            // Check if stop was requested
+            self.check_stop_request()?;
+            
+            // Check if restart was requested
+            self.check_restart_request()?;
+            
+            // Check if environment selection was requested
+            self.check_env_selection_request()?;
             
             // Check if we need to create a log viewer
             self.check_log_viewer_creation()?;
             
             // Check for command execution results
             self.check_command_results()?;
+            
+            // Check if status was updated by background polling
+            self.check_status_update()?;
+            
+            // Clear terminal if needed (for view transitions)
+            if self.needs_clear {
+                terminal.clear()?;
+                self.needs_clear = false;
+            }
             
             // Only render if something changed (dirty flag optimization)
             // This reduces CPU usage by avoiding unnecessary redraws
@@ -258,6 +296,12 @@ impl TuiApp {
     /// Handles keyboard input events
     /// Routes events based on the current view and popup state
     fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
+        // ALWAYS handle Ctrl+C first - quit immediately
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return Ok(());
+        }
+
         // If help overlay is visible, handle it first
         // Any key except '?' closes the help overlay
         if self.help_overlay.is_visible() {
@@ -291,72 +335,72 @@ impl TuiApp {
             }
         }
         
-        // Global shortcuts that work in any view
-        match key.code {
-            // Show help overlay
-            KeyCode::Char('?') => {
-                self.help_overlay.toggle();
-                return Ok(());
-            }
-            // Quit the application
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                return Ok(());
-            }
-            // Handle Ctrl+C to quit
-            KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                self.should_quit = true;
-                return Ok(());
-            }
-            // Go back to previous view
-            KeyCode::Esc => {
-                self.handle_back();
-                return Ok(());
-            }
-            _ => {}
-        }
-
         // Get current view type by locking state briefly
         let current_view = {
             let state = self.state.lock().expect("Failed to lock state");
             state.current_view.clone()
         };
 
-        // View-specific handling
-        match &current_view {
-            ViewType::Main => self.handle_main_view_input(key),
-            ViewType::CommandList { .. } => self.handle_command_list_input(key),
-            ViewType::LogBrowser { .. } => self.handle_log_browser_input(key),
-            ViewType::LogViewer { .. } => self.handle_log_viewer_input(key),
+        // View-specific handling - let views handle keys first
+        let handled = match &current_view {
+            ViewType::Main => self.handle_main_view_input(key)?,
+            ViewType::CommandList { .. } => self.handle_command_list_input(key)?,
+            ViewType::LogBrowser { .. } => self.handle_log_browser_input(key)?,
+            ViewType::LogViewer { .. } => self.handle_log_viewer_input(key)?,
+        };
+
+        // If the view handled the key, we're done
+        if handled {
+            return Ok(());
         }
+
+        // Global shortcuts that work in any view (only if not handled by view)
+        match key.code {
+            // Show help overlay
+            KeyCode::Char('?') => {
+                self.help_overlay.toggle();
+            }
+            // Quit the application
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+            }
+            // Go back to previous view
+            KeyCode::Esc => {
+                self.handle_back();
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     /// Handles input for the main view
-    fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<()> {
+    /// Returns true if the key was handled, false otherwise
+    fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<bool> {
         // Delegate to the main view's input handler
-        self.main_view.handle_input(key, &self.state)?;
-        Ok(())
+        self.main_view.handle_input(key, &self.state)
     }
 
     /// Handles input for the command list view
-    fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<()> {
+    fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<bool> {
         // TODO: Implement command list navigation and execution
-        Ok(())
+        Ok(false)
     }
 
     /// Handles input for the log browser view
-    fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<()> {
+    fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<bool> {
         // TODO: Implement log browser navigation
-        Ok(())
+        Ok(false)
     }
 
     /// Handles input for the log viewer view
-    fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<bool> {
         // Delegate to the log viewer's input handler
         if let Some(viewer) = &mut self.log_viewer {
-            viewer.handle_input(key)?;
+            viewer.handle_input(key) // Return the viewer's result
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 
     /// Handles the back action (Esc key)
@@ -372,6 +416,8 @@ impl TuiApp {
         if let Ok(state) = self.state.lock() {
             if matches!(state.current_view, ViewType::LogViewer { .. }) {
                 self.log_viewer = None;
+                // Clear terminal to avoid artifacts
+                self.needs_clear = true;
             }
         }
         
@@ -385,27 +431,100 @@ impl TuiApp {
     /// Handles input when a popup is active
     /// Returns Ok(()) to indicate the event was handled
     fn handle_popup_input(&mut self, key: KeyEvent) -> Result<()> {
+        crate::debug!("handle_popup_input: key={:?}", key);
+        
         // Get the popup state without borrowing self
         let popup_state = self.command_popup.as_ref().map(|p| p.state().clone());
         
         if let Some(state) = popup_state {
+            crate::debug!("Popup state: {:?}", state);
             match state {
                 PopupState::Confirm => {
                     match key.code {
                         KeyCode::Enter => {
+                            crate::debug!("Enter pressed - executing command");
                             // User confirmed - execute the command
                             self.execute_command_from_popup()?;
                         }
                         KeyCode::Esc => {
+                            crate::debug!("Esc pressed - closing popup");
                             // User cancelled - close popup
                             self.command_popup = None;
                         }
-                        _ => {}
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            // Cycle to previous environment if selection is enabled
+                            if let Some(popup) = &mut self.command_popup {
+                                if popup.allows_env_selection() {
+                                    popup.prev_environment();
+                                    self.needs_redraw = true;
+                                }
+                            }
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            // Cycle to next environment if selection is enabled
+                            if let Some(popup) = &mut self.command_popup {
+                                if popup.allows_env_selection() {
+                                    popup.next_environment();
+                                    self.needs_redraw = true;
+                                }
+                            }
+                        }
+                        _ => {
+                            crate::debug!("Other key pressed: {:?}", key.code);
+                        }
                     }
                 }
                 PopupState::Executing => {
-                    // Can't interact while executing
-                    // The popup will automatically transition to success/error
+                    // Allow ESC to close and arrow keys to scroll
+                    match key.code {
+                        KeyCode::Esc => {
+                            crate::debug!("Esc pressed - closing executing popup");
+                            self.command_popup = None;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(popup) = &mut self.command_popup {
+                                popup.scroll_up();
+                                self.needs_redraw = true;
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if let Some(popup) = &mut self.command_popup {
+                                popup.scroll_down();
+                                self.needs_redraw = true;
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if let Some(popup) = &mut self.command_popup {
+                                for _ in 0..10 {
+                                    popup.scroll_up();
+                                }
+                                self.needs_redraw = true;
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if let Some(popup) = &mut self.command_popup {
+                                for _ in 0..10 {
+                                    popup.scroll_down();
+                                }
+                                self.needs_redraw = true;
+                            }
+                        }
+                        KeyCode::Home => {
+                            if let Some(popup) = &mut self.command_popup {
+                                popup.scroll_to_top();
+                                self.needs_redraw = true;
+                            }
+                        }
+                        KeyCode::End => {
+                            if let Some(popup) = &mut self.command_popup {
+                                popup.enable_auto_scroll();
+                                self.needs_redraw = true;
+                            }
+                        }
+                        _ => {
+                            // Other keys are ignored while executing
+                        }
+                    }
                 }
                 PopupState::Success(_) | PopupState::Error(_) => {
                     // Any key closes the result popup
@@ -440,6 +559,8 @@ impl TuiApp {
                 match LogViewerView::new(log_path.clone()) {
                     Ok(viewer) => {
                         self.log_viewer = Some(viewer);
+                        // Clear terminal to avoid artifacts from previous view
+                        self.needs_clear = true;
                     }
                     Err(e) => {
                         // Failed to create viewer - set error and go back to main view
@@ -464,23 +585,18 @@ impl TuiApp {
             state.command_execution_requested
         };
         
-        if let Some(_command_idx) = request {
+        if let Some(command_idx) = request {
             // Get the command details from state
-            let (app_name, project_name, command_name, command_text, environment) = {
+            let (app_name, project_name, command_name) = {
                 let state = self.state.lock().expect("Failed to lock state");
                 
                 if let Some(app) = state.selected_app() {
                     // Get the command at the requested index using the main_view helper
-                    if let Some((env, cmd_info)) = self.main_view.get_selected_command(app) {
-                        // Convert environment to string
-                        let env_str = env.to_string();
-                        
+                    if let Some((_env, cmd_info)) = self.main_view.get_command_by_index(app, command_idx) {
                         (
                             app.name.clone(),
                             app.project.clone(),
                             cmd_info.name.clone(),
-                            cmd_info.command.clone(),
-                            env_str,
                         )
                     } else {
                         // Invalid command index - clear the request
@@ -498,13 +614,15 @@ impl TuiApp {
                 }
             };
             
-            // Create the popup
+            // Create the popup for run command
+            // For Commands tab, we use "run" as the command type
+            // and store the actual command name in the environment field
             self.command_popup = Some(CommandPopup::new(
-                command_name,
-                command_text,
+                "run".to_string(),
+                format!("Running: {}", command_name),
                 app_name,
                 project_name,
-                environment,
+                command_name, // Store command name in environment field for run
             ));
             
             // Clear the request
@@ -515,28 +633,207 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Checks if stop was requested and creates the popup
+    fn check_stop_request(&mut self) -> Result<()> {
+        let stop_requested = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.stop_requested
+        };
+        
+        if stop_requested {
+            let (app_name, project_name) = {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    (app.name.clone(), app.project.clone())
+                } else {
+                    let mut state = self.state.lock().expect("Failed to lock state");
+                    state.clear_stop_requested();
+                    return Ok(());
+                }
+            };
+            
+            // Create stop popup
+            self.command_popup = Some(CommandPopup::new(
+                "stop".to_string(),
+                "Stopping process...".to_string(),
+                app_name.clone(),
+                project_name.clone(),
+                "".to_string(),
+            ));
+            
+            // Immediately execute stop
+            let request = CommandRequest {
+                app_name,
+                project: project_name,
+                environment: String::new(),
+                command_type: CommandType::Stop,
+            };
+            
+            if let Some(popup) = &mut self.command_popup {
+                popup.set_executing();
+            }
+            
+            self.command_tx.send(request)?;
+            
+            let mut state = self.state.lock().expect("Failed to lock state");
+            state.clear_stop_requested();
+        }
+        
+        Ok(())
+    }
+
+    /// Checks if restart was requested and creates the popup
+    fn check_restart_request(&mut self) -> Result<()> {
+        let restart_requested = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.restart_requested
+        };
+        
+        if restart_requested {
+            let (app_name, project_name, environment) = {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    // Try to get environment from running process, fallback to "local"
+                    let env = if let Ok(tracker) = crate::process::ProcessTracker::new() {
+                        if let Ok(Some(process)) = tracker.get_process(&app.name) {
+                            process.environment.unwrap_or_else(|| "local".to_string())
+                        } else {
+                            "local".to_string()
+                        }
+                    } else {
+                        "local".to_string()
+                    };
+                    (app.name.clone(), app.project.clone(), env)
+                } else {
+                    let mut state = self.state.lock().expect("Failed to lock state");
+                    state.clear_restart_requested();
+                    return Ok(());
+                }
+            };
+            
+            // Create restart popup
+            self.command_popup = Some(CommandPopup::new(
+                "restart".to_string(),
+                "Restarting process...".to_string(),
+                app_name.clone(),
+                project_name.clone(),
+                environment.clone(),
+            ));
+            
+            // Immediately execute restart
+            let request = CommandRequest {
+                app_name,
+                project: project_name,
+                environment,
+                command_type: CommandType::Restart,
+            };
+            
+            if let Some(popup) = &mut self.command_popup {
+                popup.set_executing();
+            }
+            
+            self.command_tx.send(request)?;
+            
+            let mut state = self.state.lock().expect("Failed to lock state");
+            state.clear_restart_requested();
+        }
+        
+        Ok(())
+    }
+
+    /// Checks if status was updated by background polling and triggers redraw
+    fn check_status_update(&mut self) -> Result<()> {
+        let status_updated = {
+            let mut state = self.state.lock().expect("Failed to lock state");
+            let updated = state.status_updated;
+            if updated {
+                state.status_updated = false; // Clear the flag
+            }
+            updated
+        };
+        
+        if status_updated {
+            self.needs_redraw = true;
+        }
+        
+        Ok(())
+    }
+
+    /// Checks if environment selection was requested and creates start popup with env selection
+    fn check_env_selection_request(&mut self) -> Result<()> {
+        let env_selection_requested = {
+            let state = self.state.lock().expect("Failed to lock state");
+            state.env_selection_requested
+        };
+        
+        if env_selection_requested {
+            let (app_name, project_name, default_env) = {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    // Get default environment from preferences
+                    let preferences = crate::config::load_preferences().unwrap_or_default();
+                    (app.name.clone(), app.project.clone(), preferences.default_env)
+                } else {
+                    let mut state = self.state.lock().expect("Failed to lock state");
+                    state.clear_env_selection_requested();
+                    return Ok(());
+                }
+            };
+            
+            // Create start popup with environment selection
+            self.command_popup = Some(CommandPopup::new_with_env_selection(
+                "start".to_string(),
+                "Start application".to_string(),
+                app_name,
+                project_name,
+                default_env,
+            ));
+            
+            let mut state = self.state.lock().expect("Failed to lock state");
+            state.clear_env_selection_requested();
+        }
+        
+        Ok(())
+    }
+
     /// Executes the command from the popup
     /// Sends command to background task for async execution
     fn execute_command_from_popup(&mut self) -> Result<()> {
+        crate::debug!("execute_command_from_popup called");
+        
         // Get command details before mutating
         let request = if let Some(popup) = &self.command_popup {
+            // Determine command type based on popup command name
+            let command_type = match popup.command_name.as_str() {
+                "start" => CommandType::Start,
+                "run" => CommandType::Run,
+                "stop" => CommandType::Stop,
+                "restart" => CommandType::Restart,
+                _ => CommandType::Start, // Default fallback
+            };
+            
             CommandRequest {
                 app_name: popup.app_name.clone(),
                 project: popup.project.clone(),
                 environment: popup.environment.clone(),
-                command_name: popup.command_name.clone(),
+                command_type,
             }
         } else {
+            crate::debug!("No popup found!");
             return Ok(());
         };
+        
+        crate::debug!("Sending command request: {:?}", request);
         
         // Transition to executing state
         if let Some(popup) = &mut self.command_popup {
             popup.set_executing();
+            crate::debug!("Popup set to executing state");
         }
         
         // Send to background task via channel
         self.command_tx.send(request)?;
+        crate::debug!("Command sent to background task");
         
         self.needs_redraw = true;
         
@@ -545,42 +842,242 @@ impl TuiApp {
 
     /// Executes a command asynchronously in a background task
     /// This runs in a separate tokio task to avoid blocking the UI
-    async fn execute_command_async(request: CommandRequest) -> Result<String> {
-        // Build the command args
-        let args = StartCommandArgs {
-            app_names: vec![request.app_name.clone()],
-            project: Some(request.project.clone()),
-            env: Some(request.environment.clone()),
-            skip_deps: false,
-        };
+    /// Captures stdout/stderr directly from the spawned process
+    async fn execute_command_async(
+        request: CommandRequest,
+        output_tx: mpsc::UnboundedSender<CommandResult>,
+    ) -> Result<String> {
+        crate::debug!("execute_command_async: Starting command");
         
-        // Execute the command
-        start_single_app_internal(args, false).await?;
-        
-        Ok(format!("Successfully started {}", request.app_name))
+        // Execute based on command type
+        match request.command_type {
+            CommandType::Start => {
+                use tokio::process::Command;
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                
+                // Get the CLI binary path
+                let binary_path = std::env::current_exe()?;
+                
+                // Build the command: rustycli start <app> --project <project> --env <env>
+                let mut cmd = Command::new(binary_path);
+                cmd.arg("start")
+                   .arg(&request.app_name)
+                   .arg("--project").arg(&request.project)
+                   .arg("--env").arg(&request.environment)
+                   .stdout(std::process::Stdio::piped())
+                   .stderr(std::process::Stdio::piped());
+                
+                let mut child = cmd.spawn()?;
+                
+                // Capture stdout
+                if let Some(stdout) = child.stdout.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
+                        }
+                    });
+                }
+                
+                // Capture stderr
+                if let Some(stderr) = child.stderr.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                        }
+                    });
+                }
+                
+                // Wait for the command to complete
+                let status = child.wait().await?;
+                
+                if !status.success() {
+                    anyhow::bail!("Start command failed with status: {}", status);
+                }
+                
+                crate::debug!("execute_command_async: Start command finished");
+                Ok(format!("Successfully started {}", request.app_name))
+            }
+            CommandType::Run => {
+                use tokio::process::Command;
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                
+                // Get the CLI binary path
+                let binary_path = std::env::current_exe()?;
+                
+                // Build the command: rustycli run <app> <command> --project <project>
+                let mut cmd = Command::new(binary_path);
+                cmd.arg("run")
+                   .arg(&request.app_name)
+                   .arg(&request.environment) // For run, environment field contains the command name
+                   .arg("--project").arg(&request.project)
+                   .stdout(std::process::Stdio::piped())
+                   .stderr(std::process::Stdio::piped());
+                
+                let mut child = cmd.spawn()?;
+                
+                // Capture stdout
+                if let Some(stdout) = child.stdout.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
+                        }
+                    });
+                }
+                
+                // Capture stderr
+                if let Some(stderr) = child.stderr.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                        }
+                    });
+                }
+                
+                // Wait for the command to complete
+                let status = child.wait().await?;
+                
+                if !status.success() {
+                    anyhow::bail!("Run command failed with status: {}", status);
+                }
+                
+                crate::debug!("execute_command_async: Run command finished");
+                Ok(format!("Successfully ran command for {}", request.app_name))
+            }
+            CommandType::Stop => {
+                use tokio::process::Command;
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                
+                // Get the CLI binary path
+                let binary_path = std::env::current_exe()?;
+                
+                // Build the command: rustycli stop <app> --project <project>
+                let mut cmd = Command::new(binary_path);
+                cmd.arg("stop")
+                   .arg(&request.app_name)
+                   .arg("--project").arg(&request.project)
+                   .stdout(std::process::Stdio::piped())
+                   .stderr(std::process::Stdio::piped());
+                
+                let mut child = cmd.spawn()?;
+                
+                // Capture stdout
+                if let Some(stdout) = child.stdout.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
+                        }
+                    });
+                }
+                
+                // Capture stderr
+                if let Some(stderr) = child.stderr.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                        }
+                    });
+                }
+                
+                // Wait for the command to complete
+                let status = child.wait().await?;
+                
+                if !status.success() {
+                    anyhow::bail!("Stop command failed with status: {}", status);
+                }
+                
+                crate::debug!("execute_command_async: Stop command finished");
+                Ok(format!("Successfully stopped {}", request.app_name))
+            }
+            CommandType::Restart => {
+                use tokio::process::Command;
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                
+                // Get the CLI binary path
+                let binary_path = std::env::current_exe()?;
+                
+                // Build the command: rustycli restart <app> --project <project> --env <env>
+                let mut cmd = Command::new(binary_path);
+                cmd.arg("restart")
+                   .arg(&request.app_name)
+                   .arg("--project").arg(&request.project)
+                   .arg("--env").arg(&request.environment)
+                   .stdout(std::process::Stdio::piped())
+                   .stderr(std::process::Stdio::piped());
+                
+                let mut child = cmd.spawn()?;
+                
+                // Capture stdout
+                if let Some(stdout) = child.stdout.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
+                        }
+                    });
+                }
+                
+                // Capture stderr
+                if let Some(stderr) = child.stderr.take() {
+                    let output_tx_clone = output_tx.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                        }
+                    });
+                }
+                
+                // Wait for the command to complete
+                let status = child.wait().await?;
+                
+                if !status.success() {
+                    anyhow::bail!("Restart command failed with status: {}", status);
+                }
+                
+                crate::debug!("execute_command_async: Restart command finished");
+                Ok(format!("Successfully restarted {}", request.app_name))
+            }
+        }
     }
     
     /// Checks for command execution results from background tasks
     /// Updates popup state based on results
+    /// Streams log lines to the popup in real-time
     fn check_command_results(&mut self) -> Result<()> {
         // Try to receive results without blocking
         while let Ok(result) = self.command_rx.try_recv() {
             match result {
-                CommandResult::Success(msg) => {
+                CommandResult::LogLine(line) => {
+                    // Stream log line to popup
                     if let Some(popup) = &mut self.command_popup {
-                        popup.set_success(msg);
+                        popup.add_output_line(line);
                     }
+                    self.needs_redraw = true;
+                }
+                CommandResult::Success(_msg) => {
+                    crate::debug!("Received Success");
+                    
+                    // Keep the popup open showing logs
+                    // User can close with ESC when ready
                     self.needs_redraw = true;
                 }
                 CommandResult::Error(msg) => {
+                    crate::debug!("Received Error: {}", msg);
                     if let Some(popup) = &mut self.command_popup {
                         popup.set_error(msg);
-                    }
-                    self.needs_redraw = true;
-                }
-                CommandResult::Output(line) => {
-                    if let Some(popup) = &mut self.command_popup {
-                        popup.add_output_line(line);
                     }
                     self.needs_redraw = true;
                 }
@@ -590,53 +1087,92 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Starts a background task that polls process status every 2 seconds
+    /// Starts a background task that polls process status
+    ///
+    /// Uses a hybrid approach:
+    /// 1. Checks notification file every 250ms for instant updates when monitor detects changes
+    /// 2. Falls back to full status check every 2 seconds as a safety net
+    ///
     /// This keeps the UI updated with current running states without blocking user interaction
+    ///
     /// Returns a JoinHandle that can be used to abort the task when the app exits
+    ///
     /// Optimization: Uses try_lock to avoid blocking the main thread
     fn start_status_polling(&self) -> tokio::task::JoinHandle<()> {
         // Clone Arc references so they can be moved into the async task
         let state = Arc::clone(&self.state);
         let process_tracker = Arc::clone(&self.process_tracker);
+        
+        // We can't easily move status_update_rx out of self, so we'll use a simpler approach:
+        // Just set needs_redraw in the state when status changes
+        // The main event loop already checks for redraws frequently
 
         tokio::spawn(async move {
-            // Create an interval that ticks every 2 seconds
-            // This is a good balance between responsiveness and CPU usage
-            let mut interval = interval(Duration::from_secs(2));
+            // Track the last known modification time of the status notification file
+            let mut last_notification_time = process_tracker.get_last_status_change().ok().flatten();
+            
+            // Create intervals for different polling strategies
+            let mut fast_check_interval = interval(Duration::from_millis(250)); // Check notification file frequently
+            let mut full_check_interval = interval(Duration::from_secs(2)); // Full status check as fallback
 
             loop {
-                // Wait for the next tick
-                interval.tick().await;
-
-                // Try to acquire the state lock with a non-blocking approach
-                // If we can't get it immediately, skip this update cycle
-                // This prevents blocking if the main thread is using the state
-                // Performance optimization: Avoids contention on the state lock
-                if let Ok(mut state) = state.try_lock() {
-                    // Track if any status changed to optimize UI updates
-                    let mut status_changed = false;
-                    
-                    // Update status for all apps in all projects
-                    for project in &mut state.projects {
-                        for app in &mut project.apps {
-                            let old_status = app.status.clone();
-                            // Check if the app is currently running
-                            app.status = Self::check_app_status(&app.name, &process_tracker);
-                            
-                            // Detect status changes for potential UI optimization
-                            if old_status != app.status {
-                                status_changed = true;
+                tokio::select! {
+                    // Fast check: Look for notification file changes every 250ms
+                    _ = fast_check_interval.tick() => {
+                        // Check if the notification file has been updated
+                        if let Ok(Some(current_time)) = process_tracker.get_last_status_change() {
+                            // If this is the first check or the time has changed, update status
+                            if last_notification_time.is_none() || last_notification_time != Some(current_time) {
+                                last_notification_time = Some(current_time);
+                                
+                                // Status change detected - update immediately
+                                Self::update_all_app_statuses(&state, &process_tracker).await;
                             }
                         }
                     }
                     
-                    // Note: In a more advanced implementation, we could signal
-                    // the main thread when status_changed is true to trigger a redraw
-                    // For now, the main loop's periodic check handles this
-                    let _ = status_changed; // Suppress unused warning
+                    // Full check: Update all statuses every 2 seconds as a safety net
+                    // This ensures we catch any changes even if notification system fails
+                    _ = full_check_interval.tick() => {
+                        Self::update_all_app_statuses(&state, &process_tracker).await;
+                    }
                 }
             }
         })
+    }
+
+    /// Updates the status of all apps by checking the process tracker
+    /// This is called both when notification file changes and periodically as a fallback
+    async fn update_all_app_statuses(
+        state: &Arc<Mutex<AppState>>,
+        process_tracker: &Arc<ProcessTracker>,
+    ) {
+        // Try to acquire the state lock with a non-blocking approach
+        // If we can't get it immediately, skip this update cycle
+        // This prevents blocking if the main thread is using the state
+        // Performance optimization: Avoids contention on the state lock
+        if let Ok(mut state) = state.try_lock() {
+            let mut any_changed = false;
+            
+            // Update status for all apps in all projects
+            for project in &mut state.projects {
+                for app in &mut project.apps {
+                    let old_status = app.status.clone();
+                    // Check if the app is currently running
+                    app.status = Self::check_app_status(&app.name, process_tracker);
+                    
+                    // Track if any status changed
+                    if old_status != app.status {
+                        any_changed = true;
+                    }
+                }
+            }
+            
+            // Set flag to trigger UI redraw if status changed
+            if any_changed {
+                state.status_updated = true;
+            }
+        }
     }
 
     /// Checks the current status of an app by querying the process tracker
@@ -729,7 +1265,7 @@ impl TuiApp {
     /// This is for non-blocking errors that don't require user acknowledgment
     /// The error can be dismissed by pressing any key or will auto-clear on next action
     fn render_error_message(&self, frame: &mut Frame, error: &str) {
-        let size = frame.size();
+        let size = frame.area();
         
         // Create a status bar at the bottom (3 lines high)
         let status_area = Rect {
@@ -765,7 +1301,7 @@ impl TuiApp {
 
     /// Placeholder for command list view
     fn render_command_list_view(&self, frame: &mut Frame) {
-        let size = frame.size();
+        let size = frame.area();
         let placeholder = Paragraph::new("Command List View - Coming Soon")
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title("Commands"));
@@ -774,7 +1310,7 @@ impl TuiApp {
 
     /// Placeholder for log browser view
     fn render_log_browser_view(&self, frame: &mut Frame) {
-        let size = frame.size();
+        let size = frame.area();
         let placeholder = Paragraph::new("Log Browser View - Coming Soon")
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title("Logs"));
@@ -784,11 +1320,11 @@ impl TuiApp {
     /// Renders the log viewer view
     fn render_log_viewer_view(&mut self, frame: &mut Frame) {
         if let Some(viewer) = &mut self.log_viewer {
-            let size = frame.size();
+            let size = frame.area();
             viewer.render(frame, size);
         } else {
             // Fallback if viewer is not initialized
-            let size = frame.size();
+            let size = frame.area();
             let placeholder = Paragraph::new("Log Viewer - No file loaded")
                 .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::ALL).title("Log Viewer"));

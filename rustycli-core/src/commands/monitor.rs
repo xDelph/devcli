@@ -64,6 +64,7 @@ async fn run_daemon_loop() -> Result<()> {
     loop {
         // Clean up dead processes
         // This removes PID files for processes that are no longer running
+        // cleanup_dead() will automatically notify watchers if any processes were cleaned
         let _cleaned = tracker.cleanup_dead()?;
         
         // Check if there are any processes left (excluding the monitor itself)

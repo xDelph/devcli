@@ -79,6 +79,9 @@ impl ProcessTracker {
         // This will overwrite if the file already exists
         fs::write(&path, json).context("Failed to write PID file")?;
 
+        // Notify watchers that a new process was registered
+        self.notify_status_change()?;
+
         // Return Ok(()) to indicate success
         Ok(())
     }
@@ -184,6 +187,8 @@ impl ProcessTracker {
         // This prevents errors when trying to remove a non-existent file
         if path.exists() {
             fs::remove_file(&path).context("Failed to remove PID file")?;
+            // Notify watchers that a process was removed
+            self.notify_status_change()?;
         }
 
         Ok(())
@@ -208,8 +213,54 @@ impl ProcessTracker {
             }
         }
 
+        // If any processes were cleaned up, notify watchers
+        if !cleaned.is_empty() {
+            self.notify_status_change()?;
+        }
+
         // Return the list of cleaned process names
         Ok(cleaned)
+    }
+
+    // Get the path to the status notification file
+    // This file is touched whenever process status changes
+    fn status_notification_path(&self) -> PathBuf {
+        self.base_dir.join(".status_changed")
+    }
+
+    // Notify watchers that process status has changed
+    // Updates the modification time of a notification file
+    pub fn notify_status_change(&self) -> Result<()> {
+        let path = self.status_notification_path();
+        
+        // Touch the file to update its modification time
+        // This is a lightweight way to signal changes across processes
+        if path.exists() {
+            // Update modification time
+            let now = std::time::SystemTime::now();
+            filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(now))
+                .context("Failed to update status notification file")?;
+        } else {
+            // Create the file if it doesn't exist
+            fs::write(&path, "").context("Failed to create status notification file")?;
+        }
+        
+        Ok(())
+    }
+
+    // Get the last modification time of the status notification file
+    // Returns None if the file doesn't exist
+    pub fn get_last_status_change(&self) -> Result<Option<std::time::SystemTime>> {
+        let path = self.status_notification_path();
+        
+        if !path.exists() {
+            return Ok(None);
+        }
+        
+        let metadata = fs::metadata(&path).context("Failed to read status notification file")?;
+        let modified = metadata.modified().context("Failed to get modification time")?;
+        
+        Ok(Some(modified))
     }
 }
 
