@@ -3,6 +3,7 @@
 // Inspired by GitUI's clean and efficient design
 
 pub mod app;
+pub mod debug;
 pub mod log_manager;
 pub mod state;
 pub mod theme;
