@@ -122,55 +122,28 @@ impl AppState {
     }
 
     /// Extracts commands from app configuration
-    /// Groups commands by environment (local, docker, k8s)
+    /// Groups commands by environment (local, docker, orbstack, k8s)
     fn extract_commands(app: &App) -> HashMap<String, Vec<CommandInfo>> {
+        use crate::config::models::Environment;
+        
         let mut commands = HashMap::new();
 
-        // Extract local commands
-        if let Some(local_cmds) = &app.commands.local {
-            let mut cmd_list: Vec<CommandInfo> = local_cmds
-                .iter()
-                .map(|(name, cmd)| CommandInfo {
-                    name: name.clone(),
-                    command: cmd.clone(),
-                })
-                .collect();
-            // Sort commands alphabetically by name
-            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
-            if !cmd_list.is_empty() {
-                commands.insert("local".to_string(), cmd_list);
-            }
-        }
-
-        // Extract docker commands
-        if let Some(docker_cmds) = &app.commands.docker {
-            let mut cmd_list: Vec<CommandInfo> = docker_cmds
-                .iter()
-                .map(|(name, cmd)| CommandInfo {
-                    name: name.clone(),
-                    command: cmd.clone(),
-                })
-                .collect();
-            // Sort commands alphabetically by name
-            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
-            if !cmd_list.is_empty() {
-                commands.insert("docker".to_string(), cmd_list);
-            }
-        }
-
-        // Extract k8s commands
-        if let Some(k8s_cmds) = &app.commands.k8s {
-            let mut cmd_list: Vec<CommandInfo> = k8s_cmds
-                .iter()
-                .map(|(name, cmd)| CommandInfo {
-                    name: name.clone(),
-                    command: cmd.clone(),
-                })
-                .collect();
-            // Sort commands alphabetically by name
-            cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
-            if !cmd_list.is_empty() {
-                commands.insert("k8s".to_string(), cmd_list);
+        // Extract commands for each environment dynamically
+        for env_type in Environment::all() {
+            let env_key = env_type.as_str();
+            if let Some(env_cmds) = app.commands.get(env_key) {
+                let mut cmd_list: Vec<CommandInfo> = env_cmds
+                    .iter()
+                    .map(|(name, cmd)| CommandInfo {
+                        name: name.clone(),
+                        command: cmd.clone(),
+                    })
+                    .collect();
+                // Sort commands alphabetically by name
+                cmd_list.sort_by(|a, b| a.name.cmp(&b.name));
+                if !cmd_list.is_empty() {
+                    commands.insert(env_key.to_string(), cmd_list);
+                }
             }
         }
 

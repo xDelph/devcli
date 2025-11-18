@@ -27,12 +27,14 @@ fn create_test_config() -> Config {
             commands: Commands {
                 local: Some(local_commands.clone()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         },
@@ -46,12 +48,14 @@ fn create_test_config() -> Config {
             commands: Commands {
                 local: Some(local_commands),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         },

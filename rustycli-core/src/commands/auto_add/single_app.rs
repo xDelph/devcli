@@ -69,6 +69,9 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     if let Some(docker_cmds) = &detected.docker_commands {
         println!("  - Docker: {} commands available", docker_cmds.len());
     }
+    if let Some(orbstack_cmds) = &detected.orbstack_commands {
+        println!("  - OrbStack: {} commands available", orbstack_cmds.len());
+    }
     if let Some(k8s_cmds) = &detected.k8s_commands {
         println!("  - Kubernetes: {} commands available", k8s_cmds.len());
     }
@@ -76,6 +79,7 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     // Apps need at least one environment to be useful
     if detected.local_commands.is_none() 
         && detected.docker_commands.is_none() 
+        && detected.orbstack_commands.is_none()
         && detected.k8s_commands.is_none() {
         anyhow::bail!("No commands detected for this app. Cannot add to config.");
     }
@@ -207,9 +211,11 @@ fn create_redis_app_from_config(config_path: &std::path::Path, config_filename: 
         path: crate::utils::path::contract_tilde(dir_path),
         local_commands: Some(local_commands),
         docker_commands: None, // Could add Docker detection later
+        orbstack_commands: None, // Could add OrbStack detection later
         k8s_commands: None,    // Could add K8s detection later
         suggested_local_default: Some("start".to_string()),
         suggested_docker_default: None,
+        suggested_orbstack_default: None,
     })
 }
 
@@ -238,9 +244,11 @@ fn create_traefik_app_from_config(config_path: &std::path::Path, config_filename
         path: crate::utils::path::contract_tilde(dir_path),
         local_commands: Some(local_commands),
         docker_commands: None, // Could add Docker detection later
+        orbstack_commands: None, // Could add OrbStack detection later
         k8s_commands: None,    // Could add K8s detection later
         suggested_local_default: Some("start".to_string()),
         suggested_docker_default: None,
+        suggested_orbstack_default: None,
     })
 }
 
@@ -288,6 +296,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
         // Skip apps with no commands
         if detected.local_commands.is_none() 
             && detected.docker_commands.is_none() 
+            && detected.orbstack_commands.is_none()
             && detected.k8s_commands.is_none() {
             println!("⚠ Skipping {} - no commands detected", detected.app_name);
             continue;
@@ -312,12 +321,14 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             commands: Commands {
                 local: detected.local_commands.clone(),
                 docker: detected.docker_commands.clone(),
+                orbstack: detected.orbstack_commands.clone(),
                 k8s: detected.k8s_commands.clone(),
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
+                orbstack: detected.suggested_orbstack_default.clone(),
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
         };
@@ -361,12 +372,14 @@ fn add_to_config(
         commands: Commands {
             local: detected.local_commands,
             docker: detected.docker_commands,
+            orbstack: detected.orbstack_commands,
             k8s: detected.k8s_commands.clone(),
         },
         dependencies: Vec::new(), // No dependencies detected automatically (user must add manually)
         defaults: Defaults {
             local: detected.suggested_local_default,
             docker: detected.suggested_docker_default,
+            orbstack: detected.suggested_orbstack_default,
             k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
     };

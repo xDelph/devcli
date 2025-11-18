@@ -160,9 +160,11 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         path: contract_tilde(app_path),
         local_commands: if local_commands.is_empty() { None } else { Some(local_commands) },
         docker_commands,
+        orbstack_commands: None,
         k8s_commands,
         suggested_local_default,
         suggested_docker_default,
+        suggested_orbstack_default: None,
     })
 }
 
@@ -256,9 +258,11 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         path: contract_tilde(workspace_root),
         local_commands: if local_commands.is_empty() { None } else { Some(local_commands) },
         docker_commands,
+        orbstack_commands: None,
         k8s_commands,
         suggested_local_default,
         suggested_docker_default,
+        suggested_orbstack_default: None,
     })
 }
 

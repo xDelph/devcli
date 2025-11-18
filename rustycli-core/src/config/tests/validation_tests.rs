@@ -30,6 +30,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -39,6 +40,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -57,6 +59,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -66,6 +69,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -109,6 +113,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -118,6 +123,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -136,6 +142,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -145,6 +152,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -163,6 +171,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -172,6 +181,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -211,6 +221,7 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
@@ -220,6 +231,7 @@ mod tests {
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },

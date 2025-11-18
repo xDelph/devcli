@@ -162,6 +162,13 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                 get_available_environments(&resolved_app.app)
             )
         })?,
+        "orbstack" => resolved_app.app.commands.orbstack.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'orbstack' environment configured. Available: {}",
+                args.app_name,
+                get_available_environments(&resolved_app.app)
+            )
+        })?,
         "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "App '{}' does not have 'k8s' environment configured. Available: {}",
@@ -170,7 +177,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             )
         })?,
         _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local', 'docker', or 'k8s'.",
+            "Invalid environment '{}'. Must be 'local', 'docker', 'orbstack', or 'k8s'.",
             environment
         ),
     };
@@ -192,6 +199,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "App '{}' does not have a default command for 'docker' environment",
+                    args.app_name
+                )
+            })?,
+            "orbstack" => resolved_app.app.defaults.orbstack.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "App '{}' does not have a default command for 'orbstack' environment",
                     args.app_name
                 )
             })?,
@@ -397,13 +410,14 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
 // Helper function to show which environments are configured for an app
 fn get_available_environments(app: &crate::config::models::App) -> String {
+    use crate::config::models::Environment;
+    
     let mut envs = Vec::new();
 
-    if app.commands.local.is_some() {
-        envs.push("local");
-    }
-    if app.commands.docker.is_some() {
-        envs.push("docker");
+    for env_type in Environment::all() {
+        if app.commands.get(env_type.as_str()).is_some() {
+            envs.push(env_type.as_str());
+        }
     }
     if app.commands.k8s.is_some() {
         envs.push("k8s");

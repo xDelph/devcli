@@ -3,7 +3,7 @@
 // Features: Status, Commands, and Logs tabs with project/app tree on left and details on right
 
 use crate::config::loader::{load_config, save_config};
-use crate::config::models::{App, Commands, Defaults, Project};
+use crate::config::models::{App, Commands, Defaults, Environment, Project};
 use crate::tui::log_manager::LogManager;
 use crate::tui::state::{AppState, AppStateData};
 use crate::tui::theme::Theme;
@@ -66,6 +66,8 @@ pub enum ConfigMode {
     Add,
     /// Edit mode - form to edit existing app
     Edit,
+    /// Add command mode - add a new command to existing app
+    AddCommand,
     /// Edit command mode - edit a specific command
     EditCommand,
     /// Edit dependencies mode - manage dependencies
@@ -107,6 +109,7 @@ pub enum ConfigField {
     Path,
     LocalStartCmd,
     DockerStartCmd,
+    EditCommandEnv,
     EditCommandName,
     EditCommandValue,
 }
@@ -160,6 +163,154 @@ impl MainView {
         // Lock the state for modification
         // Use expect instead of context since PoisonError doesn't implement StdError
         let mut state = state.lock().expect("Failed to lock state");
+        
+        // In edit mode, only handle specific keys - everything else is for typing
+        let in_edit_mode = self.active_tab == MainTab::Config && matches!(
+            self.config_mode,
+            ConfigMode::Add | ConfigMode::Edit | ConfigMode::AddCommand | ConfigMode::EditCommand
+        );
+        
+        if in_edit_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    self.config_mode = ConfigMode::View;
+                    return Ok(true);
+                }
+                KeyCode::Enter => {
+                    // Handle save logic
+                    match self.config_mode {
+                        ConfigMode::Add | ConfigMode::Edit => {
+                            drop(state);
+                            if let Err(e) = self.save_config_form() {
+                                eprintln!("Error saving config: {}", e);
+                            }
+                            return Ok(true);
+                        }
+                        ConfigMode::AddCommand => {
+                            if let Some(app) = state.selected_app() {
+                                let project = app.project.clone();
+                                let app_name = app.name.clone();
+                                
+                                // Save the command
+                                if let Err(e) = self.save_new_command(&project, &app_name) {
+                                    eprintln!("Error saving command: {}", e);
+                                    drop(state);
+                                    return Ok(true);
+                                }
+                                
+                                // Reload state from config to show new command
+                                if let Err(e) = self.reload_state_from_config(&mut state) {
+                                    eprintln!("Error reloading state: {}", e);
+                                }
+                            }
+                            return Ok(true);
+                        }
+                        ConfigMode::EditCommand => {
+                            if let Some(app) = state.selected_app() {
+                                let project = app.project.clone();
+                                let app_name = app.name.clone();
+                                
+                                // Save the command
+                                if let Err(e) = self.save_command_edit(&project, &app_name) {
+                                    eprintln!("Error saving command: {}", e);
+                                    drop(state);
+                                    return Ok(true);
+                                }
+                                
+                                // Reload state from config to show changes
+                                if let Err(e) = self.reload_state_from_config(&mut state) {
+                                    eprintln!("Error reloading state: {}", e);
+                                }
+                            }
+                            return Ok(true);
+                        }
+                        _ => {}
+                    }
+                }
+                KeyCode::Tab => {
+                    // Tab to cycle through fields
+                    if self.config_mode == ConfigMode::AddCommand {
+                        self.config_focused_field = match self.config_focused_field {
+                            ConfigField::EditCommandEnv => ConfigField::EditCommandName,
+                            ConfigField::EditCommandName => ConfigField::EditCommandValue,
+                            ConfigField::EditCommandValue => ConfigField::EditCommandEnv,
+                            _ => ConfigField::EditCommandEnv,
+                        };
+                    } else if self.config_mode == ConfigMode::EditCommand {
+                        self.config_focused_field = match self.config_focused_field {
+                            ConfigField::EditCommandName => ConfigField::EditCommandValue,
+                            ConfigField::EditCommandValue => ConfigField::EditCommandName,
+                            _ => ConfigField::EditCommandName,
+                        };
+                    } else if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+                        self.config_focused_field = match self.config_focused_field {
+                            ConfigField::ProjectName => ConfigField::AppName,
+                            ConfigField::AppName => ConfigField::AppType,
+                            ConfigField::AppType => ConfigField::Path,
+                            ConfigField::Path => ConfigField::LocalStartCmd,
+                            ConfigField::LocalStartCmd => ConfigField::DockerStartCmd,
+                            ConfigField::DockerStartCmd => ConfigField::ProjectName,
+                            _ => ConfigField::ProjectName,
+                        };
+                    }
+                    return Ok(true);
+                }
+                KeyCode::Up => {
+                    if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+                        self.config_focused_field = match self.config_focused_field {
+                            ConfigField::ProjectName => ConfigField::DockerStartCmd,
+                            ConfigField::AppName => ConfigField::ProjectName,
+                            ConfigField::AppType => ConfigField::AppName,
+                            ConfigField::Path => ConfigField::AppType,
+                            ConfigField::LocalStartCmd => ConfigField::Path,
+                            ConfigField::DockerStartCmd => ConfigField::LocalStartCmd,
+                            _ => ConfigField::ProjectName,
+                        };
+                    }
+                    return Ok(true);
+                }
+                KeyCode::Down => {
+                    if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+                        self.config_focused_field = match self.config_focused_field {
+                            ConfigField::ProjectName => ConfigField::AppName,
+                            ConfigField::AppName => ConfigField::AppType,
+                            ConfigField::AppType => ConfigField::Path,
+                            ConfigField::Path => ConfigField::LocalStartCmd,
+                            ConfigField::LocalStartCmd => ConfigField::DockerStartCmd,
+                            ConfigField::DockerStartCmd => ConfigField::ProjectName,
+                            _ => ConfigField::ProjectName,
+                        };
+                    }
+                    return Ok(true);
+                }
+                KeyCode::Left => {
+                    self.move_cursor_left();
+                    return Ok(true);
+                }
+                KeyCode::Right => {
+                    self.move_cursor_right();
+                    return Ok(true);
+                }
+                KeyCode::Backspace => {
+                    self.remove_char_from_field();
+                    return Ok(true);
+                }
+                KeyCode::Char(c) => {
+                    // Special handling for environment field in AddCommand mode
+                    if self.config_mode == ConfigMode::AddCommand && self.config_focused_field == ConfigField::EditCommandEnv {
+                        if c == ' ' {
+                            self.cycle_environment();
+                            return Ok(true);
+                        }
+                    }
+                    self.add_char_to_field(c);
+                    return Ok(true);
+                }
+                _ => return Ok(false),
+            }
+        }
+        
+        // Normal mode key handling
         match key.code {
             // Tab switching with number keys (1-3)
             // Also support keyboard layout variants (e.g., French AZERTY: &=1, é=2, "=3)
@@ -189,74 +340,35 @@ impl MainView {
                 self.selected_config_command_idx = 0;
                 Ok(true)
             }
-            // Tab key to cycle through tabs or form fields
+            // Tab key to cycle through tabs (not in edit mode)
             KeyCode::Tab => {
-                // In command edit mode, Tab switches between name and value
-                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditCommand {
-                    self.config_focused_field = match self.config_focused_field {
-                        ConfigField::EditCommandName => ConfigField::EditCommandValue,
-                        ConfigField::EditCommandValue => ConfigField::EditCommandName,
-                        _ => ConfigField::EditCommandName,
-                    };
-                } else if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
-                    self.config_focused_field = match self.config_focused_field {
-                        ConfigField::ProjectName => ConfigField::AppName,
-                        ConfigField::AppName => ConfigField::AppType,
-                        ConfigField::AppType => ConfigField::Path,
-                        ConfigField::Path => ConfigField::LocalStartCmd,
-                        ConfigField::LocalStartCmd => ConfigField::DockerStartCmd,
-                        ConfigField::DockerStartCmd => ConfigField::ProjectName,
-                        _ => ConfigField::ProjectName,
-                    };
-                } else {
-                    // Cycle to next tab
-                    self.active_tab = match self.active_tab {
-                        MainTab::Status => MainTab::Commands,
-                        MainTab::Commands => MainTab::Logs,
-                        MainTab::Logs => MainTab::Config,
-                        MainTab::Config => MainTab::Status,
-                    };
-                    self.detail_scroll = 0;
-                    self.selected_command_idx = 0;
-                    if self.active_tab == MainTab::Logs {
-                        self.selected_log_idx = 0;
-                    }
-                    if self.active_tab == MainTab::Config {
-                        self.config_mode = ConfigMode::View;
-                    }
+                // Cycle to next tab
+                self.active_tab = match self.active_tab {
+                    MainTab::Status => MainTab::Commands,
+                    MainTab::Commands => MainTab::Logs,
+                    MainTab::Logs => MainTab::Config,
+                    MainTab::Config => MainTab::Status,
+                };
+                self.detail_scroll = 0;
+                self.selected_command_idx = 0;
+                if self.active_tab == MainTab::Logs {
+                    self.selected_log_idx = 0;
+                }
+                if self.active_tab == MainTab::Config {
+                    self.config_mode = ConfigMode::View;
                 }
                 Ok(true)
             }
-            // Left arrow - move cursor or switch panel
+            // Left arrow - switch panel (not in edit mode)
             KeyCode::Left => {
-                // In edit modes, move cursor left
-                if self.active_tab == MainTab::Config && matches!(
-                    self.config_mode,
-                    ConfigMode::Add | ConfigMode::Edit | ConfigMode::EditCommand
-                ) {
-                    self.move_cursor_left();
-                    return Ok(true);
-                }
-                
-                // Otherwise switch panel
                 self.focus = match self.focus {
                     PanelFocus::AppList => PanelFocus::DetailPanel,
                     PanelFocus::DetailPanel => PanelFocus::AppList,
                 };
                 Ok(true)
             }
-            // Right arrow - move cursor or switch panel
+            // Right arrow - switch panel (not in edit mode)
             KeyCode::Right => {
-                // In edit modes, move cursor right
-                if self.active_tab == MainTab::Config && matches!(
-                    self.config_mode,
-                    ConfigMode::Add | ConfigMode::Edit | ConfigMode::EditCommand
-                ) {
-                    self.move_cursor_right();
-                    return Ok(true);
-                }
-                
-                // Otherwise switch panel
                 self.focus = match self.focus {
                     PanelFocus::AppList => PanelFocus::DetailPanel,
                     PanelFocus::DetailPanel => PanelFocus::AppList,
@@ -336,18 +448,8 @@ impl MainView {
                     self.selected_add_dep_app_idx = 0;
                     return Ok(true);
                 }
-                // In config form mode, Up navigates between fields
-                if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
-                    self.config_focused_field = match self.config_focused_field {
-                        ConfigField::ProjectName => ConfigField::DockerStartCmd,
-                        ConfigField::AppName => ConfigField::ProjectName,
-                        ConfigField::AppType => ConfigField::AppName,
-                        ConfigField::Path => ConfigField::AppType,
-                        ConfigField::LocalStartCmd => ConfigField::Path,
-                        ConfigField::DockerStartCmd => ConfigField::LocalStartCmd,
-                        _ => ConfigField::ProjectName,
-                    };
-                } else {
+                // Not in edit mode - normal navigation
+                {
                     match self.focus {
                         PanelFocus::AppList => {
                             state.select_previous();
@@ -395,18 +497,8 @@ impl MainView {
                     }
                     return Ok(true);
                 }
-                // In config form mode, Down navigates between fields
-                if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
-                    self.config_focused_field = match self.config_focused_field {
-                        ConfigField::ProjectName => ConfigField::AppName,
-                        ConfigField::AppName => ConfigField::AppType,
-                        ConfigField::AppType => ConfigField::Path,
-                        ConfigField::Path => ConfigField::LocalStartCmd,
-                        ConfigField::LocalStartCmd => ConfigField::DockerStartCmd,
-                        ConfigField::DockerStartCmd => ConfigField::ProjectName,
-                        _ => ConfigField::ProjectName,
-                    };
-                } else {
+                // Not in edit mode - normal navigation
+                {
                     match self.focus {
                         PanelFocus::AppList => {
                             state.select_next();
@@ -500,6 +592,17 @@ impl MainView {
                                     eprintln!("Error saving config: {}", e);
                                 }
                                 return Ok(true);
+                            } else if self.config_mode == ConfigMode::AddCommand {
+                                // Save the new command
+                                if let Some(app) = state.selected_app() {
+                                    let project = app.project.clone();
+                                    let app_name = app.name.clone();
+                                    drop(state); // Release lock before saving
+                                    if let Err(e) = self.save_new_command(&project, &app_name) {
+                                        eprintln!("Error saving command: {}", e);
+                                    }
+                                }
+                                return Ok(true);
                             } else if self.config_mode == ConfigMode::EditCommand {
                                 // Save the command edit
                                 if let Some(app) = state.selected_app() {
@@ -527,11 +630,21 @@ impl MainView {
                 Ok(true)
             }
             // Config tab specific keys
+
             KeyCode::Char('a') if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View => {
-                self.config_mode = ConfigMode::Add;
-                self.config_form = ConfigForm::default();
-                self.config_focused_field = ConfigField::ProjectName;
-                // Reset all cursors to end of fields (which is 0 for empty fields)
+                // Add new command to selected app
+                if let Some(app) = state.selected_app() {
+                    self.config_mode = ConfigMode::AddCommand;
+                    self.config_form = ConfigForm {
+                        project_name: app.project.clone(),
+                        app_name: app.name.clone(),
+                        edit_command_name: String::new(),
+                        edit_command_value: String::new(),
+                        edit_command_env: "local".to_string(), // Default to local
+                        ..Default::default()
+                    };
+                    self.config_focused_field = ConfigField::EditCommandEnv;
+                }
                 Ok(true)
             }
             KeyCode::Char('e') if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View => {
@@ -615,19 +728,7 @@ impl MainView {
                 self.config_mode = ConfigMode::EditDependencies;
                 Ok(true)
             }
-            // Form input handling
-            KeyCode::Char(c) if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit | ConfigMode::EditCommand) => {
-                self.add_char_to_field(c);
-                Ok(true)
-            }
-            KeyCode::Backspace if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit | ConfigMode::EditCommand) => {
-                self.remove_char_from_field();
-                Ok(true)
-            }
-            KeyCode::Esc if self.active_tab == MainTab::Config && matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit | ConfigMode::EditCommand) => {
-                self.config_mode = ConfigMode::View;
-                Ok(true)
-            }
+
             // Start/Stop app with 's' key in Status tab (toggle behavior)
             KeyCode::Char('s') if self.active_tab == MainTab::Status => {
                 if let Some(app) = state.selected_app() {
@@ -730,6 +831,25 @@ impl MainView {
                     global_idx += sorted.len();
                 }
                 
+                // Check orbstack commands
+                if let Some(orbstack) = &app.commands.orbstack {
+                    let mut sorted: Vec<_> = orbstack.iter().collect();
+                    sorted.sort_by_key(|(name, _)| *name);
+                    if self.selected_config_command_idx < global_idx + sorted.len() {
+                        let idx = self.selected_config_command_idx - global_idx;
+                        let (name, cmd) = sorted[idx];
+                        self.config_form.edit_command_env = "orbstack".to_string();
+                        self.config_form.edit_command_name = name.clone();
+                        self.config_form.edit_command_value = cmd.clone();
+                        self.config_form.cursor_edit_command_name = name.len();
+                        self.config_form.cursor_edit_command_value = cmd.len();
+                        self.config_focused_field = ConfigField::EditCommandName;
+                        self.config_mode = ConfigMode::EditCommand;
+                        return Ok(());
+                    }
+                    global_idx += sorted.len();
+                }
+                
                 // Check k8s commands
                 if let Some(k8s) = &app.commands.k8s {
                     let mut sorted: Vec<_> = k8s.iter().collect();
@@ -762,6 +882,7 @@ impl MainView {
             ConfigField::Path => (&mut self.config_form.path, &mut self.config_form.cursor_path),
             ConfigField::LocalStartCmd => (&mut self.config_form.local_start_cmd, &mut self.config_form.cursor_local_start_cmd),
             ConfigField::DockerStartCmd => (&mut self.config_form.docker_start_cmd, &mut self.config_form.cursor_docker_start_cmd),
+            ConfigField::EditCommandEnv => return, // No typing for dropdown
             ConfigField::EditCommandName => (&mut self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&mut self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
         };
@@ -778,6 +899,7 @@ impl MainView {
             ConfigField::Path => (&mut self.config_form.path, &mut self.config_form.cursor_path),
             ConfigField::LocalStartCmd => (&mut self.config_form.local_start_cmd, &mut self.config_form.cursor_local_start_cmd),
             ConfigField::DockerStartCmd => (&mut self.config_form.docker_start_cmd, &mut self.config_form.cursor_docker_start_cmd),
+            ConfigField::EditCommandEnv => return, // No editing for dropdown
             ConfigField::EditCommandName => (&mut self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&mut self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
         };
@@ -798,6 +920,7 @@ impl MainView {
             ConfigField::DockerStartCmd => &mut self.config_form.cursor_docker_start_cmd,
             ConfigField::EditCommandName => &mut self.config_form.cursor_edit_command_name,
             ConfigField::EditCommandValue => &mut self.config_form.cursor_edit_command_value,
+            ConfigField::EditCommandEnv => return, // No cursor for dropdown
         };
         *cursor = cursor.saturating_sub(1);
     }
@@ -813,10 +936,29 @@ impl MainView {
             ConfigField::DockerStartCmd => (&self.config_form.docker_start_cmd, &mut self.config_form.cursor_docker_start_cmd),
             ConfigField::EditCommandName => (&self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
+            ConfigField::EditCommandEnv => return, // No cursor for dropdown
         };
         if *cursor < field.len() {
             *cursor += 1;
         }
+    }
+
+    /// Cycles through available environments for AddCommand mode
+    fn cycle_environment(&mut self) {
+        let envs = Environment::all();
+        let current = Environment::from_str(&self.config_form.edit_command_env);
+        
+        if let Some(current_env) = current {
+            // Find current position and move to next
+            if let Some(pos) = envs.iter().position(|e| e == &current_env) {
+                let next_pos = (pos + 1) % envs.len();
+                self.config_form.edit_command_env = envs[next_pos].as_str().to_string();
+                return;
+            }
+        }
+        
+        // Default to first environment if not found
+        self.config_form.edit_command_env = envs[0].as_str().to_string();
     }
 
     /// Saves the config form
@@ -856,6 +998,95 @@ impl MainView {
         Ok(())
     }
 
+    /// Reloads the state from the config file
+    /// Used after saving changes to refresh the UI
+    fn reload_state_from_config(&self, state: &mut std::sync::MutexGuard<AppState>) -> Result<()> {
+        use crate::process::tracker::ProcessTracker;
+        
+        let config = load_config()?;
+        let tracker = ProcessTracker::new()?;
+        let new_state = AppState::from_config(&config, &tracker)?;
+        
+        // Preserve selection indices
+        let selected_project_idx = state.selected_project_idx;
+        let selected_app_idx = state.selected_app_idx;
+        
+        // Replace the state
+        **state = new_state;
+        
+        // Restore selection if still valid
+        if selected_project_idx < state.projects.len() {
+            state.selected_project_idx = selected_project_idx;
+            if selected_app_idx < state.projects[selected_project_idx].apps.len() {
+                state.selected_app_idx = selected_app_idx;
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Saves a new command to an existing app
+    fn save_new_command(&mut self, project: &str, app_name: &str) -> Result<()> {
+        let mut config = load_config()?;
+
+        if let Some(proj) = config.projects.get_mut(project) {
+            if let Some(app) = proj.apps.get_mut(app_name) {
+                let command_name = self.config_form.edit_command_name.clone();
+                let command_value = self.config_form.edit_command_value.clone();
+                
+                // Add the command to the appropriate environment
+                // and set as default if it's the first command for that environment
+                match self.config_form.edit_command_env.as_str() {
+                    "local" => {
+                        let local = app.commands.local.get_or_insert_with(HashMap::new);
+                        let is_first = local.is_empty();
+                        local.insert(command_name.clone(), command_value);
+                        
+                        // Set as default if it's the first command
+                        if is_first {
+                            app.defaults.local = Some(command_name);
+                        }
+                    }
+                    "docker" => {
+                        let docker = app.commands.docker.get_or_insert_with(HashMap::new);
+                        let is_first = docker.is_empty();
+                        docker.insert(command_name.clone(), command_value);
+                        
+                        if is_first {
+                            app.defaults.docker = Some(command_name);
+                        }
+                    }
+                    "orbstack" => {
+                        let orbstack = app.commands.orbstack.get_or_insert_with(HashMap::new);
+                        let is_first = orbstack.is_empty();
+                        orbstack.insert(command_name.clone(), command_value);
+                        
+                        if is_first {
+                            app.defaults.orbstack = Some(command_name);
+                        }
+                    }
+                    "k8s" => {
+                        let k8s = app.commands.k8s.get_or_insert_with(HashMap::new);
+                        let is_first = k8s.is_empty();
+                        k8s.insert(command_name.clone(), command_value);
+                        
+                        if is_first {
+                            app.defaults.k8s = Some(command_name);
+                        }
+                    }
+                    _ => {}
+                }
+
+                save_config(&config)?;
+            }
+        }
+
+        // Return to view mode
+        self.config_mode = ConfigMode::View;
+
+        Ok(())
+    }
+
     /// Saves a command edit
     fn save_command_edit(&mut self, project: &str, app_name: &str) -> Result<()> {
         let mut config = load_config()?;
@@ -875,6 +1106,14 @@ impl MainView {
                     "docker" => {
                         if let Some(docker) = &mut app.commands.docker {
                             docker.insert(
+                                self.config_form.edit_command_name.clone(),
+                                self.config_form.edit_command_value.clone(),
+                            );
+                        }
+                    }
+                    "orbstack" => {
+                        if let Some(orbstack) = &mut app.commands.orbstack {
+                            orbstack.insert(
                                 self.config_form.edit_command_name.clone(),
                                 self.config_form.edit_command_value.clone(),
                             );
@@ -930,6 +1169,7 @@ impl MainView {
                 } else {
                     Some(docker_cmds)
                 },
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
@@ -944,6 +1184,7 @@ impl MainView {
                 } else {
                     None
                 },
+                orbstack: None,
                 k8s: None,
             },
         }
@@ -1087,7 +1328,7 @@ impl MainView {
     /// Gets the currently selected command info based on the selected index
     /// Returns (environment, command_info) tuple if a valid command is selected
     /// 
-    /// Commands are indexed sequentially across environments in order: local, docker, k8s
+    /// Commands are indexed sequentially across environments in order: local, docker, orbstack, k8s
     /// For example, if local has 3 commands and docker has 2:
     /// - Index 0-2: local commands
     /// - Index 3-4: docker commands
@@ -1100,7 +1341,7 @@ impl MainView {
 
     /// Returns (environment, command_info) tuple for a specific command index
     /// 
-    /// Commands are indexed sequentially across environments in order: local, docker, k8s
+    /// Commands are indexed sequentially across environments in order: local, docker, orbstack, k8s
     /// For example, if local has 3 commands and docker has 2:
     /// - Index 0-2: local commands
     /// - Index 3-4: docker commands
@@ -1111,9 +1352,10 @@ impl MainView {
     ) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
         let mut current_idx = 0;
         
-        // Iterate through environments in order: local, docker, k8s
-        for env in &["local", "docker", "k8s"] {
-            if let Some(commands) = app.commands.get(*env) {
+        // Iterate through environments in display order
+        for env_type in Environment::all() {
+            let env = env_type.as_str();
+            if let Some(commands) = app.commands.get(env) {
                 // Check if the requested index falls within this environment's commands
                 if command_idx < current_idx + commands.len() {
                     let cmd_idx = command_idx - current_idx;
@@ -1124,6 +1366,127 @@ impl MainView {
         }
         
         None
+    }
+
+    /// Calculates the scroll offset to keep the selected item visible
+    /// Similar to log_viewer's adjust_viewport logic
+    fn calculate_scroll_offset(&self, selected_idx: usize, visible_height: usize, total_lines: usize) -> usize {
+        if total_lines <= visible_height {
+            // All content fits, no scrolling needed
+            return 0;
+        }
+
+        // Ensure selected item is visible in the viewport
+        // If selected item is in the top half, show it near the top
+        // If selected item is in the bottom half, show it near the bottom
+        if selected_idx < visible_height / 2 {
+            // Near the top of the list - start from beginning
+            0
+        } else if selected_idx >= total_lines.saturating_sub(visible_height / 2) {
+            // Near the end of the list - show the last page
+            total_lines.saturating_sub(visible_height)
+        } else {
+            // In the middle - center the selected item
+            selected_idx.saturating_sub(visible_height / 2)
+        }
+    }
+
+    /// Calculates which line the selected app is on in the rendered list
+    fn calculate_selected_app_line(&self, state: &AppState) -> usize {
+        let mut line = 0;
+        
+        for (proj_idx, project) in state.projects.iter().enumerate() {
+            // Project header line
+            if proj_idx == state.selected_project_idx && !project.expanded {
+                // Selected project is collapsed, return its line
+                return line;
+            }
+            line += 1;
+            
+            // App lines if expanded
+            if project.expanded {
+                for (app_idx, _app) in project.apps.iter().enumerate() {
+                    if proj_idx == state.selected_project_idx && app_idx == state.selected_app_idx {
+                        // Found the selected app
+                        return line;
+                    }
+                    line += 1;
+                }
+            }
+            
+            // Empty line between projects
+            if proj_idx < state.projects.len() - 1 {
+                line += 1;
+            }
+        }
+        
+        0 // Fallback
+    }
+
+    /// Calculates which line the selected command is on in the config panel
+    fn calculate_selected_config_command_line(&self, state: &AppState) -> usize {
+        let mut line = 0;
+        
+        // Header and app info section
+        line += 1; // Header line
+        line += 1; // Empty line
+        line += 3; // Project, Type, Path
+        line += 1; // Empty line
+        line += 1; // "Commands:" header
+        
+        // Now count through commands to find the selected one
+        if let Some(app) = state.selected_app() {
+            let mut global_cmd_idx = 0;
+            
+            // Count LOCAL commands
+            if let Some(commands) = app.commands.get("local") {
+                line += 1; // "LOCAL:" header
+                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
+                    // Selected command is in this section
+                    return line + (self.selected_config_command_idx - global_cmd_idx);
+                }
+                line += commands.len();
+                global_cmd_idx += commands.len();
+                line += 1; // Empty line after section
+            }
+            
+            // Count DOCKER commands
+            if let Some(commands) = app.commands.get("docker") {
+                line += 1; // "DOCKER:" header
+                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
+                    // Selected command is in this section
+                    return line + (self.selected_config_command_idx - global_cmd_idx);
+                }
+                line += commands.len();
+                global_cmd_idx += commands.len();
+                line += 1; // Empty line after section
+            }
+            
+            // Count ORBSTACK commands
+            if let Some(commands) = app.commands.get("orbstack") {
+                line += 1; // "ORBSTACK:" header
+                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
+                    // Selected command is in this section
+                    return line + (self.selected_config_command_idx - global_cmd_idx);
+                }
+                line += commands.len();
+                global_cmd_idx += commands.len();
+                line += 1; // Empty line after section
+            }
+            
+            // Count K8S commands
+            if let Some(commands) = app.commands.get("k8s") {
+                line += 1; // "K8S:" header
+                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
+                    // Selected command is in this section
+                    return line + (self.selected_config_command_idx - global_cmd_idx);
+                }
+                line += commands.len();
+                // No empty line after last section
+            }
+        }
+        
+        line // Return current line as fallback
     }
 
     /// Renders the main view with all its components
@@ -1214,9 +1577,8 @@ impl MainView {
             let expansion_icon = if project.expanded { "▼" } else { "▶" };
             let project_line = format!("{} {}", expansion_icon, project.name);
             
-            // Highlight if this project is selected and we're in the app list panel
-            let is_project_selected = proj_idx == state.selected_project_idx 
-                && self.focus == PanelFocus::AppList;
+            // Highlight if this project is selected (regardless of focus)
+            let is_project_selected = proj_idx == state.selected_project_idx;
             
             let style = if is_project_selected {
                 Style::default()
@@ -1243,6 +1605,11 @@ impl MainView {
                     lines.push(app_line);
                 }
             }
+            
+            // Add empty line between projects for better visual separation
+            if proj_idx < state.projects.len() - 1 {
+                lines.push(Line::from(""));
+            }
         }
 
         // Create the widget with appropriate border style based on focus
@@ -1253,13 +1620,19 @@ impl MainView {
             Style::default().fg(theme.border)
         };
 
+        // Calculate scroll position to keep selected app visible
+        let visible_height = area.height.saturating_sub(2) as usize; // Subtract borders
+        let selected_line = self.calculate_selected_app_line(state);
+        let scroll_offset = self.calculate_scroll_offset(selected_line, visible_height, lines.len());
+
         let app_list = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Projects & Apps")
                     .border_style(border_style)
-            );
+            )
+            .scroll((scroll_offset as u16, 0));
 
         frame.render_widget(app_list, area);
     }
@@ -1285,17 +1658,23 @@ impl MainView {
             theme.stopped
         };
         
-        // Check if this app is currently selected
-        let is_selected = proj_idx == selected_proj_idx 
-            && app_idx == selected_app_idx
-            && self.focus == PanelFocus::AppList;
+        // Check if this app is currently selected (regardless of focus)
+        let is_selected = proj_idx == selected_proj_idx && app_idx == selected_app_idx;
         
         // Apply selection styling
-        // Visual feedback: Background highlight shows current selection
+        // Visual feedback: Blue highlight shows current selection even when in right panel
         let text_style = if is_selected {
-            Style::default()
-                .bg(theme.selected_bg)
-                .fg(theme.text)
+            if self.focus == PanelFocus::AppList {
+                // Full highlight when focused
+                Style::default()
+                    .bg(theme.selected_bg)
+                    .fg(theme.text)
+            } else {
+                // Blue text when not focused but still selected
+                Style::default()
+                    .fg(theme.primary)
+                    .add_modifier(Modifier::BOLD)
+            }
         } else {
             Style::default().fg(theme.text)
         };
@@ -1463,19 +1842,24 @@ impl MainView {
             Style::default().fg(theme.border)
         };
 
+        // Calculate scroll position to keep selected command visible
+        let visible_height = area.height.saturating_sub(2) as usize; // Subtract borders
+        let scroll_offset = self.calculate_scroll_offset(self.selected_command_idx, visible_height, content.len());
+
         let commands_panel = Paragraph::new(content)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Available Commands")
                     .border_style(border_style)
-            );
+            )
+            .scroll((scroll_offset as u16, 0));
 
         frame.render_widget(commands_panel, area);
     }
 
     /// Builds the content for the commands panel
-    /// Groups commands by environment (local, docker, k8s)
+    /// Groups commands by environment (local, docker, orbstack, k8s)
     /// Highlights the currently selected command when detail panel has focus
     fn build_commands_content<'a>(&self, app: &'a AppStateData, theme: &'a Theme) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
@@ -1501,13 +1885,22 @@ impl MainView {
             return lines;
         }
 
+        // Calculate the maximum command name length for proper alignment
+        let max_name_len = app.commands
+            .values()
+            .flat_map(|cmds| cmds.iter())
+            .map(|cmd| cmd.name.len())
+            .max()
+            .unwrap_or(12)
+            .max(12); // Minimum width of 12
+
         // Track the global command index across all environments
         let mut global_cmd_idx = 0;
 
         // Display commands grouped by environment
-        // Order: local, docker, k8s
-        for env in &["local", "docker", "k8s"] {
-            if let Some(commands) = app.commands.get(*env) {
+        for env_type in Environment::all() {
+            let env = env_type.as_str();
+            if let Some(commands) = app.commands.get(env) {
                 // Environment header
                 lines.push(Line::from(Span::styled(
                     format!("{}:", env.to_uppercase()),
@@ -1544,7 +1937,8 @@ impl MainView {
                     
                     lines.push(Line::from(vec![
                         Span::styled(prefix, Style::default().fg(theme.primary)),
-                        Span::styled(format!(" {:<12}", cmd.name), name_style),
+                        Span::styled(format!(" {:<width$}", cmd.name, width = max_name_len), name_style),
+                        Span::styled("  ".to_string(), Style::default()),
                         Span::styled(cmd.command.clone(), cmd_style),
                     ]));
                     
@@ -1575,13 +1969,18 @@ impl MainView {
             Style::default().fg(theme.border)
         };
 
+        // Calculate scroll position to keep selected log visible
+        let visible_height = area.height.saturating_sub(2) as usize; // Subtract borders
+        let scroll_offset = self.calculate_scroll_offset(self.selected_log_idx, visible_height, content.len());
+
         let logs_panel = Paragraph::new(content)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Log Files")
                     .border_style(border_style)
-            );
+            )
+            .scroll((scroll_offset as u16, 0));
 
         frame.render_widget(logs_panel, area);
     }
@@ -1630,41 +2029,26 @@ impl MainView {
                         let date_str = LogManager::format_relative_date(&log_file.modified);
                         
                         // Choose prefix and styling based on selection
-                        let (prefix, name_style, meta_style) = if is_selected {
+                        let (prefix, text_style) = if is_selected {
                             (
                                 " >",
                                 Style::default()
                                     .fg(theme.text)
                                     .bg(theme.selected_bg)
                                     .add_modifier(Modifier::BOLD),
-                                Style::default()
-                                    .fg(theme.text_dim)
-                                    .bg(theme.selected_bg),
                             )
                         } else {
                             (
                                 "  ",
                                 Style::default().fg(theme.text),
-                                Style::default().fg(theme.text_dim),
                             )
                         };
                         
-                        // First line: prefix + filename
+                        // Single line: prefix + date (size)
                         lines.push(Line::from(vec![
                             Span::styled(prefix, Style::default().fg(theme.primary)),
-                            Span::styled(format!(" {}", log_file.name), name_style),
+                            Span::styled(format!(" {} ({})", date_str, size_str), text_style),
                         ]));
-                        
-                        // Second line: size and date (indented)
-                        lines.push(Line::from(vec![
-                            Span::styled("   ", Style::default()),
-                            Span::styled(format!("{}    {}", size_str, date_str), meta_style),
-                        ]));
-                        
-                        // Empty line between log files for readability
-                        if idx < log_files.len() - 1 {
-                            lines.push(Line::from(""));
-                        }
                     }
                 }
             }
@@ -1698,12 +2082,12 @@ impl MainView {
             }
             MainTab::Config => match self.config_mode {
                 ConfigMode::View => {
-                    "↑↓/jk: Navigate  a: Add  e: Edit Cmd  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit"
+                    "↑↓/jk: Navigate  a: Add Cmd  e: Edit Cmd  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit"
                 }
                 ConfigMode::Add | ConfigMode::Edit => {
                     "Tab/↑↓: Navigate Fields  Type: Edit  Enter: Save  Esc: Cancel"
                 }
-                ConfigMode::EditCommand => {
+                ConfigMode::AddCommand | ConfigMode::EditCommand => {
                     "Tab: Switch Field  ←→: Move Cursor  Type: Edit  Enter: Save  Esc: Cancel"
                 }
                 ConfigMode::EditDependencies => {
@@ -1733,7 +2117,7 @@ impl MainView {
         match self.config_mode {
             ConfigMode::View => self.render_config_view(frame, area, state, theme),
             ConfigMode::Add | ConfigMode::Edit => self.render_config_form(frame, area, theme),
-            ConfigMode::EditCommand => self.render_command_edit_form(frame, area, theme),
+            ConfigMode::AddCommand | ConfigMode::EditCommand => self.render_command_edit_form(frame, area, theme),
             ConfigMode::EditDependencies => {
                 self.render_config_view(frame, area, state, theme);
                 self.render_dependencies_popup(frame, state, theme);
@@ -1755,12 +2139,21 @@ impl MainView {
             Style::default().fg(theme.border)
         };
 
-        let config_panel = Paragraph::new(content).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Configuration")
-                .border_style(border_style),
-        );
+        // Calculate the actual line number where the selected command appears
+        let selected_line = self.calculate_selected_config_command_line(state);
+        
+        // Calculate scroll position to keep selected command visible
+        let visible_height = area.height.saturating_sub(2) as usize; // Subtract borders
+        let scroll_offset = self.calculate_scroll_offset(selected_line, visible_height, content.len());
+
+        let config_panel = Paragraph::new(content)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Configuration")
+                    .border_style(border_style),
+            )
+            .scroll((scroll_offset as u16, 0));
 
         frame.render_widget(config_panel, area);
     }
@@ -1817,6 +2210,24 @@ impl MainView {
                                     .add_modifier(Modifier::BOLD),
                             )));
 
+                            // Calculate maximum command name length for alignment
+                            let max_name_len = {
+                                let mut max_len = 15; // Minimum width
+                                if let Some(local) = &full_app.commands.local {
+                                    max_len = max_len.max(local.keys().map(|k| k.len()).max().unwrap_or(0));
+                                }
+                                if let Some(docker) = &full_app.commands.docker {
+                                    max_len = max_len.max(docker.keys().map(|k| k.len()).max().unwrap_or(0));
+                                }
+                                if let Some(orbstack) = &full_app.commands.orbstack {
+                                    max_len = max_len.max(orbstack.keys().map(|k| k.len()).max().unwrap_or(0));
+                                }
+                                if let Some(k8s) = &full_app.commands.k8s {
+                                    max_len = max_len.max(k8s.keys().map(|k| k.len()).max().unwrap_or(0));
+                                }
+                                max_len
+                            };
+
                             // Track global command index for selection
                             let mut global_cmd_idx = 0;
 
@@ -1851,7 +2262,7 @@ impl MainView {
                                     let mut spans = vec![
                                         Span::styled(prefix.to_string(), Style::default().fg(theme.primary)),
                                         Span::styled(" ".to_string(), Style::default()),
-                                        Span::styled(format!("{:<15}", name), name_style),
+                                        Span::styled(format!("{:<width$}", name, width = max_name_len), name_style),
                                     ];
                                     
                                     if is_this_default {
@@ -1864,6 +2275,7 @@ impl MainView {
                                     lines.push(Line::from(spans));
                                     global_cmd_idx += 1;
                                 }
+                                lines.push(Line::from("")); // Empty line after LOCAL section
                             }
 
                             // Docker commands - sorted alphabetically
@@ -1910,6 +2322,54 @@ impl MainView {
                                     lines.push(Line::from(spans));
                                     global_cmd_idx += 1;
                                 }
+                                lines.push(Line::from("")); // Empty line after DOCKER section
+                            }
+
+                            // OrbStack commands - sorted alphabetically
+                            if let Some(orbstack) = &full_app.commands.orbstack {
+                                lines.push(Line::from(Span::styled(
+                                    "  ORBSTACK:".to_string(),
+                                    Style::default().fg(theme.text_dim),
+                                )));
+                                let mut sorted_cmds: Vec<_> = orbstack.iter().collect();
+                                sorted_cmds.sort_by_key(|(name, _)| *name);
+                                let is_default = full_app.defaults.orbstack.as_ref();
+                                for (name, cmd) in sorted_cmds {
+                                    let is_selected = global_cmd_idx == self.selected_config_command_idx
+                                        && self.focus == PanelFocus::DetailPanel;
+                                    let is_this_default = is_default == Some(name);
+                                    
+                                    let (prefix, name_style, cmd_style) = if is_selected {
+                                        (
+                                            " >",
+                                            Style::default().fg(theme.text).bg(theme.selected_bg).add_modifier(Modifier::BOLD),
+                                            Style::default().fg(theme.text_dim).bg(theme.selected_bg),
+                                        )
+                                    } else {
+                                        (
+                                            "  ",
+                                            Style::default().fg(theme.text),
+                                            Style::default().fg(theme.text_dim),
+                                        )
+                                    };
+                                    
+                                    let mut spans = vec![
+                                        Span::styled(prefix.to_string(), Style::default().fg(theme.primary)),
+                                        Span::styled(" ".to_string(), Style::default()),
+                                        Span::styled(format!("{:<width$}", name, width = max_name_len), name_style),
+                                    ];
+                                    
+                                    if is_this_default {
+                                        spans.push(Span::styled(" [default]".to_string(), Style::default().fg(theme.success)));
+                                    }
+                                    
+                                    spans.push(Span::styled("  ".to_string(), Style::default()));
+                                    spans.push(Span::styled(cmd.clone(), cmd_style));
+                                    
+                                    lines.push(Line::from(spans));
+                                    global_cmd_idx += 1;
+                                }
+                                lines.push(Line::from("")); // Empty line after ORBSTACK section
                             }
 
                             // K8s commands - sorted alphabetically
@@ -2071,13 +2531,31 @@ impl MainView {
             Line::from(""),
         ];
 
-        // Environment (read-only)
+        // Environment (editable in AddCommand mode, read-only in EditCommand mode)
+        let is_env_focused = self.config_focused_field == ConfigField::EditCommandEnv;
+        let is_add_mode = self.config_mode == ConfigMode::AddCommand;
+        
+        let env_label_style = if is_env_focused && is_add_mode {
+            Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_dim)
+        };
+        
+        let env_value_style = if is_env_focused && is_add_mode {
+            Style::default().fg(theme.text).bg(theme.selected_bg)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        
+        let env_text = if is_add_mode {
+            format!("{} (Space to cycle)", self.config_form.edit_command_env.to_uppercase())
+        } else {
+            self.config_form.edit_command_env.to_uppercase()
+        };
+        
         lines.push(Line::from(vec![
-            Span::styled("  Environment: ", Style::default().fg(theme.text_dim)),
-            Span::styled(
-                self.config_form.edit_command_env.to_uppercase(),
-                Style::default().fg(theme.text),
-            ),
+            Span::styled("  Environment: ", env_label_style),
+            Span::styled(env_text, env_value_style),
         ]));
 
         lines.push(Line::from(""));

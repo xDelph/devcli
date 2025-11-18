@@ -71,9 +71,14 @@ pub(crate) fn prompt_for_project(config: &crate::config::Config) -> Result<Strin
 /// 
 /// # Returns
 /// 
-/// The selected environment name (local, docker, or k8s)
+/// The selected environment name (local, docker, orbstack, or k8s)
 pub(crate) fn prompt_for_environment() -> Result<String> {
-    let environments = vec!["local", "docker", "k8s"];
+    use crate::config::models::Environment;
+    
+    let environments: Vec<&str> = Environment::all()
+        .iter()
+        .map(|e| e.as_str())
+        .collect();
     let selection = Select::new("Select environment:", environments).prompt()?;
     Ok(selection.to_string())
 }

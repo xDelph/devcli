@@ -42,6 +42,8 @@ pub struct CommandPopup {
     available_envs: Vec<String>,
     /// Currently selected environment index
     selected_env_index: usize,
+    /// Current app status (for display in header)
+    pub app_status: Option<String>,
 }
 
 /// Represents the different states of the command popup
@@ -88,6 +90,7 @@ impl CommandPopup {
             allow_env_selection: false,
             available_envs: vec![environment],
             selected_env_index: 0,
+            app_status: None,
         }
     }
 
@@ -123,6 +126,7 @@ impl CommandPopup {
             allow_env_selection: true,
             available_envs,
             selected_env_index,
+            app_status: None,
         }
     }
 
@@ -237,6 +241,11 @@ impl CommandPopup {
     /// Check if environment selection is allowed
     pub fn allows_env_selection(&self) -> bool {
         self.allow_env_selection
+    }
+
+    /// Update the app status for display in header
+    pub fn update_status(&mut self, status: String) {
+        self.app_status = Some(status);
     }
 
     /// Renders a dimmed overlay over the entire screen
@@ -455,14 +464,29 @@ impl CommandPopup {
             .split(inner_area);
         
         // Render header (always visible)
+        let mut header_spans = vec![
+            Span::styled("App: ", Style::default().fg(theme.text_dim)),
+            Span::styled(&self.app_name, Style::default().fg(theme.text)),
+            Span::styled("  Command: ", Style::default().fg(theme.text_dim)),
+            Span::styled(&self.command_name, Style::default().fg(theme.text)),
+        ];
+        
+        // Add status if available
+        if let Some(status) = &self.app_status {
+            header_spans.push(Span::styled("  Status: ", Style::default().fg(theme.text_dim)));
+            
+            // Color the status based on whether it's running or stopped
+            let status_color = if status.to_lowercase().contains("running") {
+                theme.success
+            } else {
+                theme.text_dim
+            };
+            header_spans.push(Span::styled(status, Style::default().fg(status_color)));
+        }
+        
         let header_lines = vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("App: ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.app_name, Style::default().fg(theme.text)),
-                Span::styled("  Command: ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.command_name, Style::default().fg(theme.text)),
-            ]),
+            Line::from(header_spans),
         ];
         let header = Paragraph::new(header_lines)
             .alignment(Alignment::Left);

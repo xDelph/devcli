@@ -118,12 +118,24 @@ async fn start_single_app_process(
         writer.log_path().clone()
     };
     
-    // Step 3: Build the options struct for spawning the process
+    // Step 3: Build environment variables - set Docker context based on environment
+    let mut env_vars = HashMap::new();
+    match environment.as_str() {
+        "docker" => {
+            env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
+        }
+        "orbstack" => {
+            env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
+        }
+        _ => {}
+    }
+    
+    // Build the options struct for spawning the process
     let options = ProcessOptions {
         app_name: app_name.clone(),
         working_dir: working_dir.clone(),
         command: command.clone(),
-        env_vars: HashMap::new(),
+        env_vars,
         detached: true,
         show_output,
     };
@@ -206,6 +218,9 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         "docker" => resolved_app.app.commands.docker.as_ref().ok_or_else(|| {
             anyhow::anyhow!("App '{}' does not have 'docker' environment configured", app_name)
         })?,
+        "orbstack" => resolved_app.app.commands.orbstack.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("App '{}' does not have 'orbstack' environment configured", app_name)
+        })?,
         "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
             anyhow::anyhow!("App '{}' does not have 'k8s' environment configured", app_name)
         })?,
@@ -219,6 +234,9 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         })?,
         "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
             anyhow::anyhow!("App '{}' does not have a default command for 'docker' environment", app_name)
+        })?,
+        "orbstack" => resolved_app.app.defaults.orbstack.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("App '{}' does not have a default command for 'orbstack' environment", app_name)
         })?,
         "k8s" => resolved_app.app.defaults.k8s.as_ref().ok_or_else(|| {
             anyhow::anyhow!("App '{}' does not have a default command for 'k8s' environment", app_name)

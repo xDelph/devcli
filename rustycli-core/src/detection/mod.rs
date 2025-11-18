@@ -29,9 +29,10 @@ use std::path::Path;
 
 // Re-export main functions to maintain public API
 pub use app_types::{detect_app_type, extract_app_name};
-pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands};
+pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands, detect_orbstack_commands};
 pub use environments::local::suggest_local_default;
 pub use environments::docker::suggest_docker_default;
+pub use environments::orbstack::suggest_orbstack_default;
 pub use nx::{detect_nx_apps, detect_single_nx_app};
 
 // Structure holding all detection results for an app
@@ -43,9 +44,11 @@ pub struct DetectedApp {
     pub path: String,                   // Absolute path to app directory
     pub local_commands: Option<HashMap<String, String>>,  // Commands for local environment
     pub docker_commands: Option<HashMap<String, String>>, // Commands for Docker environment
+    pub orbstack_commands: Option<HashMap<String, String>>, // Commands for OrbStack environment
     pub k8s_commands: Option<HashMap<String, String>>,    // Commands for Kubernetes
     pub suggested_local_default: Option<String>,          // Suggested default local command
     pub suggested_docker_default: Option<String>,         // Suggested default docker command
+    pub suggested_orbstack_default: Option<String>,       // Suggested default orbstack command
 }
 
 /// Main detection function for a single app
@@ -63,14 +66,16 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
     // Extract app name from configuration files or directory name
     let app_name = extract_app_name(path, &app_type)?;
     
-    // Phase 2: Detect how we can run this app (local, docker, k8s)
+    // Phase 2: Detect how we can run this app (local, docker, orbstack, k8s)
     let local_commands = detect_local_commands(path, &app_type)?;
     let docker_commands = detect_docker_commands(path, &app_type)?;
+    let orbstack_commands = detect_orbstack_commands(path, &app_type)?;
     let k8s_commands = detect_k8s_commands(path)?;
     
     // Suggest sensible defaults based on common command names
     let suggested_local_default = suggest_local_default(&app_type, &local_commands);
     let suggested_docker_default = suggest_docker_default(&docker_commands);
+    let suggested_orbstack_default = suggest_orbstack_default(&orbstack_commands);
     
     // Build and return the complete detection result
     Ok(DetectedApp {
@@ -79,9 +84,11 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
         path: contract_tilde(path),
         local_commands,
         docker_commands,
+        orbstack_commands,
         k8s_commands,
         suggested_local_default,
         suggested_docker_default,
+        suggested_orbstack_default,
     })
 }
 

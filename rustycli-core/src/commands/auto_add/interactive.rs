@@ -121,6 +121,14 @@ pub fn show_preview(project: &str, app_name: &str, detected: &crate::detection::
         }
     }
     
+    // Show orbstack commands and default if available
+    if let Some(orbstack_cmds) = &detected.orbstack_commands {
+        println!("  orbstack commands: {}", orbstack_cmds.keys().cloned().collect::<Vec<_>>().join(", "));
+        if let Some(default) = &detected.suggested_orbstack_default {
+            println!("    default: {}", default);
+        }
+    }
+    
     // Show kubernetes commands if available
     if let Some(k8s_cmds) = &detected.k8s_commands {
         println!("  k8s commands: {}", k8s_cmds.keys().cloned().collect::<Vec<_>>().join(", "));

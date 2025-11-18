@@ -7,6 +7,59 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Supported execution environments
+/// Defines the order in which environments are displayed in the UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    Local,
+    Docker,
+    OrbStack,
+    K8s,
+}
+
+impl Environment {
+    /// Returns all environments in display order
+    pub const fn all() -> &'static [Environment] {
+        &[
+            Environment::Local,
+            Environment::Docker,
+            Environment::OrbStack,
+            Environment::K8s,
+        ]
+    }
+
+    /// Returns the string key used in config JSON
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Environment::Local => "local",
+            Environment::Docker => "docker",
+            Environment::OrbStack => "orbstack",
+            Environment::K8s => "k8s",
+        }
+    }
+
+    /// Returns the display name for UI
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Environment::Local => "LOCAL",
+            Environment::Docker => "DOCKER",
+            Environment::OrbStack => "ORBSTACK",
+            Environment::K8s => "K8S",
+        }
+    }
+
+    /// Parse from string key
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "local" => Some(Environment::Local),
+            "docker" => Some(Environment::Docker),
+            "orbstack" => Some(Environment::OrbStack),
+            "k8s" => Some(Environment::K8s),
+            _ => None,
+        }
+    }
+}
+
 // Top-level config structure
 // Maps to: { "projects": { "project-name": {...}, ... } }
 //
@@ -55,12 +108,12 @@ pub struct App {
 }
 
 // Commands for different environments
-// Example: { "local": { "start": "npm start" }, "docker": {...}, "k8s": {...} }
+// Example: { "local": { "start": "npm start" }, "docker": {...}, "orbstack": {...}, "k8s": {...} }
 // An app can have ANY combination of environments - doesn't need all of them
 // Examples:
 //   - Only local: { "local": {...} }
 //   - Only docker: { "docker": {...} }
-//   - All three: { "local": {...}, "docker": {...}, "k8s": {...} }
+//   - All four: { "local": {...}, "docker": {...}, "orbstack": {...}, "k8s": {...} }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commands {
     // Local development commands (run directly on your machine)
@@ -77,12 +130,43 @@ pub struct Commands {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<HashMap<String, String>>,
     
+    // OrbStack commands (run in containers with OrbStack context)
+    // Key = command name (e.g., "build", "run")
+    // Value = docker command with orbstack context (e.g., "docker --context orbstack build -t myapp .")
+    // OPTIONAL: Not all apps need orbstack commands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbstack: Option<HashMap<String, String>>,
+    
     // Kubernetes commands (deploy to k8s cluster)
     // Key = command name (e.g., "apply", "delete", "restart")
     // Value = kubectl command (e.g., "kubectl apply -f k8s/")
     // OPTIONAL: Not all apps need k8s commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<HashMap<String, String>>,
+}
+
+impl Commands {
+    /// Get commands for a specific environment
+    pub fn get(&self, env: &str) -> Option<&HashMap<String, String>> {
+        match env {
+            "local" => self.local.as_ref(),
+            "docker" => self.docker.as_ref(),
+            "orbstack" => self.orbstack.as_ref(),
+            "k8s" => self.k8s.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get mutable commands for a specific environment
+    pub fn get_mut(&mut self, env: &str) -> Option<&mut HashMap<String, String>> {
+        match env {
+            "local" => self.local.as_mut(),
+            "docker" => self.docker.as_mut(),
+            "orbstack" => self.orbstack.as_mut(),
+            "k8s" => self.k8s.as_mut(),
+            _ => None,
+        }
+    }
 }
 
 // Represents a dependency on another app
@@ -98,7 +182,7 @@ pub struct Dependency {
 
 // Default command names to use when starting an app
 // Points to command names defined in the Commands struct
-// Example: { "local": "start", "docker": "run", "k8s": "apply" }
+// Example: { "local": "start", "docker": "run", "orbstack": "run", "k8s": "apply" }
 // Only needs defaults for environments that have commands defined
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Defaults {
@@ -111,6 +195,11 @@ pub struct Defaults {
     // OPTIONAL: Only needed if app has docker commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<String>,
+    
+    // Default command for orbstack environment (must exist in commands.orbstack if provided)
+    // OPTIONAL: Only needed if app has orbstack commands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbstack: Option<String>,
     
     // Default command for k8s environment (must exist in commands.k8s if provided)
     // OPTIONAL: Only needed if app has k8s commands

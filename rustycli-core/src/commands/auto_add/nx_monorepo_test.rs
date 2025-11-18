@@ -24,9 +24,11 @@ mod tests {
             path: format!("/workspace/apps/{}", app_name),
             local_commands,
             docker_commands: None,
+            orbstack_commands: None,
             k8s_commands: None,
             suggested_local_default: if has_commands { Some("start".to_string()) } else { None },
             suggested_docker_default: None,
+            suggested_orbstack_default: None,
         }
     }
 

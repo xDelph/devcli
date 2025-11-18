@@ -22,9 +22,11 @@ mod tests {
             path: "/test/path".to_string(),
             local_commands: Some(local_commands),
             docker_commands: Some(docker_commands),
+            orbstack_commands: None,
             k8s_commands: None,
             suggested_local_default: Some("start".to_string()),
             suggested_docker_default: Some("up".to_string()),
+            suggested_orbstack_default: None,
         }
     }
 
@@ -49,9 +51,11 @@ mod tests {
             path: "/minimal/path".to_string(),
             local_commands: None,
             docker_commands: None,
+            orbstack_commands: None,
             k8s_commands: None,
             suggested_local_default: None,
             suggested_docker_default: None,
+            suggested_orbstack_default: None,
         };
         
         // Smoke test: verify show_preview handles minimal app data without panicking
@@ -74,9 +78,11 @@ mod tests {
             path: "/k8s/path".to_string(),
             local_commands: None,
             docker_commands: None,
+            orbstack_commands: None,
             k8s_commands: Some(k8s_commands),
             suggested_local_default: None,
             suggested_docker_default: None,
+            suggested_orbstack_default: None,
         };
         
         // Smoke test: verify show_preview handles K8s commands without panicking
@@ -104,9 +110,11 @@ mod tests {
             path: "/full/path".to_string(),
             local_commands: Some(local_commands),
             docker_commands: Some(docker_commands),
+            orbstack_commands: None,
             k8s_commands: Some(k8s_commands),
             suggested_local_default: Some("start".to_string()),
             suggested_docker_default: Some("up".to_string()),
+            suggested_orbstack_default: None,
         };
         
         // Smoke test: verify show_preview handles all environment types without panicking

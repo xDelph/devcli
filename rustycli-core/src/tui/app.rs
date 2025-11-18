@@ -587,16 +587,17 @@ impl TuiApp {
         
         if let Some(command_idx) = request {
             // Get the command details from state
-            let (app_name, project_name, command_name) = {
+            let (app_name, project_name, command_name, environment) = {
                 let state = self.state.lock().expect("Failed to lock state");
                 
                 if let Some(app) = state.selected_app() {
                     // Get the command at the requested index using the main_view helper
-                    if let Some((_env, cmd_info)) = self.main_view.get_command_by_index(app, command_idx) {
+                    if let Some((env, cmd_info)) = self.main_view.get_command_by_index(app, command_idx) {
                         (
                             app.name.clone(),
                             app.project.clone(),
                             cmd_info.name.clone(),
+                            env.to_string(),
                         )
                     } else {
                         // Invalid command index - clear the request
@@ -615,15 +616,27 @@ impl TuiApp {
             };
             
             // Create the popup for run command
-            // For Commands tab, we use "run" as the command type
-            // and store the actual command name in the environment field
-            self.command_popup = Some(CommandPopup::new(
+            // For Commands tab, we execute the specific command from the environment
+            // Store both the command name and environment for execution
+            let mut popup = CommandPopup::new(
                 "run".to_string(),
-                format!("Running: {}", command_name),
-                app_name,
+                format!("Running: {} ({})", command_name, environment),
+                app_name.clone(),
                 project_name,
-                command_name, // Store command name in environment field for run
-            ));
+                format!("{}:{}", environment, command_name), // Store as "env:command"
+            );
+            
+            // Set initial status
+            {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    if app.name == app_name {
+                        popup.update_status(app.status.as_str().to_string());
+                    }
+                }
+            }
+            
+            self.command_popup = Some(popup);
             
             // Clear the request
             let mut state = self.state.lock().expect("Failed to lock state");
@@ -653,13 +666,25 @@ impl TuiApp {
             };
             
             // Create stop popup
-            self.command_popup = Some(CommandPopup::new(
+            let mut popup = CommandPopup::new(
                 "stop".to_string(),
                 "Stopping process...".to_string(),
                 app_name.clone(),
                 project_name.clone(),
                 "".to_string(),
-            ));
+            );
+            
+            // Set initial status
+            {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    if app.name == app_name {
+                        popup.update_status(app.status.as_str().to_string());
+                    }
+                }
+            }
+            
+            self.command_popup = Some(popup);
             
             // Immediately execute stop
             let request = CommandRequest {
@@ -712,13 +737,25 @@ impl TuiApp {
             };
             
             // Create restart popup
-            self.command_popup = Some(CommandPopup::new(
+            let mut popup = CommandPopup::new(
                 "restart".to_string(),
                 "Restarting process...".to_string(),
                 app_name.clone(),
                 project_name.clone(),
                 environment.clone(),
-            ));
+            );
+            
+            // Set initial status
+            {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    if app.name == app_name {
+                        popup.update_status(app.status.as_str().to_string());
+                    }
+                }
+            }
+            
+            self.command_popup = Some(popup);
             
             // Immediately execute restart
             let request = CommandRequest {
@@ -743,16 +780,29 @@ impl TuiApp {
 
     /// Checks if status was updated by background polling and triggers redraw
     fn check_status_update(&mut self) -> Result<()> {
-        let status_updated = {
+        let (status_updated, app_status) = {
             let mut state = self.state.lock().expect("Failed to lock state");
             let updated = state.status_updated;
             if updated {
                 state.status_updated = false; // Clear the flag
             }
-            updated
+            
+            // Get the current app status if popup is open
+            let app_status = if self.command_popup.is_some() {
+                state.selected_app().map(|app| app.status.as_str().to_string())
+            } else {
+                None
+            };
+            
+            (updated, app_status)
         };
         
         if status_updated {
+            // Update popup status if it's open
+            if let (Some(popup), Some(status)) = (&mut self.command_popup, app_status) {
+                popup.update_status(status);
+            }
+            
             self.needs_redraw = true;
         }
         
@@ -781,13 +831,25 @@ impl TuiApp {
             };
             
             // Create start popup with environment selection
-            self.command_popup = Some(CommandPopup::new_with_env_selection(
+            let mut popup = CommandPopup::new_with_env_selection(
                 "start".to_string(),
                 "Start application".to_string(),
-                app_name,
+                app_name.clone(),
                 project_name,
                 default_env,
-            ));
+            );
+            
+            // Set initial status
+            {
+                let state = self.state.lock().expect("Failed to lock state");
+                if let Some(app) = state.selected_app() {
+                    if app.name == app_name {
+                        popup.update_status(app.status.as_str().to_string());
+                    }
+                }
+            }
+            
+            self.command_popup = Some(popup);
             
             let mut state = self.state.lock().expect("Failed to lock state");
             state.clear_env_selection_requested();
@@ -881,12 +943,20 @@ impl TuiApp {
                 }
                 
                 // Capture stderr
+                // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
                 if let Some(stderr) = child.stderr.take() {
                     let output_tx_clone = output_tx.clone();
+                    let env = request.environment.clone();
+                    let is_docker_like = env == "docker" || env == "orbstack";
                     tokio::spawn(async move {
                         let mut reader = BufReader::new(stderr).lines();
                         while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                            let formatted = if is_docker_like {
+                                line // Don't prefix for docker/orbstack
+                            } else {
+                                format!("[stderr] {}", line)
+                            };
+                            let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
                         }
                     });
                 }
@@ -905,15 +975,25 @@ impl TuiApp {
                 use tokio::process::Command;
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 
+                // Parse environment:command format
+                // The environment field contains "env:command" (e.g., "orbstack:run")
+                let (env, command_name) = if let Some((e, c)) = request.environment.split_once(':') {
+                    (e, c)
+                } else {
+                    // Fallback if format is wrong - treat whole string as command
+                    ("local", request.environment.as_str())
+                };
+                
                 // Get the CLI binary path
                 let binary_path = std::env::current_exe()?;
                 
-                // Build the command: rustycli run <app> <command> --project <project>
+                // Build the command: rustycli run <app> <command> --project <project> --env <env>
                 let mut cmd = Command::new(binary_path);
                 cmd.arg("run")
                    .arg(&request.app_name)
-                   .arg(&request.environment) // For run, environment field contains the command name
+                   .arg(command_name)
                    .arg("--project").arg(&request.project)
+                   .arg("--env").arg(env)
                    .stdout(std::process::Stdio::piped())
                    .stderr(std::process::Stdio::piped());
                 
@@ -931,12 +1011,19 @@ impl TuiApp {
                 }
                 
                 // Capture stderr
+                // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
                 if let Some(stderr) = child.stderr.take() {
                     let output_tx_clone = output_tx.clone();
+                    let is_docker_like = env == "docker" || env == "orbstack";
                     tokio::spawn(async move {
                         let mut reader = BufReader::new(stderr).lines();
                         while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
+                            let formatted = if is_docker_like {
+                                line // Don't prefix for docker/orbstack
+                            } else {
+                                format!("[stderr] {}", line)
+                            };
+                            let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
                         }
                     });
                 }

@@ -59,6 +59,13 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                 get_available_environments(&resolved_app.app)
             )
         })?,
+        "orbstack" => resolved_app.app.commands.orbstack.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "App '{}' does not have 'orbstack' environment configured. Available: {}",
+                args.app_name,
+                get_available_environments(&resolved_app.app)
+            )
+        })?,
         "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "App '{}' does not have 'k8s' environment configured. Available: {}",
@@ -67,7 +74,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
             )
         })?,
         _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local', 'docker', or 'k8s'.",
+            "Invalid environment '{}'. Must be 'local', 'docker', 'orbstack', or 'k8s'.",
             environment
         ),
     };
@@ -149,12 +156,24 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         writer.log_path().clone()
     };
     
+    // Build environment variables - set Docker context based on environment
+    let mut env_vars = HashMap::new();
+    match environment.as_str() {
+        "docker" => {
+            env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
+        }
+        "orbstack" => {
+            env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
+        }
+        _ => {}
+    }
+    
     // Build process options
     let options = ProcessOptions {
         app_name: process_name.clone(),
         working_dir: working_dir.clone(),
         command: command.clone(),
-        env_vars: HashMap::new(),
+        env_vars,
         detached: true, // Always detached (with setsid)
         show_output: !preferences.detached_mode, // Show output based on preference
     };
@@ -249,16 +268,14 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
 // Helper function to show which environments are configured for an app
 // Used in error messages to help users understand what's available
 fn get_available_environments(app: &crate::config::models::App) -> String {
+    use crate::config::models::Environment;
+    
     let mut envs = Vec::new();
     
-    if app.commands.local.is_some() {
-        envs.push("local");
-    }
-    if app.commands.docker.is_some() {
-        envs.push("docker");
-    }
-    if app.commands.k8s.is_some() {
-        envs.push("k8s");
+    for env_type in Environment::all() {
+        if app.commands.get(env_type.as_str()).is_some() {
+            envs.push(env_type.as_str());
+        }
     }
     
     if envs.is_empty() {

@@ -18,11 +18,11 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
     // This prevents setting invalid preference keys
     match key.as_str() {
         "default-env" => {
-            // Validate that the value is either "local" or "docker"
+            // Validate that the value is either "local", "docker", or "orbstack"
             // Reject any other values
-            if value != "local" && value != "docker" {
+            if value != "local" && value != "docker" && value != "orbstack" {
                 anyhow::bail!(
-                    "Invalid value '{}' for default-env. Must be 'local' or 'docker'.",
+                    "Invalid value '{}' for default-env. Must be 'local', 'docker', or 'orbstack'.",
                     value
                 );
             }

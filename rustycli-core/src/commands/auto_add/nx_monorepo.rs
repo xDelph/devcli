@@ -70,12 +70,14 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             commands: Commands {
                 local: detected.local_commands.clone(),
                 docker: detected.docker_commands.clone(),
+                orbstack: detected.orbstack_commands.clone(),
                 k8s: detected.k8s_commands.clone(),
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
+                orbstack: detected.suggested_orbstack_default.clone(),
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
         };
