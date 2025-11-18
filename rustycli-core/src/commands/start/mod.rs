@@ -45,19 +45,21 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         anyhow::bail!("At least one app name must be provided");
     }
 
+    let silent = args.silent;
+
     // Step 1: Resolve all apps to start and validate them
     let (apps_to_start, environment) = resolve_apps_to_start(args.clone()).await?;
     
     // Step 2: Handle dependencies for all apps collectively
     if !args.skip_deps {
-        handle_dependencies(&apps_to_start, &environment).await?;
+        handle_dependencies(&apps_to_start, &environment, silent).await?;
     }
     
     // Step 3: Start all apps in parallel
-    let started_apps = start_apps_in_parallel(apps_to_start, &environment).await?;
+    let started_apps = start_apps_in_parallel(apps_to_start, &environment, silent).await?;
     
     // Step 4: Handle different modes and keep process alive for log viewing
-    setup_log_monitoring(&started_apps).await?;
+    setup_log_monitoring(&started_apps, silent).await?;
     
     // Step 5: Ensure background monitor is running
     let binary_path = crate::process::monitor::get_rustycli_binary_path()?;

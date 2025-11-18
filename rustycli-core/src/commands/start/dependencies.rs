@@ -21,7 +21,7 @@ use super::resolver::{AppToStart, StartCommandArgs};
 /// 1. Collects dependencies from all apps
 /// 2. Checks which dependencies are missing
 /// 3. Auto-starts missing dependencies if configured to do so
-pub async fn handle_dependencies(apps_to_start: &[AppToStart], environment: &str) -> Result<()> {
+pub async fn handle_dependencies(apps_to_start: &[AppToStart], environment: &str, silent: bool) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
     let tracker = ProcessTracker::new()?;
@@ -43,20 +43,26 @@ pub async fn handle_dependencies(apps_to_start: &[AppToStart], environment: &str
     all_dependencies.sort_by(|a, b| a.app_name.cmp(&b.app_name));
     all_dependencies.dedup_by(|a, b| a.app_name == b.app_name);
     
-    println!("Checking dependencies for all apps...");
+    if !silent {
+        println!("Checking dependencies for all apps...");
+    }
     
     // Check which dependencies are NOT running
     let missing = check_dependencies_running(&tracker, &all_dependencies)?;
     
     if missing.is_empty() {
-        println!("✓ All dependencies are running");
+        if !silent {
+            println!("✓ All dependencies are running");
+        }
         return Ok(());
     }
     
     // Handle missing dependencies based on preferences
     if preferences.auto_start_deps {
-        start_missing_dependencies(missing, environment).await?;
-        println!("\n✓ All dependencies started successfully");
+        start_missing_dependencies(missing, environment, silent).await?;
+        if !silent {
+            println!("\n✓ All dependencies started successfully");
+        }
     } else {
         anyhow::bail!(
             "Missing dependencies: {}. Start them first or use --skip-deps",
@@ -68,12 +74,14 @@ pub async fn handle_dependencies(apps_to_start: &[AppToStart], environment: &str
 }
 
 /// Start missing dependencies in parallel
-async fn start_missing_dependencies(missing: Vec<String>, environment: &str) -> Result<()> {
-    println!("⚠ Missing dependencies: {}", missing.join(", "));
-    println!("Starting dependencies in parallel...\n");
+async fn start_missing_dependencies(missing: Vec<String>, environment: &str, silent: bool) -> Result<()> {
+    if !silent {
+        println!("⚠ Missing dependencies: {}", missing.join(", "));
+        println!("Starting dependencies in parallel...\n");
+    }
     
     let preferences = load_preferences()?;
-    let show_output = !preferences.detached_mode;
+    let show_output = !silent && !preferences.detached_mode;
     
     // Collect all dependency start tasks to run in parallel
     let mut tasks = Vec::new();
@@ -86,7 +94,9 @@ async fn start_missing_dependencies(missing: Vec<String>, environment: &str) -> 
             let dep_app = parts[1].to_string();
             let env = environment.to_string();
             
-            println!("→ Starting: {}/{}", dep_project, dep_app);
+            if !silent {
+                println!("→ Starting: {}/{}", dep_project, dep_app);
+            }
             
             // Spawn async task for this dependency
             let task = tokio::spawn(async move {
@@ -95,6 +105,7 @@ async fn start_missing_dependencies(missing: Vec<String>, environment: &str) -> 
                     project: Some(dep_project.clone()),
                     env: Some(env),
                     skip_deps: false,
+                    silent,
                 };
                 
                 super::executor::start_single_app_internal(dep_args, show_output).await

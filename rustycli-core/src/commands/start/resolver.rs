@@ -20,6 +20,7 @@ pub struct StartCommandArgs {
     pub project: Option<String>,    // Optional: specify project if name is ambiguous
     pub env: Option<String>,        // Optional: "local" or "docker" (overrides preference)
     pub skip_deps: bool,            // If true, don't check/start dependencies
+    pub silent: bool,               // If true, don't show output to terminal (for TUI mode)
 }
 
 /// Information about an app that's ready to start
@@ -38,6 +39,8 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
     // Step 1: Load the main configuration file and user preferences
     let config = load_config()?;
     let preferences = load_preferences()?;
+    
+    let silent = args.silent;
     
     // Step 2: Determine which environment to use for ALL apps
     // Priority: --env flag > preferences.default_env > "local"
@@ -61,10 +64,14 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         // Check if this app is already running
         if let Some(existing) = tracker.get_process(app_name)? {
             if tracker.is_running(existing.pid) {
-                println!("⚠ Process '{}' is already running with PID {}, skipping", app_name, existing.pid);
+                if !silent {
+                    println!("⚠ Process '{}' is already running with PID {}, skipping", app_name, existing.pid);
+                }
                 continue;
             } else {
-                println!("Cleaning up stale process '{}' (PID {} is no longer running)", app_name, existing.pid);
+                if !silent {
+                    println!("Cleaning up stale process '{}' (PID {} is no longer running)", app_name, existing.pid);
+                }
                 tracker.remove_process(app_name)?;
             }
         }

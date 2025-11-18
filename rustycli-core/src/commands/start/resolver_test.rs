@@ -32,6 +32,7 @@ mod tests {
             project: Some("test-project".to_string()),
             env: Some("local".to_string()),
             skip_deps: true,
+            silent: false,
         };
         
         let cloned = args.clone();

@@ -25,11 +25,13 @@ use super::resolver::{AppToStart, StartCommandArgs};
 /// Start all apps in parallel
 /// 
 /// Returns a vector of successfully started app names
-pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment: &str) -> Result<Vec<String>> {
-    println!("\nStarting {} app(s) in parallel...", apps_to_start.len());
+pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment: &str, silent: bool) -> Result<Vec<String>> {
+    if !silent {
+        println!("\nStarting {} app(s) in parallel...", apps_to_start.len());
+    }
     
     let preferences = load_preferences()?;
-    let show_output = !preferences.detached_mode;
+    let show_output = !silent && !preferences.detached_mode;
     
     let mut tasks = Vec::new();
     
@@ -66,8 +68,8 @@ pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment:
         }
     }
     
-    // Report results to the user
-    if !started_apps.is_empty() {
+    // Report results to the user (unless in silent mode)
+    if !started_apps.is_empty() && show_output {
         println!("\n✓ Successfully started {} app(s): {}", started_apps.len(), started_apps.join(", "));
     }
     
@@ -77,7 +79,9 @@ pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment:
             anyhow::bail!("Failed to start all apps:\n  {}", errors.join("\n  "));
         } else {
             // Some apps started, some failed - show warning but continue
-            println!("\n⚠ Some apps failed to start:\n  {}", errors.join("\n  "));
+            if show_output {
+                println!("\n⚠ Some apps failed to start:\n  {}", errors.join("\n  "));
+            }
         }
     }
     
@@ -124,13 +128,15 @@ async fn start_single_app_process(
         show_output,
     };
     
-    // Step 4: Display info to the user about what we're doing
-    println!("→ Starting '{}' in {} (environment: {})", app_name, working_dir.display(), environment);
-    println!("  Command: {}", command);
-    println!("  Log file: {}", log_path.display());
+    // Step 4: Display info to the user about what we're doing (unless silent)
+    if show_output {
+        println!("→ Starting '{}' in {} (environment: {})", app_name, working_dir.display(), environment);
+        println!("  Command: {}", command);
+        println!("  Log file: {}", log_path.display());
+    }
     
     // Step 5: Actually spawn the process!
-    let spawned = spawn_process(options, log_writer.clone()).await?;
+    let spawned = spawn_process(options, log_writer.clone(), None).await?;
     
     // Step 6: Wait a moment and verify the process didn't immediately crash
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;

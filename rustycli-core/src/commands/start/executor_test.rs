@@ -48,6 +48,7 @@ mod tests {
             project: None,
             env: None,
             skip_deps: false,
+            silent: false,
         };
         
         // Empty app_names should be handled by the caller
@@ -61,6 +62,7 @@ mod tests {
             project: Some("test-project".to_string()),
             env: Some("local".to_string()),
             skip_deps: true,
+            silent: false,
         };
         
         assert_eq!(args.app_names.len(), 1);
@@ -77,6 +79,7 @@ mod tests {
             project: None,
             env: None,
             skip_deps: false,
+            silent: false,
         };
         
         assert_eq!(args.app_names.len(), 3);

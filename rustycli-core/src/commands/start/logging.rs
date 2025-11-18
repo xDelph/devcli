@@ -14,24 +14,30 @@ use crate::Result;
 /// 
 /// In detached mode: exits immediately after starting processes
 /// In non-detached mode: keeps process alive to show logs until Ctrl+C
-pub async fn setup_log_monitoring(_started_apps: &[String]) -> Result<()> {
+pub async fn setup_log_monitoring(_started_apps: &[String], silent: bool) -> Result<()> {
     let preferences = load_preferences()?;
     
     if preferences.detached_mode {
         // In detached mode, we exit immediately after starting processes
-        println!("\nRunning in background (detached mode, no terminal output)");
+        if !silent {
+            println!("\nRunning in background (detached mode, no terminal output)");
+        }
     } else {
         // In non-detached mode, keep the main process alive to show logs
-        println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");
-        
-        // Explain to user what's happening and how to exit
-        println!("Press Ctrl+C to stop viewing logs (processes will continue running)...\n");
+        if !silent {
+            println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");
+            
+            // Explain to user what's happening and how to exit
+            println!("Press Ctrl+C to stop viewing logs (processes will continue running)...\n");
+        }
         
         // Wait for Ctrl+C signal
         wait_for_interrupt().await?;
         
-        println!("\n\nStopped viewing logs. Processes are still running in the background.");
-        println!("Use 'rustycli status' to check process status.");
+        if !silent {
+            println!("\n\nStopped viewing logs. Processes are still running in the background.");
+            println!("Use 'rustycli status' to check process status.");
+        }
     }
     
     Ok(())
