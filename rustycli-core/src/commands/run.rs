@@ -170,20 +170,18 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     println!("Log file: {}", log_path.display());
     
     // Spawn the process
-    let spawned = spawn_process(options, log_writer.clone()).await?;
+    let spawned = spawn_process(options, log_writer.clone(), None).await?;
     
     // Wait a moment to check if the process completed or crashed
     // For build commands, completing quickly is expected behavior
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
     
     // Check if the process is still running
-    if !tracker.is_running(spawned.pid) {
+    let process_still_running = tracker.is_running(spawned.pid);
+    
+    if !process_still_running {
         // Process completed - check if it was successful or crashed
         // For short-running commands like builds, this is normal
-        
-        // Try to get the exit status from the log or process
-        // For now, we'll assume it completed successfully since we saw output
-        // TODO: Implement proper exit code checking
         
         println!(
             "✓ Process '{}' completed (PID: {}). Check log for details: {}",
@@ -192,6 +190,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
             log_path.display()
         );
         
+        // If not in detached mode, we already showed the output during spawn_process
         // Don't register completed processes in the tracker
         return Ok(());
     }
@@ -222,6 +221,27 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // The monitor keeps process status up-to-date and cleans up dead processes
     let binary_path = crate::process::monitor::get_rustycli_binary_path()?;
     let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
+    
+    // Setup log monitoring based on detached mode preference
+    // If not in detached mode, this will wait for Ctrl+C while streaming logs
+    if !preferences.detached_mode {
+        println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");
+        println!("Press Ctrl+C to stop viewing logs (process will continue running)...\n");
+        
+        // Wait for Ctrl+C signal
+        let ctrl_c = tokio::signal::ctrl_c();
+        match ctrl_c.await {
+            Ok(()) => {
+                println!("\n\nStopped viewing logs. Process is still running in the background.");
+                println!("Use 'rustycli status' to check process status.");
+            }
+            Err(err) => {
+                println!("Unable to listen for shutdown signal: {}", err);
+            }
+        }
+    } else {
+        println!("\nRunning in background (detached mode, no terminal output)");
+    }
     
     Ok(())
 }

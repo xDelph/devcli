@@ -23,11 +23,14 @@ pub struct RestartCommandArgs {
     pub project: Option<String>, // Optional: specify project if name is ambiguous
     pub env: Option<String>,     // Optional: "local" or "docker" (overrides existing config)
     pub skip_deps: bool,         // If true, don't check/start dependencies
+    pub silent: bool,            // If true, don't print to terminal (for TUI mode)
 }
 
 // Main implementation of the restart command
 // Restart means: stop existing process → start same process with same config
 pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
+    let silent = args.silent;
+    
     // Step 1: Load the main configuration file
     let config = load_config()?;
 
@@ -46,10 +49,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         } else {
             // Process died but we have PID file - clean it up
             tracker.remove_process(&args.app_name)?;
-            println!(
-                "Process '{}' was not running (cleaning up stale PID file)",
-                args.app_name
-            );
+            if !silent {
+                println!(
+                    "Process '{}' was not running (cleaning up stale PID file)",
+                    args.app_name
+                );
+            }
             None
         }
     } else {
@@ -67,10 +72,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let process = existing_process.unwrap();
 
     // Step 6: Stop the existing process
-    println!(
-        "Stopping process '{}' (PID: {})...",
-        args.app_name, process.pid
-    );
+    if !silent {
+        println!(
+            "Stopping process '{}' (PID: {})...",
+            args.app_name, process.pid
+        );
+    }
 
     // Platform-specific process termination
     #[cfg(unix)]
@@ -81,7 +88,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             .args(["-TERM", &process.pid.to_string()])
             .output()
         {
-            println!("Warning: Failed to send SIGTERM: {}", e);
+            if !silent {
+                println!("Warning: Failed to send SIGTERM: {}", e);
+            }
         }
 
         // Wait a bit for graceful shutdown
@@ -89,12 +98,16 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
         // If still running, force kill
         if tracker.is_running(process.pid) {
-            println!("Force killing process '{}'...", args.app_name);
+            if !silent {
+                println!("Force killing process '{}'...", args.app_name);
+            }
             if let Err(e) = Command::new("kill")
                 .args(["-KILL", &process.pid.to_string()])
                 .output()
             {
-                println!("Warning: Failed to send SIGKILL: {}", e);
+                if !silent {
+                    println!("Warning: Failed to send SIGKILL: {}", e);
+                }
             }
 
             // Wait for process to actually die
@@ -110,10 +123,14 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     // Remove the PID file
     tracker.remove_process(&args.app_name)?;
-    println!("✓ Process '{}' stopped", args.app_name);
+    if !silent {
+        println!("✓ Process '{}' stopped", args.app_name);
+    }
 
     // Step 7: Prepare to start the same process again with identical configuration
-    println!("Restarting process '{}'...", args.app_name);
+    if !silent {
+        println!("Restarting process '{}'...", args.app_name);
+    }
 
     // Determine environment: use --env flag if provided, otherwise use existing process's environment
     let environment = args.env.clone().unwrap_or_else(|| {
@@ -207,14 +224,18 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         let dependencies = resolve_dependency_chain(&config, &resolved_app)?;
 
         if !dependencies.is_empty() {
-            println!("Checking dependencies...");
+            if !silent {
+                println!("Checking dependencies...");
+            }
 
             let missing = check_dependencies_running(&tracker, &dependencies)?;
 
             if !missing.is_empty() {
                 if preferences.auto_start_deps {
-                    println!("⚠ Missing dependencies: {}", missing.join(", "));
-                    println!("Starting dependencies in parallel...\n");
+                    if !silent {
+                        println!("⚠ Missing dependencies: {}", missing.join(", "));
+                        println!("Starting dependencies in parallel...\n");
+                    }
 
                     let mut tasks = Vec::new();
 
@@ -225,9 +246,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                             let dep_app = parts[1].to_string();
                             let env = environment.clone();
 
-                            println!("→ Starting: {}/{}", dep_project, dep_app);
-
-                            let _show_output = !preferences.detached_mode;
+                            if !silent {
+                                println!("→ Starting: {}/{}", dep_project, dep_app);
+                            }
 
                             let task = tokio::spawn(async move {
                                 // Use StartCommandArgs structure with app_names as Vec
@@ -236,6 +257,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                                     project: Some(dep_project.clone()),
                                     env: Some(env),
                                     skip_deps: false,
+                                    silent, // Pass through silent flag
                                 };
 
                                 crate::commands::start::start_command(dep_args)
@@ -265,14 +287,16 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                         );
                     }
 
-                    println!("\n✓ All dependencies started successfully");
+                    if !silent {
+                        println!("\n✓ All dependencies started successfully");
+                    }
                 } else {
                     anyhow::bail!(
                         "Missing dependencies: {}. Start them first or use --skip-deps",
                         missing.join(", ")
                     );
                 }
-            } else {
+            } else if !silent {
                 println!("✓ All dependencies are running");
             }
         }
@@ -304,21 +328,23 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         command: command.clone(),
         env_vars: process.env_vars.clone(), // Use the same environment variables
         detached: true,
-        show_output: !preferences.detached_mode,
+        show_output: !silent && !preferences.detached_mode,
     };
 
     // Step 15: Display info about the restart
-    println!(
-        "Restarting process '{}' in {} (environment: {})",
-        args.app_name,
-        working_dir.display(),
-        environment
-    );
-    println!("Command: {}", command);
-    println!("Log file: {}", log_path.display());
+    if !silent {
+        println!(
+            "Restarting process '{}' in {} (environment: {})",
+            args.app_name,
+            working_dir.display(),
+            environment
+        );
+        println!("Command: {}", command);
+        println!("Log file: {}", log_path.display());
+    }
 
     // Step 16: Spawn the process
-    let spawned = spawn_process(options, log_writer.clone()).await?;
+    let spawned = spawn_process(options, log_writer.clone(), None).await?;
 
     // Step 17: Wait and verify the process didn't crash immediately
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
@@ -349,15 +375,17 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     tracker.register_process(process_info)?;
 
     // Step 19: Show success message
-    println!(
-        "✓ Process '{}' restarted successfully with PID {}",
-        args.app_name, spawned.pid
-    );
+    if !silent {
+        println!(
+            "✓ Process '{}' restarted successfully with PID {}",
+            args.app_name, spawned.pid
+        );
 
-    if preferences.detached_mode {
-        println!("Running in background (detached mode, no terminal output)");
-    } else {
-        println!("Running in background with output streaming (use Ctrl+C to stop viewing)");
+        if preferences.detached_mode {
+            println!("Running in background (detached mode, no terminal output)");
+        } else {
+            println!("Running in background with output streaming (use Ctrl+C to stop viewing)");
+        }
     }
 
     // Step 20: Ensure background monitor is running

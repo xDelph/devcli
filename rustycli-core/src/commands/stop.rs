@@ -16,11 +16,13 @@ pub struct StopCommandArgs {
     pub project: Option<String>,     // Optional: stop all apps in a project
     pub all: bool,                   // If true, stop all running processes
     pub force: bool,                 // If true, use SIGKILL instead of SIGTERM
+    pub silent: bool,                // If true, don't print to terminal (for TUI mode)
 }
 
 // Main implementation of the stop command
 pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let tracker = ProcessTracker::new()?;
+    let silent = args.silent;
     
     // Clean up dead processes to ensure accurate status
     tracker.cleanup_dead()?;
@@ -32,53 +34,66 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let processes_to_stop = filter_processes(&args, &mut processes, &tracker)?;
     
     if processes_to_stop.is_empty() {
-        if args.all {
-            println!("No processes are currently running");
-        } else if let Some(app_name) = &args.app_name {
-            println!("Process '{}' is not currently running", app_name);
-        } else if let Some(project) = &args.project {
-            println!("No processes are currently running for project '{}'", project);
-        } else {
-            println!("No processes specified to stop");
+        if !silent {
+            if args.all {
+                println!("No processes are currently running");
+            } else if let Some(app_name) = &args.app_name {
+                println!("Process '{}' is not currently running", app_name);
+            } else if let Some(project) = &args.project {
+                println!("No processes are currently running for project '{}'", project);
+            } else {
+                println!("No processes specified to stop");
+            }
         }
         return Ok(());
     }
     
     // Display what we're about to stop
-    display_stop_summary(&processes_to_stop)?;
+    if !silent {
+        display_stop_summary(&processes_to_stop)?;
+    }
     
     // Stop each process
     let mut stopped_count = 0;
     let mut errors = Vec::new();
     
     for process in &processes_to_stop {
-        match stop_single_process(process, args.force, &tracker).await {
+        match stop_single_process(process, args.force, &tracker, silent).await {
             Ok(_) => {
-                println!("✓ Stopped: {} (PID: {})", process.app_name, process.pid);
+                if !silent {
+                    println!("✓ Stopped: {} (PID: {})", process.app_name, process.pid);
+                }
                 stopped_count += 1;
             }
             Err(e) => {
                 let error_msg = format!("Failed to stop {}: {}", process.app_name, e);
                 errors.push(error_msg.clone());
-                println!("✗ {}", error_msg);
+                if !silent {
+                    println!("✗ {}", error_msg);
+                }
             }
         }
     }
     
     // Summary
-    println!("\nStop Summary:");
-    println!("  ✓ Successfully stopped: {}", stopped_count);
+    if !silent {
+        println!("\nStop Summary:");
+        println!("  ✓ Successfully stopped: {}", stopped_count);
+        
+        if !errors.is_empty() {
+            println!("  ✗ Failed to stop: {}", errors.len());
+        }
+        
+        if stopped_count > 0 {
+            println!("✓ All specified processes have been stopped");
+        }
+    }
     
     if !errors.is_empty() {
-        println!("  ✗ Failed to stop: {}", errors.len());
         anyhow::bail!(
             "Some processes failed to stop:\n  {}",
             errors.join("\n  ")
         );
-    }
-    
-    if stopped_count > 0 {
-        println!("✓ All specified processes have been stopped");
     }
     
     Ok(())
@@ -162,12 +177,14 @@ fn display_stop_summary(processes: &[crate::process::ProcessInfo]) -> Result<()>
 }
 
 // Stop a single process with proper signal handling
-async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool, tracker: &ProcessTracker) -> Result<()> {
+async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool, tracker: &ProcessTracker, silent: bool) -> Result<()> {
     #[cfg(unix)]
     {
         // First, try graceful shutdown with SIGTERM
         if !force {
-            println!("Sending SIGTERM to process '{}' (PID: {})...", process.app_name, process.pid);
+            if !silent {
+                println!("Sending SIGTERM to process '{}' (PID: {})...", process.app_name, process.pid);
+            }
             
             if let Err(e) = Command::new("kill")
                 .args(["-TERM", &process.pid.to_string()])
@@ -180,7 +197,9 @@ async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool,
             for _i in 0..10 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 if !tracker.is_running(process.pid) {
-                    println!("Process '{}' terminated gracefully", process.app_name);
+                    if !silent {
+                        println!("Process '{}' terminated gracefully", process.app_name);
+                    }
                     
                     // Remove PID file
                     tracker.remove_process(&process.app_name)?;
@@ -189,13 +208,15 @@ async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool,
             }
             
             // If we get here, the process didn't terminate gracefully
-            if !force {
+            if !force && !silent {
                 println!("Process '{}' did not terminate gracefully, using SIGKILL...", process.app_name);
             }
         }
         
         // Force kill with SIGKILL
-        println!("Sending SIGKILL to process '{}' (PID: {})...", process.app_name, process.pid);
+        if !silent {
+            println!("Sending SIGKILL to process '{}' (PID: {})...", process.app_name, process.pid);
+        }
         
         if let Err(e) = Command::new("kill")
             .args(["-KILL", &process.pid.to_string()])
@@ -213,7 +234,9 @@ async fn stop_single_process(process: &crate::process::ProcessInfo, force: bool,
                 process.app_name, process.pid));
         }
         
-        println!("Process '{}' (PID: {}) killed successfully", process.app_name, process.pid);
+        if !silent {
+            println!("Process '{}' (PID: {}) killed successfully", process.app_name, process.pid);
+        }
         
         // Remove PID file
         tracker.remove_process(&process.app_name)?;

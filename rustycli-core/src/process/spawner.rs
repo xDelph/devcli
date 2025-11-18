@@ -22,6 +22,9 @@ pub struct ProcessOptions {
     pub show_output: bool,                 // Whether to stream output to terminal (colored)
 }
 
+// Optional channel for streaming output to TUI
+pub type OutputSender = tokio::sync::mpsc::UnboundedSender<String>;
+
 // Information about a spawned process
 // Option<Child> means "might have a Child or might be None"
 // We use None for detached processes since we don't track them after spawning
@@ -41,6 +44,7 @@ pub struct SpawnedProcess {
 pub async fn spawn_process(
     options: ProcessOptions,
     log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
+    output_tx: Option<OutputSender>,
 ) -> Result<SpawnedProcess> {
     // Split the command string into parts (e.g., "npm start" -> ["npm", "start"])
     // split_whitespace() splits on spaces and tabs
@@ -119,9 +123,11 @@ pub async fn spawn_process(
         // This task continuously reads output and:
         // 1. Optionally displays it in terminal with colored app name
         // 2. Always writes it to the log file
+        // 3. Optionally sends to TUI popup via channel
         let app_name = options.app_name.clone();
         let show_output = options.show_output;
         let log_writer_clone = log_writer.clone();
+        let output_tx_clone = output_tx.clone();
         // Spawn a background task to read and display stdout
         // tokio::spawn creates a new concurrent task
         // 'async move' captures variables and runs asynchronously
@@ -136,6 +142,10 @@ pub async fn spawn_process(
                 if show_output {
                     println!("[{}][stdout] {}", app_name.cyan().bold(), line);
                 }
+                // Send to TUI popup if channel is provided
+                if let Some(ref tx) = output_tx_clone {
+                    let _ = tx.send(line.clone());
+                }
                 // Always write to log file for persistence
                 // .lock().await gets exclusive access to the log writer
                 // _ = ignores the result (we don't care if logging fails)
@@ -149,6 +159,7 @@ pub async fn spawn_process(
         let app_name_clone = options.app_name.clone();
         let show_output = options.show_output;
         let log_writer_clone = log_writer.clone();
+        let output_tx_clone = output_tx.clone();
         // Spawn another background task to read and display stderr
         // Same pattern as stdout above, but for error output
         tokio::spawn(async move {
@@ -157,6 +168,10 @@ pub async fn spawn_process(
                 if show_output {
                     // eprintln! prints to stderr instead of stdout
                     eprintln!("[{}][stderr] {}", app_name_clone.cyan().bold(), line);
+                }
+                // Send to TUI popup if channel is provided
+                if let Some(ref tx) = output_tx_clone {
+                    let _ = tx.send(format!("[stderr] {}", line));
                 }
                 let mut writer = log_writer_clone.lock().await;
                 let _ = writer.write_log(&line).await;
@@ -200,6 +215,7 @@ pub async fn spawn_process(
         // Rust's ownership rules require this - we're moving data into a new task
         let app_name = options.app_name.clone();
         let log_writer_clone = log_writer.clone();
+        let output_tx_clone = output_tx.clone();
 
         // Spawn a background task to read and display stdout
         // tokio::spawn creates a new concurrent task
@@ -215,6 +231,11 @@ pub async fn spawn_process(
                 // Format the line with a label so user knows which app it's from
                 println!("[{}][stdout] {}", app_name.cyan().bold(), line);
 
+                // Send to TUI popup if channel is provided
+                if let Some(ref tx) = output_tx_clone {
+                    let _ = tx.send(line.clone());
+                }
+
                 // Write to log file
                 // .lock().await gets exclusive access to the log writer
                 // _ = ignores the result (we don't care if logging fails)
@@ -226,6 +247,7 @@ pub async fn spawn_process(
         // Clone again for the stderr task
         let app_name_clone = options.app_name.clone();
         let log_writer_clone = log_writer.clone();
+        let output_tx_clone = output_tx.clone();
 
         // Spawn another background task to read and display stderr
         // Same pattern as stdout above, but for error output
@@ -234,6 +256,11 @@ pub async fn spawn_process(
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 // eprintln! prints to stderr instead of stdout
                 eprintln!("[{}][stderr] {}", app_name_clone.cyan().bold(), line);
+
+                // Send to TUI popup if channel is provided
+                if let Some(ref tx) = output_tx_clone {
+                    let _ = tx.send(format!("[stderr] {}", line));
+                }
 
                 let mut writer = log_writer_clone.lock().await;
                 let _ = writer.write_log(&line).await;
