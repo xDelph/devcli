@@ -30,6 +30,8 @@ pub struct Theme {
     pub text: Color,
     /// Dimmed text color - used for secondary information
     pub text_dim: Color,
+    /// Background color - used for popup backgrounds
+    pub bg: Color,
 }
 
 impl Theme {
@@ -68,6 +70,8 @@ impl Theme {
             // Gray for dimmed text - de-emphasizes secondary info
             // Visual hierarchy: Helps users focus on important information
             text_dim: Color::Gray,
+            // Black background for popups and overlays
+            bg: Color::Black,
         }
     }
 

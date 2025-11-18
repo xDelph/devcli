@@ -466,6 +466,12 @@ fn test_tab_switching_with_tab_key() {
     assert!(handled);
     assert_eq!(view.active_tab, MainTab::Logs);
     
+    // Press Tab to cycle to Config
+    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
+    let handled = view.handle_input(key, &state).unwrap();
+    assert!(handled);
+    assert_eq!(view.active_tab, MainTab::Config);
+    
     // Press Tab to cycle back to Status
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
     let handled = view.handle_input(key, &state).unwrap();

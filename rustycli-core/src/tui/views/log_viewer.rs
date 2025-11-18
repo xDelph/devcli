@@ -7,8 +7,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 use std::path::PathBuf;
@@ -16,7 +16,6 @@ use syntect::{
     easy::HighlightLines,
     highlighting::{Theme, ThemeSet},
     parsing::SyntaxSet,
-    util::LinesWithEndings,
 };
 
 /// Represents a single line in the log file with formatting information
@@ -65,10 +64,11 @@ pub struct LogViewerView {
     theme: Theme,
     /// Syntax set for highlighting
     /// Stored for potential future use in re-highlighting
-    #[allow(dead_code)]
     syntax_set: SyntaxSet,
     /// Total number of lines in the file (for display)
     total_lines: usize,
+    /// Whether to show the JSON beautifier panel
+    show_json_panel: bool,
 }
 
 impl LogViewerView {
@@ -93,19 +93,28 @@ impl LogViewerView {
         // Optimization: Pre-allocate vector capacity for better performance
         let mut content = Vec::with_capacity(total_lines);
         for (idx, line) in lines.iter().enumerate() {
-            let is_json = Self::detect_json(line);
+            // Parse ANSI codes to get styled spans
+            let ansi_spans = Self::parse_ansi_codes(line);
+            
+            // Extract raw text for JSON detection and storage
+            let raw_text: String = ansi_spans.iter().map(|s| s.content.as_ref()).collect();
+            
+            // Normalize whitespace - replace multiple spaces/tabs with single space
+            let normalized = Self::normalize_whitespace(&raw_text);
+            
+            let is_json = Self::detect_json(&normalized);
             let formatted = if is_json {
                 // Prettify and highlight JSON
                 // Performance: JSON formatting is expensive, only done once per line
-                Self::format_json_line(line, &syntax_set, &theme)
+                Self::format_json_line(&normalized, &syntax_set, &theme)
             } else {
-                // Regular line - just convert to span
-                // Optimization: Avoid unnecessary allocations for plain text
-                vec![Span::raw(line.to_string())]
+                // Use the ANSI-parsed spans for regular lines
+                // Re-parse with normalized text to maintain ANSI colors
+                Self::parse_ansi_codes(line)
             };
 
             content.push(LogLine {
-                raw: line.to_string(),
+                raw: normalized,
                 formatted,
                 line_number: idx + 1, // 1-indexed for display
                 is_json,
@@ -116,7 +125,8 @@ impl LogViewerView {
         // Cursor is on the last line, viewport shows the last page
         // UX: Users typically want to see the most recent logs first
         let cursor_line = total_lines.saturating_sub(1);
-        let viewport_top = cursor_line; // Will be adjusted on first render
+        // Start viewport at 0 - it will be adjusted on first render to show cursor
+        let viewport_top = 0;
 
         Ok(Self {
             log_path,
@@ -131,7 +141,149 @@ impl LogViewerView {
             theme,
             syntax_set,
             total_lines,
+            show_json_panel: false,
         })
+    }
+
+    /// Normalizes whitespace in a line by replacing multiple spaces/tabs with single space
+    /// This makes logs more readable and reduces excessive whitespace
+    fn normalize_whitespace(line: &str) -> String {
+        let mut result = String::with_capacity(line.len());
+        let mut prev_was_space = false;
+        
+        for ch in line.chars() {
+            if ch == ' ' || ch == '\t' {
+                if !prev_was_space {
+                    result.push(' ');
+                    prev_was_space = true;
+                }
+            } else {
+                result.push(ch);
+                prev_was_space = false;
+            }
+        }
+        
+        result
+    }
+
+    /// Parses ANSI escape codes and converts them to styled spans
+    /// This interprets color codes and other terminal control sequences
+    fn parse_ansi_codes(text: &str) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        let mut current_text = String::new();
+        let mut current_style = Style::default();
+        let mut chars = text.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                // Found escape character
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // consume '['
+                    
+                    // Save current text as a span if any
+                    if !current_text.is_empty() {
+                        spans.push(Span::styled(current_text.clone(), current_style));
+                        current_text.clear();
+                    }
+                    
+                    // Parse the escape sequence
+                    let mut code_str = String::new();
+                    while let Some(&next_ch) = chars.peek() {
+                        chars.next();
+                        if next_ch.is_ascii_alphabetic() {
+                            // End of escape sequence
+                            if next_ch == 'm' {
+                                // SGR (Select Graphic Rendition) - color/style codes
+                                current_style = Self::apply_sgr_code(&code_str, current_style);
+                            }
+                            break;
+                        } else {
+                            code_str.push(next_ch);
+                        }
+                    }
+                }
+            } else {
+                current_text.push(ch);
+            }
+        }
+        
+        // Add remaining text
+        if !current_text.is_empty() {
+            spans.push(Span::styled(current_text, current_style));
+        }
+        
+        // If no spans were created, return a single span with the original text
+        if spans.is_empty() {
+            spans.push(Span::raw(text.to_string()));
+        }
+        
+        spans
+    }
+    
+    /// Applies SGR (Select Graphic Rendition) codes to a style
+    fn apply_sgr_code(code_str: &str, mut style: Style) -> Style {
+        let codes: Vec<u8> = code_str
+            .split(';')
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        
+        for code in codes {
+            match code {
+                0 => style = Style::default(), // Reset
+                1 => style = style.add_modifier(Modifier::BOLD),
+                2 => style = style.add_modifier(Modifier::DIM),
+                3 => style = style.add_modifier(Modifier::ITALIC),
+                4 => style = style.add_modifier(Modifier::UNDERLINED),
+                7 => style = style.add_modifier(Modifier::REVERSED),
+                9 => style = style.add_modifier(Modifier::CROSSED_OUT),
+                22 => style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+                23 => style = style.remove_modifier(Modifier::ITALIC),
+                24 => style = style.remove_modifier(Modifier::UNDERLINED),
+                27 => style = style.remove_modifier(Modifier::REVERSED),
+                29 => style = style.remove_modifier(Modifier::CROSSED_OUT),
+                // Foreground colors (30-37)
+                30 => style = style.fg(Color::Black),
+                31 => style = style.fg(Color::Red),
+                32 => style = style.fg(Color::Green),
+                33 => style = style.fg(Color::Yellow),
+                34 => style = style.fg(Color::Blue),
+                35 => style = style.fg(Color::Magenta),
+                36 => style = style.fg(Color::Cyan),
+                37 => style = style.fg(Color::White),
+                39 => style = style.fg(Color::Reset), // Default foreground
+                // Bright foreground colors (90-97)
+                90 => style = style.fg(Color::DarkGray),
+                91 => style = style.fg(Color::LightRed),
+                92 => style = style.fg(Color::LightGreen),
+                93 => style = style.fg(Color::LightYellow),
+                94 => style = style.fg(Color::LightBlue),
+                95 => style = style.fg(Color::LightMagenta),
+                96 => style = style.fg(Color::LightCyan),
+                97 => style = style.fg(Color::Gray),
+                // Background colors (40-47)
+                40 => style = style.bg(Color::Black),
+                41 => style = style.bg(Color::Red),
+                42 => style = style.bg(Color::Green),
+                43 => style = style.bg(Color::Yellow),
+                44 => style = style.bg(Color::Blue),
+                45 => style = style.bg(Color::Magenta),
+                46 => style = style.bg(Color::Cyan),
+                47 => style = style.bg(Color::White),
+                49 => style = style.bg(Color::Reset), // Default background
+                // Bright background colors (100-107)
+                100 => style = style.bg(Color::DarkGray),
+                101 => style = style.bg(Color::LightRed),
+                102 => style = style.bg(Color::LightGreen),
+                103 => style = style.bg(Color::LightYellow),
+                104 => style = style.bg(Color::LightBlue),
+                105 => style = style.bg(Color::LightMagenta),
+                106 => style = style.bg(Color::LightCyan),
+                107 => style = style.bg(Color::Gray),
+                _ => {} // Ignore unknown codes
+            }
+        }
+        
+        style
     }
 
     /// Detects if a line contains JSON data
@@ -149,22 +301,14 @@ impl LogViewerView {
     }
 
     /// Formats a JSON line with syntax highlighting
-    /// Prettifies the JSON and applies color coding
+    /// Keeps JSON on a single line to avoid display issues
     fn format_json_line(
         line: &str,
         syntax_set: &SyntaxSet,
         theme: &Theme,
     ) -> Vec<Span<'static>> {
-        // Try to parse and prettify the JSON
-        let prettified = match serde_json::from_str::<serde_json::Value>(line.trim()) {
-            Ok(json) => match serde_json::to_string_pretty(&json) {
-                Ok(pretty) => pretty,
-                Err(_) => line.to_string(),
-            },
-            Err(_) => line.to_string(),
-        };
-
-        // Apply syntax highlighting
+        // Don't prettify - keep on single line to avoid wrapping issues
+        // Just apply syntax highlighting to the original line
         let syntax = syntax_set
             .find_syntax_by_extension("json")
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
@@ -172,34 +316,32 @@ impl LogViewerView {
         let mut highlighter = HighlightLines::new(syntax, theme);
         let mut spans = Vec::new();
 
-        // Highlight each line of the prettified JSON
-        for line in LinesWithEndings::from(&prettified) {
-            let ranges = highlighter
-                .highlight_line(line, syntax_set)
-                .unwrap_or_default();
+        // Highlight the single line
+        let ranges = highlighter
+            .highlight_line(line, syntax_set)
+            .unwrap_or_default();
 
-            for (style, text) in ranges {
-                // Convert syntect style to ratatui style
-                let fg = Color::Rgb(
-                    style.foreground.r,
-                    style.foreground.g,
-                    style.foreground.b,
-                );
-                
-                let mut ratatui_style = Style::default().fg(fg);
-                
-                if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
-                    ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
-                }
-                if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
-                    ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
-                }
-                if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
-                    ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
-                }
-
-                spans.push(Span::styled(text.to_string(), ratatui_style));
+        for (style, text) in ranges {
+            // Convert syntect style to ratatui style
+            let fg = Color::Rgb(
+                style.foreground.r,
+                style.foreground.g,
+                style.foreground.b,
+            );
+            
+            let mut ratatui_style = Style::default().fg(fg);
+            
+            if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+                ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
             }
+            if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+                ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
+            }
+            if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+                ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
+            }
+
+            spans.push(Span::styled(text.to_string(), ratatui_style));
         }
 
         spans
@@ -207,6 +349,9 @@ impl LogViewerView {
 
     /// Renders the log viewer to the terminal
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        // Clear the entire area first to prevent artifacts
+        frame.render_widget(Clear, area);
+        
         // Create the main layout with header and content
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -217,15 +362,36 @@ impl LogViewerView {
             ])
             .split(area);
 
-        // Adjust viewport to ensure cursor is visible
-        let visible_height = chunks[1].height.saturating_sub(2) as usize;
-        self.adjust_viewport(visible_height);
-
         // Render header with file name and position
         self.render_header(frame, chunks[0]);
 
-        // Render log content
-        self.render_content(frame, chunks[1]);
+        // Split content area if JSON panel is visible
+        if self.show_json_panel && self.is_current_line_json() {
+            let content_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50), // Log content
+                    Constraint::Percentage(50), // JSON panel
+                ])
+                .split(chunks[1]);
+
+            // Adjust viewport to ensure cursor is visible
+            let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
+            self.adjust_viewport(visible_height);
+
+            // Render log content on left
+            self.render_content(frame, content_chunks[0]);
+
+            // Render JSON panel on right
+            self.render_json_panel(frame, content_chunks[1]);
+        } else {
+            // Adjust viewport to ensure cursor is visible
+            let visible_height = chunks[1].height.saturating_sub(2) as usize;
+            self.adjust_viewport(visible_height);
+
+            // Render log content full width
+            self.render_content(frame, chunks[1]);
+        }
 
         // Render footer (search bar or keyboard shortcuts)
         self.render_footer(frame, chunks[2]);
@@ -251,65 +417,156 @@ impl LogViewerView {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Cyan)),
             )
-            .style(Style::default().fg(Color::White));
+            .style(Style::default().fg(Color::White).bg(Color::Black));
 
         frame.render_widget(header, area);
     }
 
     /// Renders the main log content with line numbers
-    /// Performance optimization: Only renders visible lines
     fn render_content(&self, frame: &mut Frame, area: Rect) {
-        let visible_height = area.height.saturating_sub(2) as usize; // Account for borders
+        // Build text with ALL lines
+        let mut text = Text::default();
         
-        // Calculate which lines are visible based on viewport_top
-        // Optimization: Only process lines that will be displayed
-        let start_line = self.viewport_top;
-        let end_line = (start_line + visible_height).min(self.content.len());
+        for (i, log_line) in self.content.iter().enumerate() {
+            // Determine the background color for this line
+            let bg_color = if i == self.cursor_line {
+                Color::Rgb(40, 40, 60) // Highlighted cursor line background
+            } else {
+                Color::Black // Default background
+            };
+            
+            // Create line with line number prefix
+            // Using simple ASCII characters for better alignment
+            let line_num_str = format!("{:>5} | ", log_line.line_number);
+            let line_num_span = if self.is_search_match(i) {
+                // Highlight search matches
+                Span::styled(
+                    line_num_str.clone(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if i == self.cursor_line {
+                // Highlight cursor line with arrow
+                let cursor_str = format!("{:>5} > ", log_line.line_number);
+                Span::styled(
+                    cursor_str,
+                    Style::default().fg(Color::Cyan),
+                )
+            } else {
+                // Regular line number
+                Span::styled(line_num_str.clone(), Style::default().fg(Color::DarkGray))
+            };
 
-        // Build the lines to display
-        // Performance: Pre-allocate capacity for visible lines
-        let mut lines = Vec::with_capacity(visible_height);
-        for i in start_line..end_line {
-            if let Some(log_line) = self.content.get(i) {
-                // Create line with line number prefix
-                // Visual polish: Right-aligned line numbers with separator
-                let line_num_str = format!("{:>5} │ ", log_line.line_number);
-                let line_num_span = if self.is_search_match(i) {
-                    // Highlight search matches
-                    // Visual feedback: Yellow highlight for search results
-                    Span::styled(
-                        line_num_str,
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else if i == self.cursor_line {
-                    // Highlight cursor line
-                    // Visual feedback: Cyan arrow shows current position
-                    Span::styled(
-                        format!("{:>5} > ", log_line.line_number),
-                        Style::default().fg(Color::Cyan),
-                    )
-                } else {
-                    // Regular line number
-                    // Visual consistency: Dimmed to not distract from content
-                    Span::styled(line_num_str, Style::default().fg(Color::DarkGray))
-                };
+            // Combine line number with content
+            let mut spans = vec![line_num_span];
+            spans.extend(log_line.formatted.clone());
+            
+            // Use Line::styled to apply background to the entire line
+            // This ensures the line fills the full width with the background color
+            let line = Line::from(spans).style(Style::default().bg(bg_color));
 
-                // Combine line number with content
-                // Optimization: Reuse pre-formatted spans from LogLine
-                let mut spans = vec![line_num_span];
-                spans.extend(log_line.formatted.clone());
-
-                lines.push(Line::from(spans));
-            }
+            text.lines.push(line);
         }
 
-        let content = Paragraph::new(lines)
+        // Use Paragraph with scroll and set background style to fill entire area
+        let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: false });
+            .style(Style::default().bg(Color::Black))
+            .scroll((self.viewport_top as u16, 0));
 
-        frame.render_widget(content, area);
+        frame.render_widget(paragraph, area);
+    }
+
+    /// Checks if the current cursor line contains JSON
+    fn is_current_line_json(&self) -> bool {
+        self.content
+            .get(self.cursor_line)
+            .map(|line| line.is_json)
+            .unwrap_or(false)
+    }
+
+    /// Renders the JSON beautifier panel showing prettified JSON
+    fn render_json_panel(&self, frame: &mut Frame, area: Rect) {
+        let json_content = if let Some(log_line) = self.content.get(self.cursor_line) {
+            if log_line.is_json {
+                // Parse and prettify the JSON
+                match serde_json::from_str::<serde_json::Value>(log_line.raw.trim()) {
+                    Ok(json) => match serde_json::to_string_pretty(&json) {
+                        Ok(pretty) => {
+                            // Apply syntax highlighting to prettified JSON
+                            self.format_prettified_json(&pretty)
+                        }
+                        Err(_) => vec![Line::from("Error: Failed to format JSON")],
+                    },
+                    Err(e) => vec![Line::from(format!("Error: Invalid JSON - {}", e))],
+                }
+            } else {
+                vec![Line::from("Not a JSON line")]
+            }
+        } else {
+            vec![Line::from("No line selected")]
+        };
+
+        let panel = Paragraph::new(json_content)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("JSON Beautifier")
+                    .border_style(Style::default().fg(Color::Green)),
+            )
+            .style(Style::default().fg(Color::White).bg(Color::Black));
+
+        frame.render_widget(panel, area);
+    }
+
+    /// Formats prettified JSON with syntax highlighting
+    fn format_prettified_json(&self, json_str: &str) -> Vec<Line<'static>> {
+        let syntax = self
+            .syntax_set
+            .find_syntax_by_extension("json")
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+
+        let mut highlighter = HighlightLines::new(syntax, &self.theme);
+        let mut lines = Vec::new();
+
+        for line in json_str.lines() {
+            let ranges = highlighter
+                .highlight_line(line, &self.syntax_set)
+                .unwrap_or_default();
+
+            let mut spans = Vec::new();
+            for (style, text) in ranges {
+                let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+
+                let mut ratatui_style = Style::default().fg(fg);
+
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::BOLD)
+                {
+                    ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
+                }
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::ITALIC)
+                {
+                    ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
+                }
+                if style
+                    .font_style
+                    .contains(syntect::highlighting::FontStyle::UNDERLINE)
+                {
+                    ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
+                }
+
+                spans.push(Span::styled(text.to_string(), ratatui_style));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        lines
     }
 
     /// Renders the footer with search bar or keyboard shortcuts
@@ -335,13 +592,24 @@ impl LogViewerView {
         } else {
             // Show keyboard shortcuts for navigation
             // Visual consistency: Matches main view footer style
-            "↑↓/jk: Scroll  PgUp/PgDn: Page  Home/End: Jump  g/G: Top/Bottom  /: Search  n/N: Next/Prev  Esc: Back"
-                .to_string()
+            let json_hint = if self.is_current_line_json() {
+                if self.show_json_panel {
+                    "  J: Hide JSON"
+                } else {
+                    "  J: Show JSON"
+                }
+            } else {
+                ""
+            };
+            format!(
+                "↑↓/jk: Scroll  Shift+↑↓: Jump 10  PgUp/PgDn: Page  Home/End/g/G: Top/Bottom  /: Search  n/N: Next/Prev{}  Esc: Back",
+                json_hint
+            )
         };
 
         let footer = Paragraph::new(footer_text)
             .block(Block::default().borders(Borders::ALL))
-            .style(Style::default().fg(Color::Gray));
+            .style(Style::default().fg(Color::Gray).bg(Color::Black));
 
         frame.render_widget(footer, area);
     }
@@ -400,6 +668,16 @@ impl LogViewerView {
     /// Handles input when in normal navigation mode
     fn handle_navigation_input(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
+            // Shift+Down - jump down by 10
+            KeyCode::Down if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) => {
+                self.scroll_down(10);
+                Ok(true)
+            }
+            // Shift+Up - jump up by 10
+            KeyCode::Up if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) => {
+                self.scroll_up(10);
+                Ok(true)
+            }
             // Scroll down one line
             KeyCode::Down | KeyCode::Char('j') => {
                 self.scroll_down(1);
@@ -446,6 +724,11 @@ impl LogViewerView {
             // Previous search result
             KeyCode::Char('N') => {
                 self.previous_search_result();
+                Ok(true)
+            }
+            // Toggle JSON panel
+            KeyCode::Char('J') => {
+                self.show_json_panel = !self.show_json_panel;
                 Ok(true)
             }
             _ => Ok(false),

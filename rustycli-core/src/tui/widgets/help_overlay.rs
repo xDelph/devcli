@@ -51,7 +51,7 @@ impl HelpOverlay {
             return;
         }
 
-        let size = frame.size();
+        let size = frame.area();
         
         // Create a centered popup area (70% width, 80% height)
         let popup_area = Self::centered_rect(70, 80, size);
@@ -130,6 +130,21 @@ impl HelpOverlay {
         
         lines.push(Line::from(""));
         
+        // Status tab shortcuts section
+        lines.push(Line::from(Span::styled(
+            "Status Tab",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+        lines.push(Line::from(""));
+        
+        self.add_shortcut(&mut lines, theme, "Enter", "Start app (if stopped)");
+        self.add_shortcut(&mut lines, theme, "s", "Stop running app");
+        self.add_shortcut(&mut lines, theme, "r", "Restart running app");
+        
+        lines.push(Line::from(""));
+        
         // Commands tab shortcuts section
         lines.push(Line::from(Span::styled(
             "Commands Tab",
@@ -140,7 +155,6 @@ impl HelpOverlay {
         lines.push(Line::from(""));
         
         self.add_shortcut(&mut lines, theme, "Enter", "Execute selected command");
-        self.add_shortcut(&mut lines, theme, "Esc", "Stop running app");
         
         lines.push(Line::from(""));
         
