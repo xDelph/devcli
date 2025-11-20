@@ -56,6 +56,7 @@ async fn run_daemon_loop() -> Result<()> {
         app_config_name: Some(".monitor".to_string()),
         environment: None,
         command_variant: None,
+        stage: None, // Monitor process doesn't have a stage
     };
     
     tracker.register_process(monitor_info)?;

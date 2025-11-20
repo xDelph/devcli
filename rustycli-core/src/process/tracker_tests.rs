@@ -20,6 +20,7 @@ mod tests {
             app_config_name: Some(app_name.to_string()),
             environment: Some("local".to_string()),
             command_variant: Some("start".to_string()),
+            stage: None,
         }
     }
 
@@ -194,6 +195,7 @@ mod tests {
             app_config_name: Some("api-server".to_string()),
             environment: Some("docker".to_string()),
             command_variant: Some("run".to_string()),
+            stage: None,
         };
         
         // Serialize and deserialize

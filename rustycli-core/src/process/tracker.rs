@@ -25,6 +25,11 @@ pub struct ProcessInfo {
     pub environment: Option<String>,
     #[serde(default)]
     pub command_variant: Option<String>,
+    // Deployment stage used when starting this process (dev, qa, preprod, prod)
+    // Tracks which stage-specific .env file was loaded
+    // OPTIONAL: Only set if a stage was configured or overridden
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
 }
 
 // Manages tracking of spawned processes via PID files

@@ -334,6 +334,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
+            stage: None, // No stage configured during auto-add (will be added in future task)
         };
         
         // Insert the app into the config
@@ -386,6 +387,7 @@ fn add_to_config(
             k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
         dockerfile_path: detected.dockerfile_path,
+        stage: None, // No stage configured during auto-add (will be added in future task)
     };
     
     // Insert the app into the config

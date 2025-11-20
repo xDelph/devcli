@@ -395,6 +395,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         app_config_name: Some(resolved_app.app_name.clone()),
         environment: Some(environment),
         command_variant: Some(default_command),
+        stage: None, // Stage tracking will be added in future task
     };
 
     tracker.register_process(process_info)?;

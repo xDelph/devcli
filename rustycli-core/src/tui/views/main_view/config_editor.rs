@@ -321,6 +321,7 @@ impl MainView {
                 k8s: None,
             },
             dockerfile_path: None,
+            stage: None, // No stage configured in TUI editor (will be added in future task)
         }
     }
 

@@ -38,6 +38,7 @@ fn create_test_config() -> Config {
                 orbstack: None,
                 k8s: None,
             },
+            stage: None,
         },
     );
     
@@ -60,6 +61,7 @@ fn create_test_config() -> Config {
                 orbstack: None,
                 k8s: None,
             },
+            stage: None,
         },
     );
     

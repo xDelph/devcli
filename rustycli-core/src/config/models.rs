@@ -7,6 +7,55 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Supported deployment stages
+/// Defines the lifecycle stages for application deployment
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stage {
+    Dev,
+    Qa,
+    Preprod,
+    Prod,
+}
+
+impl Stage {
+    /// Returns all stages in order
+    pub const fn all() -> &'static [Stage] {
+        &[Stage::Dev, Stage::Qa, Stage::Preprod, Stage::Prod]
+    }
+
+    /// Returns the string key used in config JSON
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Stage::Dev => "dev",
+            Stage::Qa => "qa",
+            Stage::Preprod => "preprod",
+            Stage::Prod => "prod",
+        }
+    }
+
+    /// Parse from string key
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s {
+            "dev" => Some(Stage::Dev),
+            "qa" => Some(Stage::Qa),
+            "preprod" => Some(Stage::Preprod),
+            "prod" => Some(Stage::Prod),
+            _ => None,
+        }
+    }
+
+    /// Returns a comma-separated list of all valid stage names
+    /// Used in error messages
+    pub fn all_names() -> String {
+        Self::all()
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 /// Supported execution environments
 /// Defines the order in which environments are displayed in the UI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +170,12 @@ pub struct App {
     // OPTIONAL: Only set if Dockerfile exists
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dockerfile_path: Option<String>,
+    
+    // Deployment stage for this app (dev, qa, preprod, prod)
+    // Used to determine which stage-specific .env file to load (e.g., .env.dev, .env.prod)
+    // OPTIONAL: If not set, uses base .env file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
 }
 
 // Commands for different environments

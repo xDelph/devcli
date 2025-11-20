@@ -35,6 +35,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -68,6 +69,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -120,6 +122,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -150,6 +153,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -180,6 +184,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -231,6 +236,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -261,6 +267,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -291,6 +298,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -327,6 +335,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         

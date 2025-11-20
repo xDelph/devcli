@@ -35,6 +35,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -68,6 +69,7 @@ mod tests {
                     orbstack: None,
                     k8s: None,
                 },
+                stage: None,
             },
         );
         
@@ -141,6 +143,7 @@ mod tests {
                         orbstack: None,
                         k8s: None,
                     },
+                    stage: None,
                 },
             );
             config.projects.insert(project_name.to_string(), Project { apps });

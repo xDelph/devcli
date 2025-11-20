@@ -216,6 +216,7 @@ async fn start_single_app_process(
         app_config_name: Some(resolved_app.app_name.clone()),
         environment: Some(environment),
         command_variant: Some(default_command),
+        stage: None, // Stage tracking will be added in future task
     };
     
     // Step 8: Save the process info to a PID file
