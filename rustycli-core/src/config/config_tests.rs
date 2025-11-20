@@ -33,6 +33,7 @@ mod tests {
                 },
                 dependencies: Vec::new(),
                 dockerfile_path: None,
+                stage: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: Some("run".to_string()),
@@ -67,6 +68,7 @@ mod tests {
                     app: "redis".to_string(),
                 }],
                 dockerfile_path: None,
+                stage: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -132,6 +134,7 @@ mod tests {
                 },
                 dependencies: Vec::new(),
                 dockerfile_path: None,
+                stage: None,
                 defaults: Defaults {
                     local: None,
                     docker: Some("run".to_string()),
@@ -181,6 +184,7 @@ mod tests {
             },
             dependencies: Vec::new(),
             dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
@@ -318,6 +322,7 @@ mod tests {
                 },
                 dependencies: Vec::new(),
                 dockerfile_path: None,
+                stage: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -364,6 +369,7 @@ mod tests {
                         },
                         dependencies: Vec::new(),
                         dockerfile_path: None,
+                        stage: None,
                         defaults: Defaults {
                             local: Some("start".to_string()),
                             docker: None,

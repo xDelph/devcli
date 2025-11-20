@@ -19,6 +19,7 @@ mod tests {
             },
             dependencies: Vec::new(),
             dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
@@ -58,6 +59,7 @@ mod tests {
             },
             dependencies: Vec::new(),
             dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
@@ -83,6 +85,7 @@ mod tests {
             },
             dependencies: Vec::new(),
             dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: None,
                 docker: None,

@@ -59,13 +59,14 @@ fn create_test_config_with_app(app_name: &str, app_path: &str) -> Config {
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
                 orbstack: None,
                 k8s: None,
             },
-            dockerfile_path: None,
         },
     );
     
@@ -135,6 +136,7 @@ fn test_integration_process_tracking() {
         app_config_name: Some("integration-test-app".to_string()),
         environment: Some("local".to_string()),
         command_variant: Some("start".to_string()),
+        stage: None,
     };
     
     tracker.register_process(process).unwrap();
@@ -189,13 +191,14 @@ fn test_integration_dependency_chain() {
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
                 orbstack: None,
                 k8s: None,
             },
-            dockerfile_path: None,
         },
     );
     
@@ -219,13 +222,14 @@ fn test_integration_dependency_chain() {
                 project: "test".to_string(),
                 app: "database".to_string(),
             }],
+            dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
                 orbstack: None,
                 k8s: None,
             },
-            dockerfile_path: None,
         },
     );
     
@@ -249,13 +253,14 @@ fn test_integration_dependency_chain() {
                 project: "test".to_string(),
                 app: "api".to_string(),
             }],
+            dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
                 orbstack: None,
                 k8s: None,
             },
-            dockerfile_path: None,
         },
     );
     
@@ -420,13 +425,14 @@ fn test_integration_list_all_apps() {
                         k8s: None,
                     },
                     dependencies: Vec::new(),
+                    dockerfile_path: None,
+                    stage: None,
                     defaults: Defaults {
                         local: Some("start".to_string()),
                         docker: None,
                         orbstack: None,
                         k8s: None,
                     },
-                    dockerfile_path: None,
                 },
             );
         }

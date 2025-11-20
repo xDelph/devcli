@@ -25,6 +25,7 @@ mod prompts_tests {
             },
             dependencies: vec![],
             dockerfile_path: None,
+            stage: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,

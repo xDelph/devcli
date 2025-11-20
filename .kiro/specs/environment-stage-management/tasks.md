@@ -7,7 +7,7 @@
   - Add `stage` field to `ProcessInfo` struct in `process/tracker.rs`
   - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-- [ ] 2. Extend environment file detection for stage-specific files
+- [x] 2. Extend environment file detection for stage-specific files
 
   - Update `find_env_file()` in `detection/environments/orbstack.rs` to accept stage parameter and implement priority logic
   - Update `load_env_vars_for_runtime()` in `detection/environments/orbstack.rs` to accept stage parameter

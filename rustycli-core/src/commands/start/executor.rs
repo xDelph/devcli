@@ -138,7 +138,7 @@ async fn start_single_app_process(
             
             // For Docker, use --env-file flag if .env exists
             // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref(), None) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,
                     &env_file_path
@@ -155,7 +155,7 @@ async fn start_single_app_process(
             
             // For OrbStack, use --env-file flag (same as Docker)
             // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref(), None) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,
                     &env_file_path

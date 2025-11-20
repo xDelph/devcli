@@ -6,6 +6,12 @@ pub mod docker;
 pub mod k8s;
 pub mod orbstack;
 
+// Test modules
+#[cfg(test)]
+mod local_tests;
+#[cfg(test)]
+mod orbstack_stage_test;
+
 // Re-export main functions for convenience
 pub use local::detect_local_commands;
 pub use docker::detect_docker_commands;

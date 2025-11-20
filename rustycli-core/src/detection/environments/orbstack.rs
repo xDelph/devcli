@@ -52,9 +52,15 @@ pub fn parse_env_file(env_path: &Path) -> Result<HashMap<String, String>> {
     Ok(env_vars)
 }
 
-/// Find the .env file with priority order
+/// Find the .env file with priority order, supporting stage-specific files
 /// 
-/// Priority order:
+/// Priority order when stage is specified:
+/// 1. Stage-specific file at Dockerfile level (e.g., docker/.env.dev)
+/// 2. Stage-specific file at root level (e.g., .env.dev)
+/// 3. Base .env file at Dockerfile level
+/// 4. Base .env file at root level
+/// 
+/// Priority order when stage is NOT specified:
 /// 1. .env file at the Dockerfile level (using dockerfile_path from config if provided)
 /// 2. .env file at the Dockerfile level (by searching for Dockerfile if not in config)
 /// 3. .env file at the root level
@@ -62,45 +68,64 @@ pub fn parse_env_file(env_path: &Path) -> Result<HashMap<String, String>> {
 /// # Arguments
 /// * `app_path` - The root directory of the app
 /// * `dockerfile_path` - Optional relative path to Dockerfile from config (e.g., "docker/Dockerfile")
+/// * `stage` - Optional deployment stage (dev, qa, preprod, prod)
 /// 
 /// # Returns
 /// Path to .env file if found, relative to app_path for Docker compatibility
-pub fn find_env_file(app_path: &Path, dockerfile_path: Option<&str>) -> Result<Option<String>> {
-    // First, try to use dockerfile_path from config if provided
-    if let Some(dockerfile_rel_path) = dockerfile_path {
+pub fn find_env_file(
+    app_path: &Path,
+    dockerfile_path: Option<&str>,
+    stage: Option<&str>,
+) -> Result<Option<String>> {
+    // Helper function to check if a file exists and return its relative path
+    let check_file = |path: &std::path::PathBuf| -> Option<String> {
+        if path.exists() {
+            path.strip_prefix(app_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    };
+
+    // Determine the Dockerfile directory
+    let dockerfile_dir = if let Some(dockerfile_rel_path) = dockerfile_path {
         let dockerfile_full_path = app_path.join(dockerfile_rel_path);
-        if let Some(dockerfile_dir) = dockerfile_full_path.parent() {
-            let dockerfile_env = dockerfile_dir.join(".env");
-            if dockerfile_env.exists() {
-                // Return relative path from app_path
-                if let Ok(relative) = dockerfile_env.strip_prefix(app_path) {
-                    return Ok(Some(relative.to_string_lossy().to_string()));
-                }
+        dockerfile_full_path.parent().map(|p| p.to_path_buf())
+    } else {
+        find_dockerfile(app_path)?
+            .and_then(|df| df.parent().map(|p| p.to_path_buf()))
+    };
+
+    // If stage is specified, try stage-specific files first
+    if let Some(stage_name) = stage {
+        let stage_filename = format!(".env.{}", stage_name);
+
+        // 1. Try stage-specific file at Dockerfile level
+        if let Some(ref dir) = dockerfile_dir {
+            if let Some(path) = check_file(&dir.join(&stage_filename)) {
+                return Ok(Some(path));
             }
         }
-    }
-    
-    // If dockerfile_path not in config, try to find Dockerfile dynamically
-    if dockerfile_path.is_none() {
-        if let Ok(Some(found_dockerfile)) = find_dockerfile(app_path) {
-            if let Some(dockerfile_dir) = found_dockerfile.parent() {
-                let dockerfile_env = dockerfile_dir.join(".env");
-                if dockerfile_env.exists() {
-                    // Return relative path from app_path
-                    if let Ok(relative) = dockerfile_env.strip_prefix(app_path) {
-                        return Ok(Some(relative.to_string_lossy().to_string()));
-                    }
-                }
-            }
+
+        // 2. Try stage-specific file at root level
+        if let Some(path) = check_file(&app_path.join(&stage_filename)) {
+            return Ok(Some(path));
         }
     }
-    
-    // Fall back to root .env file
-    let root_env = app_path.join(".env");
-    if root_env.exists() {
-        return Ok(Some(".env".to_string()));
+
+    // 3. Fall back to base .env at Dockerfile level
+    if let Some(ref dir) = dockerfile_dir {
+        if let Some(path) = check_file(&dir.join(".env")) {
+            return Ok(Some(path));
+        }
     }
-    
+
+    // 4. Fall back to base .env at root level
+    if let Some(path) = check_file(&app_path.join(".env")) {
+        return Ok(Some(path));
+    }
+
     Ok(None)
 }
 
@@ -108,7 +133,13 @@ pub fn find_env_file(app_path: &Path, dockerfile_path: Option<&str>) -> Result<O
 /// Searches for .env files in the app directory and returns them as a HashMap
 /// This is used at runtime when executing OrbStack commands
 /// 
-/// Priority order:
+/// Priority order when stage is specified:
+/// 1. Stage-specific file at Dockerfile level (e.g., docker/.env.dev)
+/// 2. Stage-specific file at root level (e.g., .env.dev)
+/// 3. Base .env file at Dockerfile level
+/// 4. Base .env file at root level
+/// 
+/// Priority order when stage is NOT specified:
 /// 1. .env file at the Dockerfile level (using dockerfile_path from config if provided)
 /// 2. .env file at the Dockerfile level (by searching for Dockerfile if not in config)
 /// 3. .env file at the root level
@@ -116,49 +147,23 @@ pub fn find_env_file(app_path: &Path, dockerfile_path: Option<&str>) -> Result<O
 /// # Arguments
 /// * `app_path` - The root directory of the app
 /// * `dockerfile_path` - Optional relative path to Dockerfile from config (e.g., "docker/Dockerfile")
+/// * `stage` - Optional deployment stage (dev, qa, preprod, prod)
 /// 
 /// # Returns
 /// HashMap of environment variables loaded from .env files
-pub fn load_env_vars_for_runtime(app_path: &Path, dockerfile_path: Option<&str>) -> Result<HashMap<String, String>> {
-    let mut env_vars = HashMap::new();
-    
-    // First, try to use dockerfile_path from config if provided
-    if let Some(dockerfile_rel_path) = dockerfile_path {
-        let dockerfile_full_path = app_path.join(dockerfile_rel_path);
-        
-        if let Some(dockerfile_dir) = dockerfile_full_path.parent() {
-            let dockerfile_env = dockerfile_dir.join(".env");
-            
-            if dockerfile_env.exists() {
-                // Prioritize .env at Dockerfile level
-                env_vars.extend(parse_env_file(&dockerfile_env)?);
-                return Ok(env_vars);
-            }
-        }
+pub fn load_env_vars_for_runtime(
+    app_path: &Path,
+    dockerfile_path: Option<&str>,
+    stage: Option<&str>,
+) -> Result<HashMap<String, String>> {
+    // Use find_env_file to determine which file to load based on priority
+    if let Some(env_file_path) = find_env_file(app_path, dockerfile_path, stage)? {
+        let full_path = app_path.join(&env_file_path);
+        return parse_env_file(&full_path);
     }
     
-    // If dockerfile_path not in config, try to find Dockerfile dynamically
-    if dockerfile_path.is_none() {
-        if let Ok(Some(found_dockerfile)) = find_dockerfile(app_path) {
-            if let Some(dockerfile_dir) = found_dockerfile.parent() {
-                let dockerfile_env = dockerfile_dir.join(".env");
-                if dockerfile_env.exists() {
-                    // Prioritize .env at Dockerfile level
-                    env_vars.extend(parse_env_file(&dockerfile_env)?);
-                    return Ok(env_vars);
-                }
-            }
-        }
-    }
-    
-    // Fall back to root .env file
-    let root_env = app_path.join(".env");
-    
-    if root_env.exists() {
-        env_vars.extend(parse_env_file(&root_env)?);
-    }
-    
-    Ok(env_vars)
+    // No env file found, return empty HashMap
+    Ok(HashMap::new())
 }
 
 /// Phase 2c: Detect OrbStack commands if Dockerfile exists
@@ -325,7 +330,7 @@ mod tests {
         writeln!(file, "KEY2=value2").unwrap();
         file.flush().unwrap();
         
-        let env_vars = load_env_vars_for_runtime(temp_dir.path(), None).unwrap();
+        let env_vars = load_env_vars_for_runtime(temp_dir.path(), None, None).unwrap();
         assert_eq!(env_vars.get("KEY1"), Some(&"value1".to_string()));
         assert_eq!(env_vars.get("KEY2"), Some(&"value2".to_string()));
     }
