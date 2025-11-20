@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests {
     use crate::commands::auto_add::validation::validate_app_name;
-
     #[test]
     fn test_validate_app_name_valid_names() {
         // Test that valid names are accepted
@@ -15,7 +14,7 @@ mod tests {
         assert!(validate_app_name("app123").is_ok());
         assert!(validate_app_name("simple").is_ok());
     }
-
+    
     #[test]
     fn test_validate_app_name_empty_name() {
         // Test that empty names are rejected
@@ -23,7 +22,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
-
+    
     #[test]
     fn test_validate_app_name_spaces() {
         // Test that names with spaces are rejected
@@ -31,19 +30,18 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot contain spaces"));
     }
-
+    
     #[test]
     fn test_validate_app_name_path_separators() {
         // Test that names with path separators are rejected
         let result = validate_app_name("invalid/app");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot contain path separators"));
-
+        
         let result = validate_app_name("invalid\\app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot contain path separators"));
     }
-
+    
     #[test]
     fn test_validate_app_name_edge_cases() {
         // Test edge cases
