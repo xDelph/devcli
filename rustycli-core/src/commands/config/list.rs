@@ -196,8 +196,9 @@ pub async fn config_list_commands(
     
     // Validate environment filter if provided
     if let Some(ref env) = environment {
-        if !["local", "docker", "k8s"].contains(&env.as_str()) {
-            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        use crate::config::models::Environment;
+        if Environment::from_string(env.as_str()).is_none() {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: {}.", env, Environment::all_names());
         }
     }
     

@@ -118,14 +118,54 @@ async fn start_single_app_process(
         writer.log_path().clone()
     };
     
-    // Step 3: Build environment variables - set Docker context based on environment
-    let mut env_vars = HashMap::new();
+    // Step 3: Build environment variables - inherit parent environment and set Docker context
+    // Start with the current process's environment to inherit PATH, HOME, Docker config, etc.
+    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    
+    // Step 3a: Inject --platform flag for docker/orbstack commands
+    let preferences = load_preferences()?;
+    let mut final_command = match environment.as_str() {
+        "docker" | "orbstack" => {
+            crate::utils::command::inject_docker_platform(&command, &preferences.docker_platform)
+        }
+        _ => command.clone()
+    };
+    
+    // Override/add specific variables based on environment
     match environment.as_str() {
         "docker" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
+            
+            // For Docker, use --env-file flag if .env exists
+            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+                final_command = crate::utils::command::inject_docker_env_file(
+                    &final_command,
+                    &env_file_path
+                );
+            }
+            
+            // Inject dockerfile path for build commands
+            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
+                final_command = crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
+            }
         }
         "orbstack" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
+            
+            // For OrbStack, use --env-file flag (same as Docker)
+            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+                final_command = crate::utils::command::inject_docker_env_file(
+                    &final_command,
+                    &env_file_path
+                );
+            }
+            
+            // Inject dockerfile path for build commands
+            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
+                final_command = crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
+            }
         }
         _ => {}
     }
@@ -134,7 +174,7 @@ async fn start_single_app_process(
     let options = ProcessOptions {
         app_name: app_name.clone(),
         working_dir: working_dir.clone(),
-        command: command.clone(),
+        command: final_command.clone(),
         env_vars,
         detached: true,
         show_output,
@@ -143,7 +183,7 @@ async fn start_single_app_process(
     // Step 4: Display info to the user about what we're doing (unless silent)
     if show_output {
         println!("→ Starting '{}' in {} (environment: {})", app_name, working_dir.display(), environment);
-        println!("  Command: {}", command);
+        println!("  Command: {}", final_command);
         println!("  Log file: {}", log_path.display());
     }
     
@@ -168,7 +208,7 @@ async fn start_single_app_process(
     let process_info = ProcessInfo {
         app_name: app_name.clone(),
         pid: spawned.pid,
-        command,
+        command: final_command,
         working_dir: working_dir.to_string_lossy().to_string(),
         start_time: Utc::now(),
         env_vars: HashMap::new(),
@@ -211,38 +251,19 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         .unwrap_or_else(|| preferences.default_env.clone());
     
     // Step 4: Get the commands HashMap for the selected environment
-    let commands = match environment.as_str() {
-        "local" => resolved_app.app.commands.local.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have 'local' environment configured", app_name)
-        })?,
-        "docker" => resolved_app.app.commands.docker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have 'docker' environment configured", app_name)
-        })?,
-        "orbstack" => resolved_app.app.commands.orbstack.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have 'orbstack' environment configured", app_name)
-        })?,
-        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have 'k8s' environment configured", app_name)
-        })?,
-        _ => anyhow::bail!("Invalid environment '{}'", environment),
-    };
+    let commands = resolved_app.app.commands.get(&environment).ok_or_else(|| {
+        use crate::config::models::Environment;
+        if Environment::from_string(&environment).is_none() {
+            anyhow::anyhow!("Invalid environment '{}'", environment)
+        } else {
+            anyhow::anyhow!("App '{}' does not have '{}' environment configured", app_name, environment)
+        }
+    })?;
     
     // Step 5: Get the default command name for this environment
-    let default_command = match environment.as_str() {
-        "local" => resolved_app.app.defaults.local.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have a default command for 'local' environment", app_name)
-        })?,
-        "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have a default command for 'docker' environment", app_name)
-        })?,
-        "orbstack" => resolved_app.app.defaults.orbstack.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have a default command for 'orbstack' environment", app_name)
-        })?,
-        "k8s" => resolved_app.app.defaults.k8s.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("App '{}' does not have a default command for 'k8s' environment", app_name)
-        })?,
-        _ => unreachable!(),
-    }.clone();
+    let default_command = resolved_app.app.defaults.get(&environment).ok_or_else(|| {
+        anyhow::anyhow!("App '{}' does not have a default command for '{}' environment", app_name, environment)
+    })?.clone();
     
     // Step 6: Look up the actual command string from the commands HashMap
     let command = commands

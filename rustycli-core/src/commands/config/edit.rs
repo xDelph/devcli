@@ -101,8 +101,9 @@ pub async fn config_add_command(
     
     let environment = if let Some(env) = environment {
         // Validate provided environment
-        if !["local", "docker", "k8s"].contains(&env.as_str()) {
-            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        use crate::config::models::Environment;
+        if Environment::from_string(&env).is_none() {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: {}.", env, Environment::all_names());
         }
         env
     } else {
@@ -195,8 +196,9 @@ pub async fn config_remove_command(
     };
     
     let environment = if let Some(env) = environment {
-        if !["local", "docker", "k8s"].contains(&env.as_str()) {
-            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        use crate::config::models::Environment;
+        if Environment::from_string(&env).is_none() {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: {}.", env, Environment::all_names());
         }
         env
     } else {
@@ -318,8 +320,9 @@ pub async fn config_set_default(
     };
     
     let environment = if let Some(env) = environment {
-        if !["local", "docker", "k8s"].contains(&env.as_str()) {
-            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        use crate::config::models::Environment;
+        if Environment::from_string(&env).is_none() {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: {}.", env, Environment::all_names());
         }
         env
     } else {
@@ -423,8 +426,9 @@ pub async fn config_edit_command(
     };
     
     let environment = if let Some(env) = environment {
-        if !["local", "docker", "k8s"].contains(&env.as_str()) {
-            anyhow::bail!("Invalid environment '{}'. Must be one of: local, docker, k8s", env);
+        use crate::config::models::Environment;
+        if Environment::from_string(&env).is_none() {
+            anyhow::bail!("Invalid environment '{}'. Must be one of: {}.", env, Environment::all_names());
         }
         env
     } else {

@@ -216,6 +216,7 @@ fn create_redis_app_from_config(config_path: &std::path::Path, config_filename: 
         suggested_local_default: Some("start".to_string()),
         suggested_docker_default: None,
         suggested_orbstack_default: None,
+        dockerfile_path: None,
     })
 }
 
@@ -249,6 +250,7 @@ fn create_traefik_app_from_config(config_path: &std::path::Path, config_filename
         suggested_local_default: Some("start".to_string()),
         suggested_docker_default: None,
         suggested_orbstack_default: None,
+        dockerfile_path: None,
     })
 }
 
@@ -331,6 +333,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 orbstack: detected.suggested_orbstack_default.clone(),
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
+            dockerfile_path: detected.dockerfile_path.clone(),
         };
         
         // Insert the app into the config
@@ -382,6 +385,7 @@ fn add_to_config(
             orbstack: detected.suggested_orbstack_default,
             k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
+        dockerfile_path: detected.dockerfile_path,
     };
     
     // Insert the app into the config

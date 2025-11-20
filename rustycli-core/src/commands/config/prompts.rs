@@ -97,8 +97,15 @@ pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) ->
     let commands = match environment {
         "local" => app.commands.local.as_ref(),
         "docker" => app.commands.docker.as_ref(),
+        "orbstack" => app.commands.orbstack.as_ref(),
         "k8s" => app.commands.k8s.as_ref(),
-        _ => return Err(anyhow::anyhow!("Invalid environment: {}", environment)),
+        _ => {
+            use crate::config::models::Environment;
+            if Environment::from_string(environment).is_none() {
+                return Err(anyhow::anyhow!("Invalid environment: {}", environment));
+            }
+            return Err(anyhow::anyhow!("Environment '{}' not supported in this context", environment));
+        }
     };
     
     let commands = commands.ok_or_else(|| {

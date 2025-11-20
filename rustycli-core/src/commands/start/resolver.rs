@@ -99,56 +99,32 @@ pub fn validate_and_get_command(
     app_name: &str,
 ) -> Result<(String, String)> {
     // Validate that the chosen environment exists for this app
-    let commands = match environment {
-        "local" => resolved_app.app.commands.local.as_ref().ok_or_else(|| {
+    let commands = resolved_app.app.commands.get(environment).ok_or_else(|| {
+        use crate::config::models::Environment;
+        if Environment::from_string(environment).is_none() {
             anyhow::anyhow!(
-                "App '{}' does not have 'local' environment configured. Available: {}",
+                "Invalid environment '{}'. Must be one of: {}.",
+                environment,
+                Environment::all_names()
+            )
+        } else {
+            anyhow::anyhow!(
+                "App '{}' does not have '{}' environment configured. Available: {}",
                 app_name,
+                environment,
                 get_available_environments(&resolved_app.app)
             )
-        })?,
-        "docker" => resolved_app.app.commands.docker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have 'docker' environment configured. Available: {}",
-                app_name,
-                get_available_environments(&resolved_app.app)
-            )
-        })?,
-        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have 'k8s' environment configured. Available: {}",
-                app_name,
-                get_available_environments(&resolved_app.app)
-            )
-        })?,
-        _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local', 'docker', or 'k8s'.",
-            environment
-        ),
-    };
+        }
+    })?;
     
     // Get the default command name for this environment
-    let default_command = match environment {
-        "local" => resolved_app.app.defaults.local.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have a default command for 'local' environment",
-                app_name
-            )
-        })?.clone(),
-        "docker" => resolved_app.app.defaults.docker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have a default command for 'docker' environment",
-                app_name
-            )
-        })?.clone(),
-        "k8s" => resolved_app.app.defaults.k8s.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have a default command for 'k8s' environment",
-                app_name
-            )
-        })?.clone(),
-        _ => unreachable!(), // We already validated environment above
-    };
+    let default_command = resolved_app.app.defaults.get(environment).ok_or_else(|| {
+        anyhow::anyhow!(
+            "App '{}' does not have a default command for '{}' environment",
+            app_name,
+            environment
+        )
+    })?.clone();
     
     // Look up the actual command string from the commands HashMap
     let command = commands
@@ -169,18 +145,8 @@ pub fn validate_and_get_command(
 /// Helper function to show which environments are configured for an app
 /// Used in error messages to help users understand what's available
 pub fn get_available_environments(app: &crate::config::models::App) -> String {
-    let mut envs = Vec::new();
-    
-    // Check which environments have commands defined
-    if app.commands.local.is_some() {
-        envs.push("local");
-    }
-    if app.commands.docker.is_some() {
-        envs.push("docker");
-    }
-    if app.commands.k8s.is_some() {
-        envs.push("k8s");
-    }
+    // Use the available_envs method from Commands which dynamically checks all environments
+    let envs = app.commands.available_envs();
     
     // Return as comma-separated string, or "none" if empty
     if envs.is_empty() {

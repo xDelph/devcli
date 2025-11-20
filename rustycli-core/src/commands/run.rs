@@ -44,40 +44,23 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     
     // Get the commands for the chosen environment
     // Check if the app has commands defined for this environment
-    let commands = match environment.as_str() {
-        "local" => resolved_app.app.commands.local.as_ref().ok_or_else(|| {
+    let commands = resolved_app.app.commands.get(&environment).ok_or_else(|| {
+        use crate::config::models::Environment;
+        if Environment::from_string(&environment).is_none() {
             anyhow::anyhow!(
-                "App '{}' does not have 'local' environment configured. Available: {}",
+                "Invalid environment '{}'. Must be one of: {}.",
+                environment,
+                Environment::all_names()
+            )
+        } else {
+            anyhow::anyhow!(
+                "App '{}' does not have '{}' environment configured. Available: {}",
                 args.app_name,
+                environment,
                 get_available_environments(&resolved_app.app)
             )
-        })?,
-        "docker" => resolved_app.app.commands.docker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have 'docker' environment configured. Available: {}",
-                args.app_name,
-                get_available_environments(&resolved_app.app)
-            )
-        })?,
-        "orbstack" => resolved_app.app.commands.orbstack.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have 'orbstack' environment configured. Available: {}",
-                args.app_name,
-                get_available_environments(&resolved_app.app)
-            )
-        })?,
-        "k8s" => resolved_app.app.commands.k8s.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' does not have 'k8s' environment configured. Available: {}",
-                args.app_name,
-                get_available_environments(&resolved_app.app)
-            )
-        })?,
-        _ => anyhow::bail!(
-            "Invalid environment '{}'. Must be 'local', 'docker', 'orbstack', or 'k8s'.",
-            environment
-        ),
-    };
+        }
+    })?;
     
     // DIFFERENCE FROM START: Look up the SPECIFIC command variant
     // Instead of using the default, we use the variant provided by the user
@@ -156,14 +139,53 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         writer.log_path().clone()
     };
     
-    // Build environment variables - set Docker context based on environment
-    let mut env_vars = HashMap::new();
+    // Inject --platform flag for docker/orbstack commands
+    let mut final_command = match environment.as_str() {
+        "docker" | "orbstack" => {
+            crate::utils::command::inject_docker_platform(&command, &preferences.docker_platform)
+        }
+        _ => command.clone()
+    };
+    
+    // Build environment variables - inherit parent environment and set Docker context
+    // Start with the current process's environment to inherit PATH, HOME, Docker config, etc.
+    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    
+    // Override/add specific variables based on environment
     match environment.as_str() {
         "docker" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
+            
+            // For Docker, use --env-file flag if .env exists
+            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+                final_command = crate::utils::command::inject_docker_env_file(
+                    &final_command,
+                    &env_file_path
+                );
+            }
+            
+            // Inject dockerfile path for build commands
+            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
+                final_command = crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
+            }
         }
         "orbstack" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
+            
+            // For OrbStack, use --env-file flag (same as Docker)
+            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref()) {
+                final_command = crate::utils::command::inject_docker_env_file(
+                    &final_command,
+                    &env_file_path
+                );
+            }
+            
+            // Inject dockerfile path for build commands
+            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
+                final_command = crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
+            }
         }
         _ => {}
     }
@@ -172,7 +194,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let options = ProcessOptions {
         app_name: process_name.clone(),
         working_dir: working_dir.clone(),
-        command: command.clone(),
+        command: final_command.clone(),
         env_vars,
         detached: true, // Always detached (with setsid)
         show_output: !preferences.detached_mode, // Show output based on preference
@@ -185,7 +207,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         args.command_variant, args.app_name, environment
     );
     println!("Working directory: {}", working_dir.display());
-    println!("Command: {}", command);
+    println!("Command: {}", final_command);
     println!("Log file: {}", log_path.display());
     
     // Spawn the process
@@ -219,7 +241,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let process_info = ProcessInfo {
         app_name: process_name.clone(),
         pid: spawned.pid,
-        command,
+        command: final_command,
         working_dir: working_dir.to_string_lossy().to_string(),
         start_time: Utc::now(),
         env_vars: HashMap::new(),
@@ -247,15 +269,24 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");
         println!("Press Ctrl+C to stop viewing logs (process will continue running)...\n");
         
-        // Wait for Ctrl+C signal
-        let ctrl_c = tokio::signal::ctrl_c();
-        match ctrl_c.await {
-            Ok(()) => {
-                println!("\n\nStopped viewing logs. Process is still running in the background.");
-                println!("Use 'rustycli status' to check process status.");
-            }
-            Err(err) => {
-                println!("Unable to listen for shutdown signal: {}", err);
+        // Poll for process exit or Ctrl+C
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\n\nStopped viewing logs. Process is still running in the background.");
+                    println!("Use 'rustycli status' to check process status.");
+                    break;
+                }
+                _ = interval.tick() => {
+                    // Check if process is still running
+                    if !tracker.is_running(spawned.pid) {
+                        println!("\n\nProcess exited.");
+                        // Clean up the process from tracker
+                        tracker.remove_process(&process_name)?;
+                        break;
+                    }
+                }
             }
         }
     } else {
@@ -268,15 +299,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
 // Helper function to show which environments are configured for an app
 // Used in error messages to help users understand what's available
 fn get_available_environments(app: &crate::config::models::App) -> String {
-    use crate::config::models::Environment;
-    
-    let mut envs = Vec::new();
-    
-    for env_type in Environment::all() {
-        if app.commands.get(env_type.as_str()).is_some() {
-            envs.push(env_type.as_str());
-        }
-    }
+    let envs = app.commands.available_envs();
     
     if envs.is_empty() {
         "none".to_string()

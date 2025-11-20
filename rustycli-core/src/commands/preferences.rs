@@ -18,12 +18,13 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
     // This prevents setting invalid preference keys
     match key.as_str() {
         "default-env" => {
-            // Validate that the value is either "local", "docker", or "orbstack"
-            // Reject any other values
-            if value != "local" && value != "docker" && value != "orbstack" {
+            // Validate that the value is a valid environment
+            use crate::config::models::Environment;
+            if Environment::from_string(value.as_str()).is_none() {
                 anyhow::bail!(
-                    "Invalid value '{}' for default-env. Must be 'local', 'docker', or 'orbstack'.",
-                    value
+                    "Invalid value '{}' for default-env. Must be one of: {}.",
+                    value,
+                    Environment::all_names()
                 );
             }
             
@@ -69,9 +70,24 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
             println!("✓ Set auto-start-deps to '{}'", bool_value);
         }
         
+        "docker-platform" => {
+            // Validate that the value is a valid platform
+            // Common values: linux/amd64, linux/arm64, linux/arm/v7, etc.
+            if !value.starts_with("linux/") && !value.starts_with("darwin/") && !value.starts_with("windows/") {
+                anyhow::bail!(
+                    "Invalid value '{}' for docker-platform. Must be in format 'os/arch' (e.g., 'linux/amd64', 'linux/arm64').",
+                    value
+                );
+            }
+            
+            prefs.docker_platform = value.clone();
+            save_preferences(&prefs)?;
+            println!("✓ Set docker-platform to '{}'", value);
+        }
+        
         // If someone tries to set a key that doesn't exist
         _ => {
-            anyhow::bail!("Unknown preference key '{}'. Valid keys: default-env, detached-mode, auto-start-deps", key);
+            anyhow::bail!("Unknown preference key '{}'. Valid keys: default-env, detached-mode, auto-start-deps, docker-platform", key);
         }
     }
     
@@ -89,6 +105,7 @@ pub async fn pref_show() -> Result<()> {
     println!("  default-env: {}", prefs.default_env);
     println!("  detached-mode: {}", prefs.detached_mode);
     println!("  auto-start-deps: {}", prefs.auto_start_deps);
+    println!("  docker-platform: {}", prefs.docker_platform);
     // Future preferences would be added here:
     // println!("  some-other-pref: {}", prefs.some_other_pref);
     
@@ -110,6 +127,7 @@ pub async fn pref_reset() -> Result<()> {
     println!("  default-env: {}", prefs.default_env);
     println!("  detached-mode: {}", prefs.detached_mode);
     println!("  auto-start-deps: {}", prefs.auto_start_deps);
+    println!("  docker-platform: {}", prefs.docker_platform);
     
     Ok(())
 }

@@ -80,6 +80,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
                 orbstack: detected.suggested_orbstack_default.clone(),
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
+            dockerfile_path: detected.dockerfile_path.clone(),
         };
         
         // Insert the app into the config
