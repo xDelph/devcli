@@ -23,7 +23,6 @@ mod tests {
         for (key, value) in scripts {
             pkg["scripts"][key] = serde_json::json!(value);
         }
-        
         let content = serde_json::to_string_pretty(&pkg).unwrap();
         fs::write(dir.join("package.json"), content).unwrap();
     }
@@ -36,11 +35,11 @@ mod tests {
         // Create package.json with scoped name
         let pkg = serde_json::json!({
             "name": "@myorg/my-package",
-            "version": "1.0.0",
             "scripts": {
                 "start": "node server.js"
             }
         });
+        
         fs::write(
             dir.path().join("package.json"),
             serde_json::to_string_pretty(&pkg).unwrap()
@@ -48,8 +47,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         // Should extract just the package name without scope
         assert_eq!(detected.app_name, "my-package");
     }
@@ -64,6 +63,7 @@ mod tests {
             "name": "no-scripts-app",
             "version": "1.0.0"
         });
+        
         fs::write(
             dir.path().join("package.json"),
             serde_json::to_string_pretty(&pkg).unwrap()
@@ -71,8 +71,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         // Should have app type but no local commands
         assert_eq!(detected.app_type, "nodejs");
         assert!(detected.local_commands.is_none() || detected.local_commands.as_ref().unwrap().is_empty());
@@ -89,8 +89,8 @@ mod tests {
         
         let result = detect_app(&dir_path);
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         // App name should be derived from directory name
         assert!(!detected.app_name.is_empty());
     }
@@ -105,7 +105,6 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         
         // Path should be contracted to use ~ if under home directory
@@ -129,7 +128,6 @@ mod tests {
     #[test]
     fn test_detect_empty_directory() {
         let dir = create_temp_dir();
-        
         let result = detect_app(dir.path());
         assert!(result.is_err());
     }
@@ -148,8 +146,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.suggested_local_default.is_some());
         
         // Should prefer "serve" over "start" for Node.js
@@ -198,8 +196,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.docker_commands.is_some(), "Should find Dockerfile in subdirectory");
     }
 
@@ -219,8 +217,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.k8s_commands.is_some());
         
         // Commands should reference the k8s directory (not individual files)

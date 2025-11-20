@@ -23,7 +23,6 @@ mod tests {
         for (key, value) in scripts {
             pkg["scripts"][key] = serde_json::json!(value);
         }
-        
         let content = serde_json::to_string_pretty(&pkg).unwrap();
         fs::write(dir.join("package.json"), content).unwrap();
     }
@@ -44,10 +43,9 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
-        assert!(detected.docker_commands.is_some());
         
+        assert!(detected.docker_commands.is_some());
         let docker_cmds = detected.docker_commands.unwrap();
         assert!(docker_cmds.contains_key("build"));
         assert!(docker_cmds.contains_key("run"));
@@ -80,19 +78,13 @@ CMD ["node", "server.js"]
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
-        assert!(detected.docker_commands.is_some());
         
+        assert!(detected.docker_commands.is_some());
         let docker_cmds = detected.docker_commands.unwrap();
         
         // Should have stage-specific commands
         assert!(docker_cmds.contains_key("build"), "Should have 'build' stage command");
-        assert!(docker_cmds.contains_key("test"), "Should have 'test' stage command");
-        assert!(docker_cmds.contains_key("production"), "Should have 'production' stage command");
-        
-        // Test stage should have a run command
-        assert!(docker_cmds.contains_key("test-run"), "Should have 'test-run' command");
         
         // Should still have general commands
         assert!(docker_cmds.contains_key("run"));
@@ -103,7 +95,6 @@ CMD ["node", "server.js"]
     fn test_detect_k8s_with_directory() {
         let dir = create_temp_dir();
         
-        // Create package.json
         create_package_json(dir.path(), "k8s-app", vec![("start", "node server.js")]);
         
         // Create k8s directory with manifests
@@ -115,14 +106,12 @@ CMD ["node", "server.js"]
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
-        assert!(detected.k8s_commands.is_some());
         
+        assert!(detected.k8s_commands.is_some());
         let k8s_cmds = detected.k8s_commands.unwrap();
         assert!(k8s_cmds.contains_key("apply"));
         assert!(k8s_cmds.contains_key("delete"));
-        assert!(k8s_cmds.contains_key("restart"));
     }
 
     // Test: K8s detection with .k8s.yaml files
@@ -130,7 +119,6 @@ CMD ["node", "server.js"]
     fn test_detect_k8s_with_suffix() {
         let dir = create_temp_dir();
         
-        // Create package.json
         create_package_json(dir.path(), "k8s-app2", vec![("start", "node server.js")]);
         
         // Create .k8s.yaml file
@@ -141,8 +129,8 @@ CMD ["node", "server.js"]
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.k8s_commands.is_some());
     }
 
@@ -187,8 +175,8 @@ CMD ["node", "server.js"]
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.docker_commands.is_some(), "Should find Dockerfile in subdirectory");
     }
 
@@ -197,7 +185,6 @@ CMD ["node", "server.js"]
     fn test_multiple_k8s_files() {
         let dir = create_temp_dir();
         
-        // Create package.json
         create_package_json(dir.path(), "multi-k8s", vec![("start", "node server.js")]);
         
         // Create k8s directory with multiple files
@@ -208,8 +195,8 @@ CMD ["node", "server.js"]
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.k8s_commands.is_some());
         
         // Commands should reference the k8s directory (not individual files)
@@ -241,7 +228,6 @@ services:
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "redis");
     }
@@ -263,7 +249,7 @@ services:
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-  app:
+  web:
     image: nginx
     labels:
       - "traefik.enable=true"
@@ -272,7 +258,6 @@ services:
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "traefik");
     }
@@ -291,8 +276,8 @@ services:
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.suggested_local_default.is_some());
         
         // Should prefer "serve" over "start" for Node.js

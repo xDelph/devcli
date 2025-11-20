@@ -23,7 +23,6 @@ mod tests {
         for (key, value) in scripts {
             pkg["scripts"][key] = serde_json::json!(value);
         }
-        
         let content = serde_json::to_string_pretty(&pkg).unwrap();
         fs::write(dir.join("package.json"), content).unwrap();
     }
@@ -54,8 +53,8 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         assert!(detected.local_commands.is_some(), "Should have local commands");
         assert!(detected.docker_commands.is_some(), "Should have docker commands");
         assert!(detected.k8s_commands.is_some(), "Should have k8s commands");
@@ -72,7 +71,6 @@ mod tests {
     #[test]
     fn test_detect_empty_directory() {
         let dir = create_temp_dir();
-        
         let result = detect_app(dir.path());
         assert!(result.is_err());
     }
@@ -88,8 +86,8 @@ mod tests {
         
         let result = detect_app(&dir_path);
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         // App name should be derived from directory name
         assert!(!detected.app_name.is_empty());
     }
@@ -104,7 +102,6 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         
         // Path should be contracted to use ~ if under home directory

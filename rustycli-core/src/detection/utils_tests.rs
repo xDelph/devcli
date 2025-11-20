@@ -13,7 +13,7 @@ mod tests {
         let temp_dir = create_test_dir();
         let dockerfile = temp_dir.path().join("Dockerfile");
         fs::write(&dockerfile, "FROM node:16").unwrap();
-
+        
         let result = find_dockerfile(temp_dir.path()).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap(), dockerfile);
@@ -24,7 +24,7 @@ mod tests {
         let temp_dir = create_test_dir();
         let random_file = temp_dir.path().join("random.txt");
         fs::write(&random_file, "not a dockerfile").unwrap();
-
+        
         let result = find_dockerfile(temp_dir.path()).unwrap();
         assert!(result.is_none());
     }
@@ -39,7 +39,7 @@ mod tests {
         let service = k8s_dir.join("service.yml");
         fs::write(&deployment, "apiVersion: apps/v1").unwrap();
         fs::write(&service, "apiVersion: v1").unwrap();
-
+        
         let result = find_k8s_files(temp_dir.path()).unwrap();
         assert_eq!(result.len(), 2);
         assert!(result.contains(&"k8s/deployment.yaml".to_string()));
@@ -51,7 +51,7 @@ mod tests {
         let temp_dir = create_test_dir();
         let random_file = temp_dir.path().join("random.txt");
         fs::write(&random_file, "not k8s related").unwrap();
-
+        
         let result = find_k8s_files(temp_dir.path()).unwrap();
         assert!(result.is_empty());
     }

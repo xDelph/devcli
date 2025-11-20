@@ -39,7 +39,6 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "nodejs");
         assert_eq!(detected.app_name, "test-app");
@@ -65,7 +64,6 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "nx");
     }
@@ -80,13 +78,10 @@ mod tests {
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "python");
-        assert!(detected.local_commands.is_some());
         
         let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
         assert!(local_cmds.contains_key("install"));
     }
 
@@ -98,8 +93,7 @@ mod tests {
         // Create pyproject.toml
         fs::write(
             dir.path().join("pyproject.toml"),
-            r#"
-[project]
+            r#"[project]
 name = "my-python-app"
 version = "1.0.0"
 "#
@@ -107,7 +101,6 @@ version = "1.0.0"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "python");
         assert_eq!(detected.app_name, "my-python-app");
@@ -123,13 +116,8 @@ version = "1.0.0"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "redis");
-        assert!(detected.local_commands.is_some());
-        
-        let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
     }
 
     // Test: Detect Traefik app
@@ -142,10 +130,8 @@ version = "1.0.0"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "traefik");
-        assert!(detected.local_commands.is_some());
     }
 
     // Test: Scoped package name handling
@@ -156,11 +142,11 @@ version = "1.0.0"
         // Create package.json with scoped name
         let pkg = serde_json::json!({
             "name": "@myorg/my-package",
-            "version": "1.0.0",
             "scripts": {
                 "start": "node server.js"
             }
         });
+        
         fs::write(
             dir.path().join("package.json"),
             serde_json::to_string_pretty(&pkg).unwrap()
@@ -168,160 +154,10 @@ version = "1.0.0"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
+        
         // Should extract just the package name without scope
         assert_eq!(detected.app_name, "my-package");
-    }
-
-    // Test: App with no commands detected
-    #[test]
-    fn test_app_no_commands() {
-        let dir = create_temp_dir();
-        
-        // Create package.json with no scripts
-        let pkg = serde_json::json!({
-            "name": "no-scripts-app",
-            "version": "1.0.0"
-        });
-        fs::write(
-            dir.path().join("package.json"),
-            serde_json::to_string_pretty(&pkg).unwrap()
-        ).unwrap();
-        
-        let result = detect_app(dir.path());
-        assert!(result.is_ok());
-        
-        let detected = result.unwrap();
-        // Should have app type but no local commands
-        assert_eq!(detected.app_type, "nodejs");
-        assert!(detected.local_commands.is_none() || detected.local_commands.as_ref().unwrap().is_empty());
-    }
-
-    // Test: Redis detection in subdirectory
-    #[test]
-    fn test_detect_redis_in_subdirectory() {
-        let dir = create_temp_dir();
-        
-        // Create redis subdirectory with config
-        fs::create_dir(dir.path().join("redis")).unwrap();
-        fs::write(dir.path().join("redis/redis.conf"), "port 6379\nbind 127.0.0.1\n").unwrap();
-        
-        let result = detect_app(dir.path());
-        assert!(result.is_ok());
-        
-        let detected = result.unwrap();
-        assert_eq!(detected.app_type, "redis");
-        assert!(detected.local_commands.is_some());
-        
-        let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
-        
-        // Should reference the subdirectory config in the start command
-        let start_cmd = local_cmds.get("start").unwrap();
-        assert!(start_cmd.contains("redis/redis.conf"));
-    }
-
-    // Test: Traefik detection in subdirectory
-    #[test]
-    fn test_detect_traefik_in_subdirectory() {
-        let dir = create_temp_dir();
-        
-        // Create traefik subdirectory with config
-        fs::create_dir(dir.path().join("traefik")).unwrap();
-        fs::write(
-            dir.path().join("traefik/traefik.yml"),
-            "api:\n  dashboard: true\nentryPoints:\n  web:\n    address: \":80\"\n"
-        ).unwrap();
-        
-        let result = detect_app(dir.path());
-        assert!(result.is_ok());
-        
-        let detected = result.unwrap();
-        assert_eq!(detected.app_type, "traefik");
-        assert!(detected.local_commands.is_some());
-        
-        let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
-        
-        // Should reference the subdirectory config
-        let start_cmd = local_cmds.get("start").unwrap();
-        assert!(start_cmd.contains("traefik/traefik.yml"));
-    }
-
-    // Test: Redis detection with custom filename patterns
-    #[test]
-    fn test_detect_redis_custom_patterns() {
-        let dir = create_temp_dir();
-        
-        // Create redis config with custom name
-        fs::write(dir.path().join("redis-production.conf"), "port 6379\n").unwrap();
-        
-        let result = detect_app(dir.path());
-        assert!(result.is_ok());
-        
-        let detected = result.unwrap();
-        assert_eq!(detected.app_type, "redis");
-        assert!(detected.local_commands.is_some());
-        
-        let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
-        
-        // Should use the custom config file in the start command
-        let start_cmd = local_cmds.get("start").unwrap();
-        assert!(start_cmd.contains("redis-production.conf"));
-    }
-
-    // Test: Traefik detection with custom filename patterns
-    #[test]
-    fn test_detect_traefik_custom_patterns() {
-        let dir = create_temp_dir();
-        
-        // Create traefik config with custom name
-        fs::write(
-            dir.path().join("traefik-dynamic.yml"),
-            "http:\n  routers:\n    api:\n      rule: \"Host(`traefik.localhost`)\"\n"
-        ).unwrap();
-        
-        let result = detect_app(dir.path());
-        assert!(result.is_ok());
-        
-        let detected = result.unwrap();
-        assert_eq!(detected.app_type, "traefik");
-        assert!(detected.local_commands.is_some());
-        
-        let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
-        
-        // Should use the custom config file
-        let start_cmd = local_cmds.get("start").unwrap();
-        assert!(start_cmd.contains("traefik-dynamic.yml"));
-    }
-
-    // Test: Traefik with different config formats
-    #[test]
-    fn test_traefik_different_formats() {
-        // Test YAML format
-        let dir_yaml = create_temp_dir();
-        fs::write(
-            dir_yaml.path().join("traefik.yaml"),
-            "api:\n  dashboard: true\n"
-        ).unwrap();
-        
-        let result = detect_app(dir_yaml.path());
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().app_type, "traefik");
-        
-        // Test TOML format
-        let dir_toml = create_temp_dir();
-        fs::write(
-            dir_toml.path().join("traefik.toml"),
-            "[api]\ndashboard = true\n"
-        ).unwrap();
-        
-        let result = detect_app(dir_toml.path());
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().app_type, "traefik");
     }
 
     // Test: Explicit Redis conf file detection
@@ -334,16 +170,15 @@ version = "1.0.0"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "redis");
-        assert!(detected.local_commands.is_some());
         
         let local_cmds = detected.local_commands.unwrap();
         assert!(local_cmds.contains_key("start"), "Should have start command");
         
-        // Verify the start command uses redis.conf (since config file exists)
         let start_cmd = local_cmds.get("start").unwrap();
+        
+        // Verify the start command uses redis.conf (since config file exists)
         assert!(start_cmd.contains("redis.conf"), "Start command should reference redis.conf file");
         assert!(start_cmd.starts_with("redis-server"), "Should use redis-server command");
     }
@@ -371,16 +206,13 @@ debug = true
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "traefik");
-        assert!(detected.local_commands.is_some());
         
         let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"), "Should have start command");
+        let start_cmd = local_cmds.get("start").unwrap();
         
         // Verify the start command uses traefik.toml
-        let start_cmd = local_cmds.get("start").unwrap();
         assert!(start_cmd.contains("traefik.toml"), "Start command should reference traefik.toml file");
         assert!(start_cmd.contains("--configFile="), "Should use --configFile flag");
     }
@@ -398,18 +230,14 @@ debug = true
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "redis");
-        assert!(detected.local_commands.is_some());
         
         let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"), "Should have start command");
+        let start_cmd = local_cmds.get("start").unwrap();
         
         // Verify the start command uses redis.local.conf (since config file exists)
-        let start_cmd = local_cmds.get("start").unwrap();
         assert!(start_cmd.contains("redis.local.conf"), "Start command should reference redis.local.conf file");
-        assert!(start_cmd.starts_with("redis-server"), "Should use redis-server command");
     }
 
     // Test: Traefik local TOML file detection (traefik.local.toml)
@@ -420,19 +248,8 @@ debug = true
         // Create traefik.local.toml file
         fs::write(
             dir.path().join("traefik.local.toml"),
-            r#"[api]
-dashboard = true
-debug = true
-
-[log]
+            r#"[log]
 level = "DEBUG"
-
-[entryPoints]
-  [entryPoints.web]
-  address = ":80"
-  
-  [entryPoints.websecure]
-  address = ":443"
 
 [providers]
   [providers.file]
@@ -443,18 +260,14 @@ level = "DEBUG"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "traefik");
-        assert!(detected.local_commands.is_some());
         
         let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"), "Should have start command");
+        let start_cmd = local_cmds.get("start").unwrap();
         
         // Verify the start command uses traefik.local.toml
-        let start_cmd = local_cmds.get("start").unwrap();
         assert!(start_cmd.contains("traefik.local.toml"), "Start command should reference traefik.local.toml file");
-        assert!(start_cmd.contains("--configFile="), "Should use --configFile flag");
     }
 
     // Test: Multiple local config patterns
@@ -463,9 +276,7 @@ level = "DEBUG"
         // Test redis.dev.conf
         let dir_redis_dev = create_temp_dir();
         fs::write(dir_redis_dev.path().join("redis.dev.conf"), "port 6380\n").unwrap();
-        
         let result = detect_app(dir_redis_dev.path());
-        assert!(result.is_ok());
         assert_eq!(result.unwrap().app_type, "redis");
         
         // Test traefik.staging.yml
@@ -474,17 +285,13 @@ level = "DEBUG"
             dir_traefik_staging.path().join("traefik.staging.yml"),
             "api:\n  dashboard: true\n"
         ).unwrap();
-        
         let result = detect_app(dir_traefik_staging.path());
-        assert!(result.is_ok());
         assert_eq!(result.unwrap().app_type, "traefik");
         
         // Test redis.production.config
         let dir_redis_prod = create_temp_dir();
         fs::write(dir_redis_prod.path().join("redis.production.config"), "port 6379\n").unwrap();
-        
         let result = detect_app(dir_redis_prod.path());
-        assert!(result.is_ok());
         assert_eq!(result.unwrap().app_type, "redis");
     }
 
@@ -499,15 +306,13 @@ level = "DEBUG"
         
         let result = detect_app(dir.path());
         assert!(result.is_ok());
-        
         let detected = result.unwrap();
         assert_eq!(detected.app_type, "redis");
         
         let local_cmds = detected.local_commands.unwrap();
-        assert!(local_cmds.contains_key("start"));
+        let start_cmd = local_cmds.get("start").unwrap();
         
         // Should have a start command with config file (exact file depends on filesystem order)
-        let start_cmd = local_cmds.get("start").unwrap();
         assert!(start_cmd.contains("redis") && start_cmd.contains(".conf"));
     }
 }

@@ -21,7 +21,7 @@ mod tests {
                 "test": "jest"
             }
         }"#).unwrap();
-
+        
         let result = detect_local_commands(temp_dir.path(), "nodejs").unwrap().unwrap();
         assert_eq!(result.get("start"), Some(&"npm run start".to_string()));
         assert_eq!(result.get("build"), Some(&"npm run build".to_string()));
@@ -33,7 +33,7 @@ mod tests {
         let mut commands = HashMap::new();
         commands.insert("serve".to_string(), "npm run serve".to_string());
         commands.insert("build".to_string(), "npm run build".to_string());
-
+        
         let result = suggest_local_default("nodejs", &Some(commands));
         assert_eq!(result, Some("serve".to_string()));
     }
