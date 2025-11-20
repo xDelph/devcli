@@ -49,7 +49,7 @@ impl Environment {
     }
 
     /// Parse from string key
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s {
             "local" => Some(Environment::Local),
             "docker" => Some(Environment::Docker),
@@ -57,6 +57,16 @@ impl Environment {
             "k8s" => Some(Environment::K8s),
             _ => None,
         }
+    }
+
+    /// Returns a comma-separated list of all valid environment names
+    /// Used in error messages
+    pub fn all_names() -> String {
+        Self::all()
+            .iter()
+            .map(|e| e.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -105,6 +115,12 @@ pub struct App {
     
     // Which commands to use by default for each environment
     pub defaults: Defaults,
+    
+    // Path to Dockerfile relative to app path (e.g., "Dockerfile", "docker/Dockerfile")
+    // Used to determine which .env file to use (prioritizes .env at Dockerfile level)
+    // OPTIONAL: Only set if Dockerfile exists
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dockerfile_path: Option<String>,
 }
 
 // Commands for different environments
@@ -167,6 +183,25 @@ impl Commands {
             _ => None,
         }
     }
+
+    /// Returns all environment keys that have commands defined, in a consistent order
+    pub fn available_envs(&self) -> Vec<&'static str> {
+        let mut envs = Vec::new();
+        // Check in a consistent order
+        if self.local.is_some() {
+            envs.push("local");
+        }
+        if self.docker.is_some() {
+            envs.push("docker");
+        }
+        if self.orbstack.is_some() {
+            envs.push("orbstack");
+        }
+        if self.k8s.is_some() {
+            envs.push("k8s");
+        }
+        envs
+    }
 }
 
 // Represents a dependency on another app
@@ -207,6 +242,30 @@ pub struct Defaults {
     pub k8s: Option<String>,
 }
 
+impl Defaults {
+    /// Get default command for a specific environment
+    pub fn get(&self, env: &str) -> Option<&String> {
+        match env {
+            "local" => self.local.as_ref(),
+            "docker" => self.docker.as_ref(),
+            "orbstack" => self.orbstack.as_ref(),
+            "k8s" => self.k8s.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get mutable default command for a specific environment
+    pub fn get_mut(&mut self, env: &str) -> &mut Option<String> {
+        match env {
+            "local" => &mut self.local,
+            "docker" => &mut self.docker,
+            "orbstack" => &mut self.orbstack,
+            "k8s" => &mut self.k8s,
+            _ => &mut self.local, // Fallback (shouldn't happen)
+        }
+    }
+}
+
 // User preferences stored in ~/.rustycli/preferences.json
 // These are personal settings that don't belong in the main config
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +287,12 @@ pub struct Preferences {
     // false = error and require manual start or --skip-deps flag
     #[serde(default = "default_auto_start_deps")]
     pub auto_start_deps: bool,
+    
+    // Docker platform to use for docker and orbstack commands
+    // Default: "linux/amd64" for cross-platform compatibility
+    // Can be set to "linux/arm64" for ARM-based systems
+    #[serde(default = "default_docker_platform")]
+    pub docker_platform: String,
 }
 
 // Helper function called by serde when default_env is missing from JSON
@@ -247,6 +312,12 @@ fn default_auto_start_deps() -> bool {
     true
 }
 
+// Helper function: default docker platform is linux/amd64
+// This ensures compatibility across different architectures
+fn default_docker_platform() -> String {
+    "linux/amd64".to_string()
+}
+
 // Implement the Default trait for Preferences
 // This allows creating a Preferences with default values using Preferences::default()
 impl Default for Preferences {
@@ -255,6 +326,7 @@ impl Default for Preferences {
             default_env: "local".to_string(),
             detached_mode: false,
             auto_start_deps: true,
+            docker_platform: "linux/amd64".to_string(),
         }
     }
 }

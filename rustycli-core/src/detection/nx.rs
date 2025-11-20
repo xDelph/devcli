@@ -153,6 +153,16 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         }
     });
     
+    // Find Dockerfile path (relative to app path) if it exists
+    let dockerfile_path = if let Ok(Some(dockerfile)) = crate::detection::utils::find_dockerfile(app_path) {
+        // Convert to relative path from app root
+        dockerfile.strip_prefix(app_path)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    
     // Build and return the detection result for this Nx app
     Ok(DetectedApp {
         app_type: "nx".to_string(),
@@ -165,6 +175,7 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         suggested_local_default,
         suggested_docker_default,
         suggested_orbstack_default: None,
+        dockerfile_path,
     })
 }
 
@@ -251,6 +262,16 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         }
     });
     
+    // Find Dockerfile path (relative to workspace root) if it exists
+    let dockerfile_path = if let Ok(Some(dockerfile)) = crate::detection::utils::find_dockerfile(workspace_root) {
+        // Convert to relative path from workspace root
+        dockerfile.strip_prefix(workspace_root)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    
     // Build and return the detection result for the workspace
     Ok(DetectedApp {
         app_type: "nx-workspace".to_string(),
@@ -263,6 +284,7 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         suggested_local_default,
         suggested_docker_default,
         suggested_orbstack_default: None,
+        dockerfile_path,
     })
 }
 

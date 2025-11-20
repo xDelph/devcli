@@ -10,19 +10,41 @@ use std::path::PathBuf;
 
 // Get the full path to the config file
 // Returns: ~/.rustycli/config.json
+// For testing: Can be overridden with RUSTYCLI_CONFIG_DIR environment variable
 pub fn get_config_path() -> Result<PathBuf> {
+    // Check for test override first
+    if let Ok(config_dir) = env::var("RUSTYCLI_CONFIG_DIR") {
+        let path = PathBuf::from(config_dir).join("config.json");
+        // Ensure parent directory exists for tests
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        return Ok(path);
+    }
+    
     // env::var("HOME") gets the HOME environment variable
     // ? operator returns early if there's an error
     let home = env::var("HOME")?;
     
-    // Build the path: ~/. rustycli/config.json
+    // Build the path: ~/.rustycli/config.json
     // .join() appends path segments in a platform-independent way
     Ok(PathBuf::from(home).join(".rustycli").join("config.json"))
 }
 
 // Get the full path to the preferences file
 // Returns: ~/.rustycli/preferences.json
+// For testing: Can be overridden with RUSTYCLI_CONFIG_DIR environment variable
 pub fn get_preferences_path() -> Result<PathBuf> {
+    // Check for test override first
+    if let Ok(config_dir) = env::var("RUSTYCLI_CONFIG_DIR") {
+        let path = PathBuf::from(config_dir).join("preferences.json");
+        // Ensure parent directory exists for tests
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        return Ok(path);
+    }
+    
     let home = env::var("HOME")?;
     Ok(PathBuf::from(home)
         .join(".rustycli")

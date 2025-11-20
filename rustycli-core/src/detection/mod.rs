@@ -29,7 +29,7 @@ use std::path::Path;
 
 // Re-export main functions to maintain public API
 pub use app_types::{detect_app_type, extract_app_name};
-pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands, detect_orbstack_commands};
+pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands, detect_orbstack_commands, load_env_vars_for_runtime, find_env_file};
 pub use environments::local::suggest_local_default;
 pub use environments::docker::suggest_docker_default;
 pub use environments::orbstack::suggest_orbstack_default;
@@ -49,6 +49,7 @@ pub struct DetectedApp {
     pub suggested_local_default: Option<String>,          // Suggested default local command
     pub suggested_docker_default: Option<String>,         // Suggested default docker command
     pub suggested_orbstack_default: Option<String>,       // Suggested default orbstack command
+    pub dockerfile_path: Option<String>,                  // Relative path to Dockerfile (e.g., "docker/Dockerfile")
 }
 
 /// Main detection function for a single app
@@ -77,6 +78,16 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
     let suggested_docker_default = suggest_docker_default(&docker_commands);
     let suggested_orbstack_default = suggest_orbstack_default(&orbstack_commands);
     
+    // Find Dockerfile path (relative to app path) if it exists
+    let dockerfile_path = if let Ok(Some(dockerfile)) = utils::find_dockerfile(path) {
+        // Convert to relative path from app root
+        dockerfile.strip_prefix(path)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    
     // Build and return the complete detection result
     Ok(DetectedApp {
         app_type,
@@ -89,6 +100,7 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
         suggested_local_default,
         suggested_docker_default,
         suggested_orbstack_default,
+        dockerfile_path,
     })
 }
 
