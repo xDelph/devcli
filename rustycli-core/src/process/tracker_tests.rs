@@ -43,7 +43,6 @@ mod tests {
         // Retrieve
         let retrieved = tracker.get_process(&unique_name).unwrap();
         assert!(retrieved.is_some());
-        
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.app_name, unique_name);
         assert_eq!(retrieved.pid, 12345);
@@ -57,7 +56,6 @@ mod tests {
     #[test]
     fn test_get_nonexistent_process() {
         let tracker = ProcessTracker::new().unwrap();
-        
         let result = tracker.get_process("nonexistent").unwrap();
         assert!(result.is_none());
     }
@@ -82,6 +80,11 @@ mod tests {
             let retrieved = tracker.get_process(&format!("app-{}", i)).unwrap();
             assert!(retrieved.is_some());
         }
+        
+        // Cleanup
+        for i in 1..=3 {
+            tracker.remove_process(&format!("app-{}", i)).unwrap();
+        }
     }
 
     // Test: Overwrite existing process
@@ -100,6 +103,9 @@ mod tests {
         // Should have new PID
         let retrieved = tracker.get_process("test-app").unwrap().unwrap();
         assert_eq!(retrieved.pid, 22222);
+        
+        // Cleanup
+        tracker.remove_process("test-app").unwrap();
     }
 
     // Test: Remove process
@@ -218,7 +224,6 @@ mod tests {
         
         // Should deserialize with defaults for optional fields
         let process: ProcessInfo = serde_json::from_str(json).unwrap();
-        
         assert_eq!(process.app_name, "minimal-app");
         assert_eq!(process.pid, 11111);
         assert_eq!(process.project, None);
@@ -238,7 +243,6 @@ mod tests {
             tracker.register_process(process).unwrap();
         }
         
-        // List all processes
         let processes = tracker.list_processes().unwrap();
         
         // Should contain our test processes
@@ -246,7 +250,6 @@ mod tests {
             .iter()
             .filter(|p| p.app_name.starts_with("list-test-"))
             .collect();
-        
         assert_eq!(test_processes.len(), 5);
         
         // Clean up
@@ -307,10 +310,11 @@ mod tests {
     // Test: Very long working directory path
     #[test]
     fn test_long_working_directory() {
+        let tracker = ProcessTracker::new().unwrap();
+        
         let mut process = create_test_process("long-path", 50000);
         process.working_dir = "/very/long/path/that/goes/deep/into/the/filesystem/structure/for/testing/purposes".to_string();
         
-        let tracker = ProcessTracker::new().unwrap();
         tracker.register_process(process).unwrap();
         
         let retrieved = tracker.get_process("long-path").unwrap().unwrap();
@@ -322,6 +326,8 @@ mod tests {
     // Test: Process with many environment variables
     #[test]
     fn test_many_env_vars() {
+        let tracker = ProcessTracker::new().unwrap();
+        
         let mut env_vars = HashMap::new();
         for i in 0..100 {
             env_vars.insert(format!("VAR_{}", i), format!("value_{}", i));
@@ -330,7 +336,6 @@ mod tests {
         let mut process = create_test_process("many-vars", 60000);
         process.env_vars = env_vars;
         
-        let tracker = ProcessTracker::new().unwrap();
         tracker.register_process(process).unwrap();
         
         let retrieved = tracker.get_process("many-vars").unwrap().unwrap();
@@ -354,4 +359,3 @@ mod tests {
         tracker.remove_process("default-test").unwrap();
     }
 }
-
