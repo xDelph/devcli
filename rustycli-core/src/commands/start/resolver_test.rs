@@ -14,12 +14,15 @@ mod tests {
             commands: Commands {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         }
@@ -50,12 +53,15 @@ mod tests {
             commands: Commands {
                 local: Some(HashMap::new()),
                 docker: Some(HashMap::new()),
+                orbstack: None,
                 k8s: Some(HashMap::new()),
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -72,12 +78,15 @@ mod tests {
             commands: Commands {
                 local: Some(HashMap::new()),
                 docker: Some(HashMap::new()),
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -88,43 +97,14 @@ mod tests {
 
     #[test]
     fn test_get_available_environments_none() {
-        let app = App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(),
-            commands: Commands {
-                local: None,
-                docker: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                k8s: None,
-            },
-        };
-        
+        let app = create_test_app();
         let result = super::super::resolver::get_available_environments(&app);
         assert_eq!(result, "none");
     }
 
     #[test]
     fn test_validate_and_get_command_invalid_environment() {
-        let app = App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(),
-            commands: Commands {
-                local: None,
-                docker: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                k8s: None,
-            },
-        };
+        let app = create_test_app();
         let resolved_app = ResolvedApp {
             app,
             app_name: "test-app".to_string(),

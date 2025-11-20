@@ -15,7 +15,6 @@ mod tests {
     #[test]
     fn test_empty_started_apps() {
         let started_apps: Vec<String> = vec![];
-        
         // Test empty list handling
         assert_eq!(started_apps.len(), 0);
     }
@@ -23,7 +22,6 @@ mod tests {
     #[test]
     fn test_single_started_app() {
         let started_apps = ["single-app".to_string()];
-        
         assert_eq!(started_apps.len(), 1);
         assert_eq!(started_apps[0], "single-app");
     }

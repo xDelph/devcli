@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-
     use super::super::resolver::*;
     use crate::config::models::*;
     use crate::config::resolver::ResolvedApp;
@@ -18,12 +17,15 @@ mod tests {
             commands: Commands {
                 local: Some(commands),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -44,7 +46,6 @@ mod tests {
     #[test]
     fn test_app_to_start_structure() {
         let app_to_start = create_test_app_to_start("test-app", "test-project");
-        
         assert_eq!(app_to_start.resolved_app.app_name, "test-app");
         assert_eq!(app_to_start.resolved_app.project, "test-project");
         assert_eq!(app_to_start.command, "npm start");
@@ -55,7 +56,6 @@ mod tests {
     fn test_empty_apps_to_start() {
         // Test that empty apps list doesn't cause issues
         let apps_to_start: Vec<AppToStart> = vec![];
-        
         // This should not panic or cause issues
         assert_eq!(apps_to_start.len(), 0);
     }
