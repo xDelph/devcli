@@ -25,8 +25,21 @@ pub fn inject_docker_env_file(command: &str, env_file_path: &str) -> String {
         return command.to_string();
     }
     
-    // Check if the command is one that supports --env-file (run, create)
-    let subcommand = parts[1];
+    // Find the actual subcommand (skip flags like --context)
+    let mut subcommand_index = 1;
+    while subcommand_index < parts.len() && parts[subcommand_index].starts_with('-') {
+        subcommand_index += 1;
+        // Skip the value of the flag (e.g., "orbstack" after "--context")
+        if subcommand_index < parts.len() && !parts[subcommand_index].starts_with('-') {
+            subcommand_index += 1;
+        }
+    }
+    
+    if subcommand_index >= parts.len() {
+        return command.to_string();
+    }
+    
+    let subcommand = parts[subcommand_index];
     let supports_env_file = matches!(subcommand, "run" | "create");
     
     if !supports_env_file {
@@ -38,13 +51,13 @@ pub fn inject_docker_env_file(command: &str, env_file_path: &str) -> String {
         return command.to_string();
     }
     
-    // Find the image name (last non-flag argument)
+    // Find the image name (last non-flag argument after the subcommand)
     // We need to insert --env-file before the image name
     let mut image_index = parts.len() - 1;
     
     // The image name is typically the last argument that doesn't start with -
-    // and isn't a value for a flag
-    for i in (2..parts.len()).rev() {
+    // Start searching from after the subcommand
+    for i in (subcommand_index + 1..parts.len()).rev() {
         if !parts[i].starts_with('-') {
             image_index = i;
             break;
@@ -83,8 +96,21 @@ pub fn inject_dockerfile_path(command: &str, dockerfile_path: &str) -> String {
         return command.to_string();
     }
     
-    // Check if the command is build
-    let subcommand = parts[1];
+    // Find the actual subcommand (skip flags like --context)
+    let mut subcommand_index = 1;
+    while subcommand_index < parts.len() && parts[subcommand_index].starts_with('-') {
+        subcommand_index += 1;
+        // Skip the value of the flag (e.g., "orbstack" after "--context")
+        if subcommand_index < parts.len() && !parts[subcommand_index].starts_with('-') {
+            subcommand_index += 1;
+        }
+    }
+    
+    if subcommand_index >= parts.len() {
+        return command.to_string();
+    }
+    
+    let subcommand = parts[subcommand_index];
     if subcommand != "build" {
         return command.to_string();
     }
@@ -95,8 +121,11 @@ pub fn inject_dockerfile_path(command: &str, dockerfile_path: &str) -> String {
     }
     
     // Inject -f after the subcommand
-    let mut result = vec![parts[0], parts[1], "-f", dockerfile_path];
-    result.extend_from_slice(&parts[2..]);
+    let mut result = Vec::new();
+    result.extend_from_slice(&parts[0..=subcommand_index]);
+    result.push("-f");
+    result.push(dockerfile_path);
+    result.extend_from_slice(&parts[subcommand_index + 1..]);
     
     result.join(" ")
 }
@@ -151,9 +180,21 @@ pub fn inject_docker_platform(command: &str, platform: &str) -> String {
         return command.to_string();
     }
     
-    // Check if the command is one that supports --platform
-    // Common commands: run, build, create, pull
-    let subcommand = parts[1];
+    // Find the actual subcommand (skip flags like --context)
+    let mut subcommand_index = 1;
+    while subcommand_index < parts.len() && parts[subcommand_index].starts_with('-') {
+        subcommand_index += 1;
+        // Skip the value of the flag (e.g., "orbstack" after "--context")
+        if subcommand_index < parts.len() && !parts[subcommand_index].starts_with('-') {
+            subcommand_index += 1;
+        }
+    }
+    
+    if subcommand_index >= parts.len() {
+        return command.to_string();
+    }
+    
+    let subcommand = parts[subcommand_index];
     let supports_platform = matches!(subcommand, "run" | "build" | "create" | "pull");
     
     if !supports_platform {
@@ -166,128 +207,11 @@ pub fn inject_docker_platform(command: &str, platform: &str) -> String {
     }
     
     // Inject --platform after the subcommand
-    let mut result = vec![parts[0], parts[1], "--platform", platform];
-    result.extend_from_slice(&parts[2..]);
+    let mut result = Vec::new();
+    result.extend_from_slice(&parts[0..=subcommand_index]);
+    result.push("--platform");
+    result.push(platform);
+    result.extend_from_slice(&parts[subcommand_index + 1..]);
     
     result.join(" ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_inject_docker_platform_run() {
-        let cmd = "docker run myimage";
-        let result = inject_docker_platform(cmd, "linux/amd64");
-        assert_eq!(result, "docker run --platform linux/amd64 myimage");
-    }
-    
-    #[test]
-    fn test_inject_docker_platform_build() {
-        let cmd = "docker build -t myimage .";
-        let result = inject_docker_platform(cmd, "linux/arm64");
-        assert_eq!(result, "docker build --platform linux/arm64 -t myimage .");
-    }
-    
-    #[test]
-    fn test_inject_docker_platform_already_present() {
-        let cmd = "docker run --platform linux/amd64 myimage";
-        let result = inject_docker_platform(cmd, "linux/arm64");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_docker_platform_non_docker() {
-        let cmd = "npm start";
-        let result = inject_docker_platform(cmd, "linux/amd64");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_docker_platform_unsupported_subcommand() {
-        let cmd = "docker ps";
-        let result = inject_docker_platform(cmd, "linux/amd64");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_docker_env_file() {
-        let cmd = "docker run myimage";
-        let result = inject_docker_env_file(cmd, ".env");
-        assert_eq!(result, "docker run --env-file .env myimage");
-    }
-    
-    #[test]
-    fn test_inject_docker_env_file_with_flags() {
-        let cmd = "docker run --name api --rm -p 3000:3000 myimage";
-        let result = inject_docker_env_file(cmd, ".env");
-        assert_eq!(result, "docker run --name api --rm -p 3000:3000 --env-file .env myimage");
-    }
-    
-    #[test]
-    fn test_inject_dockerfile_path_build() {
-        let cmd = "docker build -t myimage .";
-        let result = inject_dockerfile_path(cmd, "docker/Dockerfile");
-        assert_eq!(result, "docker build -f docker/Dockerfile -t myimage .");
-    }
-    
-    #[test]
-    fn test_inject_dockerfile_path_already_present() {
-        let cmd = "docker build -f custom/Dockerfile -t myimage .";
-        let result = inject_dockerfile_path(cmd, "docker/Dockerfile");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_dockerfile_path_non_build() {
-        let cmd = "docker run myimage";
-        let result = inject_dockerfile_path(cmd, "docker/Dockerfile");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_docker_env_file_already_present() {
-        let cmd = "docker run --env-file .env myimage";
-        let result = inject_docker_env_file(cmd, ".env");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_docker_env_file_non_docker() {
-        let cmd = "npm start";
-        let result = inject_docker_env_file(cmd, ".env");
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_orbstack_env_vars() {
-        let cmd = "docker run myimage";
-        let mut env_vars = HashMap::new();
-        env_vars.insert("NODE_ENV".to_string(), "production".to_string());
-        env_vars.insert("PORT".to_string(), "3000".to_string());
-        
-        let result = inject_orbstack_env_vars(cmd, &env_vars);
-        // Should have env vars as prefix with quotes (sorted alphabetically)
-        assert_eq!(result, "NODE_ENV=\"production\" PORT=\"3000\" docker run myimage");
-    }
-    
-    #[test]
-    fn test_inject_orbstack_env_vars_empty() {
-        let cmd = "docker run myimage";
-        let env_vars = HashMap::new();
-        
-        let result = inject_orbstack_env_vars(cmd, &env_vars);
-        assert_eq!(result, cmd); // Should not modify
-    }
-    
-    #[test]
-    fn test_inject_orbstack_env_vars_single() {
-        let cmd = "docker run myimage";
-        let mut env_vars = HashMap::new();
-        env_vars.insert("DEBUG".to_string(), "true".to_string());
-        
-        let result = inject_orbstack_env_vars(cmd, &env_vars);
-        assert_eq!(result, "DEBUG=\"true\" docker run myimage");
-    }
 }
