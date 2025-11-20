@@ -14,7 +14,6 @@ mod edit_tests {
         
         let mut projects = HashMap::new();
         let mut apps = HashMap::new();
-        
         let mut local_commands = HashMap::new();
         local_commands.insert("start".to_string(), "npm start".to_string());
         local_commands.insert("test".to_string(), "npm test".to_string());
@@ -25,19 +24,21 @@ mod edit_tests {
             commands: Commands {
                 local: Some(local_commands),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![],
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
         
         apps.insert("test-app".to_string(), app);
         projects.insert("test-project".to_string(), Project { apps });
-        
         Config { projects }
     }
 
@@ -109,9 +110,10 @@ mod edit_tests {
         let app = config.projects.get_mut("test-project").unwrap()
             .apps.get_mut("test-app").unwrap();
         
+        let local_commands = app.commands.local.as_ref().unwrap();
+        
         // Test that default exists in commands
         let default_local = app.defaults.local.as_ref().unwrap();
-        let local_commands = app.commands.local.as_ref().unwrap();
         assert!(local_commands.contains_key(default_local), "Default command should exist in commands");
         
         // Test changing default

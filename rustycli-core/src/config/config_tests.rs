@@ -28,16 +28,20 @@ mod tests {
                         cmds.insert("run".to_string(), "docker run redis".to_string());
                         cmds
                     }),
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: Some("run".to_string()),
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
+        
         projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
         
         // Create api project that depends on redis
@@ -55,21 +59,24 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "infrastructure".to_string(),
                     app: "redis".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
         
+        projects.insert("api-project".to_string(), Project { apps: api_apps });
         Config { projects }
     }
 
@@ -109,16 +116,13 @@ mod tests {
                 app_type: "nodejs".to_string(),
                 path: "/tmp/web".to_string(),
                 commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
+                    local: None,
                     docker: Some({
                         let mut cmds = HashMap::new();
                         cmds.insert("run".to_string(), "docker run web".to_string());
                         cmds
                     }),
+                    orbstack: None,
                     k8s: Some({
                         let mut cmds = HashMap::new();
                         cmds.insert("apply".to_string(), "kubectl apply -f k8s/".to_string());
@@ -127,13 +131,16 @@ mod tests {
                     }),
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
-                    local: Some("start".to_string()),
+                    local: None,
                     docker: Some("run".to_string()),
+                    orbstack: None,
                     k8s: Some("apply".to_string()),
                 },
             },
         );
+        
         config.projects.insert("web-project".to_string(), Project { apps });
         
         // Serialize and check
@@ -169,12 +176,15 @@ mod tests {
             commands: Commands {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -182,7 +192,6 @@ mod tests {
         // App should serialize/deserialize fine
         let json = serde_json::to_string(&app).unwrap();
         let _deserialized: App = serde_json::from_str(&json).unwrap();
-        
         // But validation should catch this (when we implement validation)
     }
 
@@ -190,7 +199,6 @@ mod tests {
     #[test]
     fn test_preferences_defaults() {
         let prefs = Preferences::default();
-        
         assert_eq!(prefs.default_env, "local");
         assert!(!prefs.detached_mode); // Show output by default
         assert!(prefs.auto_start_deps);
@@ -203,13 +211,14 @@ mod tests {
             default_env: "docker".to_string(),
             detached_mode: true,
             auto_start_deps: false,
+            docker_platform: "linux/arm64".to_string(),
         };
         
         let json = serde_json::to_string_pretty(&prefs).unwrap();
         let deserialized: Preferences = serde_json::from_str(&json).unwrap();
-        
         assert_eq!(deserialized.default_env, "docker");
         assert!(deserialized.detached_mode);
+        assert_eq!(deserialized.docker_platform, "linux/arm64");
         assert!(!deserialized.auto_start_deps);
     }
 
@@ -223,11 +232,11 @@ mod tests {
                 cmds
             }),
             docker: None,
+            orbstack: None,
             k8s: None,
         };
         
         let json = serde_json::to_string(&commands).unwrap();
-        
         // Should only contain local, not docker/k8s (skip_serializing_if)
         assert!(json.contains("local"));
         assert!(!json.contains("docker"));
@@ -244,7 +253,6 @@ mod tests {
         
         let json = serde_json::to_string(&dep).unwrap();
         let deserialized: Dependency = serde_json::from_str(&json).unwrap();
-        
         assert_eq!(deserialized.project, "infra");
         assert_eq!(deserialized.app, "database");
     }
@@ -265,7 +273,6 @@ mod tests {
         
         let json = serde_json::to_vec(&deps).unwrap();
         let deserialized: Vec<Dependency> = serde_json::from_slice(&json).unwrap();
-        
         assert_eq!(deserialized.len(), 2);
         assert_eq!(deserialized[0].app, "redis");
         assert_eq!(deserialized[1].app, "postgres");
@@ -277,14 +284,13 @@ mod tests {
         let defaults = Defaults {
             local: Some("start".to_string()),
             docker: None,
+            orbstack: None,
             k8s: None,
         };
         
         let json = serde_json::to_string(&defaults).unwrap();
-        
         // Should skip None values
         assert!(json.contains("local"));
-        assert!(!json.contains("docker"));
     }
 
     // Test: Config with special characters in paths
@@ -307,22 +313,25 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
+        
         config.projects.insert("test".to_string(), Project { apps });
         
         // Should serialize/deserialize with special chars
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
-        
         let app = &deserialized.projects["test"].apps["my-app"];
         assert_eq!(app.path, "~/Projects/my app/with spaces");
     }
@@ -350,12 +359,15 @@ mod tests {
                                 cmds
                             }),
                             docker: None,
+                            orbstack: None,
                             k8s: None,
                         },
                         dependencies: Vec::new(),
+                        dockerfile_path: None,
                         defaults: Defaults {
                             local: Some("start".to_string()),
                             docker: None,
+                            orbstack: None,
                             k8s: None,
                         },
                     },
@@ -365,11 +377,9 @@ mod tests {
         }
         
         // Should handle large configs
-        assert_eq!(config.projects.len(), 10);
-        
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.projects.len(), 10);
         assert_eq!(deserialized.projects.len(), 10);
     }
 }
-

@@ -30,12 +30,15 @@ mod list_tests {
             commands: Commands {
                 local: Some(local_commands1),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![],
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -49,12 +52,15 @@ mod list_tests {
             commands: Commands {
                 local: Some(local_commands2),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![],
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("serve".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
@@ -97,15 +103,15 @@ mod list_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        // Test that we can identify unique apps
-        let all_apps = crate::config::list_all_apps(&config);
-        let app_names: Vec<String> = all_apps.iter().map(|(_, name, _)| name.clone()).collect();
+        // Test that we can identify apps by project
+        let project = &config.projects["project1"];
+        let app_names: Vec<&String> = project.apps.keys().collect();
         
-        assert!(app_names.contains(&"app1".to_string()));
-        assert!(app_names.contains(&"app2".to_string()));
+        assert!(app_names.contains(&&"app1".to_string()));
+        assert!(app_names.contains(&&"app2".to_string()));
         
         // Test that app2 is unique (only in project1)
-        let app2_occurrences = app_names.iter().filter(|&name| name == "app2").count();
+        let app2_occurrences = app_names.iter().filter(|&&name| name == "app2").count();
         assert_eq!(app2_occurrences, 1, "app2 should be unique");
     }
 

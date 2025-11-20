@@ -24,16 +24,20 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
+        
         projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
         
         // Project 2: api (depends on redis)
@@ -50,21 +54,24 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "infrastructure".to_string(),
                     app: "redis".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
         
+        projects.insert("api-project".to_string(), Project { apps: api_apps });
         Config { projects }
     }
 
@@ -72,7 +79,6 @@ mod tests {
     #[test]
     fn test_simple_dependency_chain() {
         let config = create_multi_project_config();
-        
         let api_app = resolve_app(&config, "api", None).unwrap();
         let deps = dependencies::resolve_dependency_chain(&config, &api_app).unwrap();
         
@@ -94,21 +100,24 @@ mod tests {
         apps.insert(
             "c".to_string(),
             App {
-                app_type: "redis".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/c".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "redis-server".to_string());
+                        cmds.insert("start".to_string(), "echo c".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -118,24 +127,27 @@ mod tests {
         apps.insert(
             "b".to_string(),
             App {
-                app_type: "nodejs".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/b".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds.insert("start".to_string(), "echo b".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "test".to_string(),
                     app: "c".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -145,24 +157,27 @@ mod tests {
         apps.insert(
             "a".to_string(),
             App {
-                app_type: "nodejs".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/a".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds.insert("start".to_string(), "echo a".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "test".to_string(),
                     app: "b".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -181,9 +196,6 @@ mod tests {
         let dep_names: Vec<&str> = deps.iter().map(|d| d.app_name.as_str()).collect();
         assert!(dep_names.contains(&"c"));
         assert!(dep_names.contains(&"b"));
-        
-        // In BFS, order isn't strictly guaranteed for this case, but C should generally come first
-        // since B depends on C, but we'll just verify both are present
     }
 
     // Test: Diamond dependency (A depends on B and C, both depend on D)
@@ -199,21 +211,24 @@ mod tests {
         apps.insert(
             "d".to_string(),
             App {
-                app_type: "redis".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/d".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "redis-server".to_string());
+                        cmds.insert("start".to_string(), "echo d".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -223,24 +238,27 @@ mod tests {
         apps.insert(
             "b".to_string(),
             App {
-                app_type: "nodejs".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/b".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds.insert("start".to_string(), "echo b".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "test".to_string(),
                     app: "d".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -250,24 +268,27 @@ mod tests {
         apps.insert(
             "c".to_string(),
             App {
-                app_type: "nodejs".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/c".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds.insert("start".to_string(), "echo c".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "test".to_string(),
                     app: "d".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
@@ -277,15 +298,16 @@ mod tests {
         apps.insert(
             "a".to_string(),
             App {
-                app_type: "nodejs".to_string(),
+                app_type: "test".to_string(),
                 path: "/tmp/a".to_string(),
                 commands: Commands {
                     local: Some({
                         let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds.insert("start".to_string(), "echo a".to_string());
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![
@@ -298,9 +320,11 @@ mod tests {
                         app: "c".to_string(),
                     },
                 ],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },

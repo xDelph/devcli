@@ -20,19 +20,21 @@ mod prompts_tests {
             commands: Commands {
                 local: Some(local_commands),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![],
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
         
         apps.insert("test-app".to_string(), app);
         projects.insert("test-project".to_string(), Project { apps });
-        
         Config { projects }
     }
 

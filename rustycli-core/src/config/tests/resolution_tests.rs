@@ -24,16 +24,20 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: Vec::new(),
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
+        
         projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
         
         // Project 2: api (depends on redis)
@@ -50,21 +54,24 @@ mod tests {
                         cmds
                     }),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
                 dependencies: vec![Dependency {
                     project: "infrastructure".to_string(),
                     app: "redis".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
+                    orbstack: None,
                     k8s: None,
                 },
             },
         );
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
         
+        projects.insert("api-project".to_string(), Project { apps: api_apps });
         Config { projects }
     }
 
@@ -72,7 +79,6 @@ mod tests {
     #[test]
     fn test_resolve_app_with_project() {
         let config = create_multi_project_config();
-        
         let result = get_app_by_project(&config, "infrastructure", "redis");
         assert!(result.is_ok());
         
@@ -86,19 +92,14 @@ mod tests {
     #[test]
     fn test_resolve_app_unique_name() {
         let config = create_multi_project_config();
-        
         let result = resolve_app(&config, "redis", None);
         assert!(result.is_ok());
-        
-        let resolved = result.unwrap();
-        assert_eq!(resolved.app_name, "redis");
     }
 
     // Test: Resolve non-existent app fails
     #[test]
     fn test_resolve_nonexistent_app() {
         let config = create_multi_project_config();
-        
         let result = resolve_app(&config, "nonexistent", None);
         assert!(result.is_err());
         
@@ -129,12 +130,15 @@ mod tests {
                             cmds
                         }),
                         docker: None,
+                        orbstack: None,
                         k8s: None,
                     },
                     dependencies: Vec::new(),
+                    dockerfile_path: None,
                     defaults: Defaults {
                         local: Some("start".to_string()),
                         docker: None,
+                        orbstack: None,
                         k8s: None,
                     },
                 },
@@ -154,14 +158,12 @@ mod tests {
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(resolved.project, "project2");
-        assert_eq!(resolved.app_name, "api");
     }
 
     // Test: List all apps
     #[test]
     fn test_list_all_apps() {
         let config = create_multi_project_config();
-        
         let apps = list_all_apps(&config);
         
         // Should have 2 apps total

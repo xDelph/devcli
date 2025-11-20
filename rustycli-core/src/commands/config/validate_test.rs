@@ -15,7 +15,6 @@ mod validate_tests {
         
         let mut projects = HashMap::new();
         let mut apps = HashMap::new();
-        
         let mut local_commands = HashMap::new();
         local_commands.insert("start".to_string(), "npm start".to_string());
         local_commands.insert("test".to_string(), "npm test".to_string());
@@ -26,19 +25,21 @@ mod validate_tests {
             commands: Commands {
                 local: Some(local_commands),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![],
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
         };
         
         apps.insert("test-app".to_string(), app);
         projects.insert("test-project".to_string(), Project { apps });
-        
         Config { projects }
     }
 
@@ -73,6 +74,7 @@ mod validate_tests {
             .commands = Commands {
                 local: None,
                 docker: None,
+                orbstack: None,
                 k8s: None,
             };
         
@@ -80,7 +82,6 @@ mod validate_tests {
         let app = &config.projects["test-project"].apps["test-app"];
         let has_local = app.commands.local.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
         let has_docker = app.commands.docker.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
-        
         assert!(!has_local && !has_docker, "App should have no commands");
     }
 
@@ -94,11 +95,9 @@ mod validate_tests {
             .apps.get_mut("test-app").unwrap()
             .defaults.local = Some("nonexistent".to_string());
         
-        // Test that validation would detect this issue
         let app = &config.projects["test-project"].apps["test-app"];
         let local_commands = app.commands.local.as_ref().unwrap();
         let default_local = app.defaults.local.as_ref().unwrap();
-        
         assert!(!local_commands.contains_key(default_local), "Default should not exist in commands");
     }
 }

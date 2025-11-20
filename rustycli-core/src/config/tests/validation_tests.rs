@@ -37,6 +37,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "b".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -66,6 +67,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "a".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -85,6 +87,7 @@ mod tests {
         // Should succeed (visited set prevents infinite loop)
         assert!(result.is_ok());
         let deps = result.unwrap();
+        
         // Should have B in the chain
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].app_name, "b");
@@ -120,6 +123,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "b".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -149,6 +153,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "c".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -178,6 +183,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "a".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -192,8 +198,8 @@ mod tests {
         // Should handle gracefully (visited set prevents infinite loop)
         let a_app = resolve_app(&config, "a", None).unwrap();
         let result = dependencies::resolve_dependency_chain(&config, &a_app);
-        
         assert!(result.is_ok());
+        
         let deps = result.unwrap();
         // Should have B and C in the chain
         assert_eq!(deps.len(), 2);
@@ -228,6 +234,7 @@ mod tests {
                     project: "test".to_string(),
                     app: "nonexistent".to_string(),
                 }],
+                dockerfile_path: None,
                 defaults: Defaults {
                     local: Some("start".to_string()),
                     docker: None,
@@ -242,7 +249,6 @@ mod tests {
         // Should fail when resolving dependency chain
         let app = resolve_app(&config, "app", None).unwrap();
         let result = dependencies::resolve_dependency_chain(&config, &app);
-        
         assert!(result.is_err());
     }
 }
