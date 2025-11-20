@@ -55,14 +55,17 @@ fn create_test_config_with_app(app_name: &str, app_path: &str) -> Config {
                     cmds
                 }),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
+            dockerfile_path: None,
         },
     );
     
@@ -182,14 +185,17 @@ fn test_integration_dependency_chain() {
                     cmds
                 }),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: Vec::new(),
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
+            dockerfile_path: None,
         },
     );
     
@@ -206,6 +212,7 @@ fn test_integration_dependency_chain() {
                     cmds
                 }),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![Dependency {
@@ -215,8 +222,10 @@ fn test_integration_dependency_chain() {
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
+            dockerfile_path: None,
         },
     );
     
@@ -233,6 +242,7 @@ fn test_integration_dependency_chain() {
                     cmds
                 }),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
             dependencies: vec![Dependency {
@@ -242,8 +252,10 @@ fn test_integration_dependency_chain() {
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
+                orbstack: None,
                 k8s: None,
             },
+            dockerfile_path: None,
         },
     );
     
@@ -355,6 +367,7 @@ fn test_integration_preferences() {
         default_env: "docker".to_string(),
         detached_mode: true,
         auto_start_deps: false,
+        docker_platform: "linux/amd64".to_string(),
     };
     
     // Step 2: Serialize
@@ -403,14 +416,17 @@ fn test_integration_list_all_apps() {
                             cmds
                         }),
                         docker: None,
+                orbstack: None,
                         k8s: None,
                     },
                     dependencies: Vec::new(),
                     defaults: Defaults {
                         local: Some("start".to_string()),
                         docker: None,
+                        orbstack: None,
                         k8s: None,
                     },
+                    dockerfile_path: None,
                 },
             );
         }
