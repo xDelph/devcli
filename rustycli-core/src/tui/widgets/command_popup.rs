@@ -109,7 +109,11 @@ impl CommandPopup {
         project: String,
         default_env: String,
     ) -> Self {
-        let available_envs = vec!["local".to_string(), "docker".to_string(), "k8s".to_string()];
+        use crate::config::models::Environment;
+        let available_envs: Vec<String> = Environment::all()
+            .iter()
+            .map(|e| e.as_str().to_string())
+            .collect();
         let selected_env_index = available_envs.iter().position(|e| e == &default_env).unwrap_or(0);
         
         Self {

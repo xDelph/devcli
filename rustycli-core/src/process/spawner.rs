@@ -72,10 +72,14 @@ pub async fn spawn_process(
 
         // Configure the process:
         cmd.current_dir(&options.working_dir) // Set working directory
-            .envs(&options.env_vars) // Add environment variables
             .stdin(Stdio::null()) // Don't accept input
             .stdout(Stdio::piped()) // Capture standard output
             .stderr(Stdio::piped()); // Capture standard error
+        
+        // Add environment variables (these will override inherited ones)
+        for (key, value) in &options.env_vars {
+            cmd.env(key, value);
+        }
 
         // Platform-specific code for Unix systems (macOS, Linux)
         // #[cfg(unix)] means "only compile this on Unix"
@@ -131,7 +135,7 @@ pub async fn spawn_process(
         // Spawn a background task to read and display stdout
         // tokio::spawn creates a new concurrent task
         // 'async move' captures variables and runs asynchronously
-        tokio::spawn(async move {
+        let stdout_task = tokio::spawn(async move {
             // BufReader buffers input for efficient line-by-line reading
             // .lines() returns an async iterator over lines
             let mut stdout_reader = BufReader::new(stdout).lines();
@@ -162,7 +166,7 @@ pub async fn spawn_process(
         let output_tx_clone = output_tx.clone();
         // Spawn another background task to read and display stderr
         // Same pattern as stdout above, but for error output
-        tokio::spawn(async move {
+        let stderr_task = tokio::spawn(async move {
             let mut stderr_reader = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 if show_output {
@@ -175,6 +179,32 @@ pub async fn spawn_process(
                 }
                 let mut writer = log_writer_clone.lock().await;
                 let _ = writer.write_log(&line).await;
+            }
+        });
+
+        // Spawn a task to wait for the child process to exit
+        // When it exits, the stdout/stderr tasks will naturally complete
+        // because the pipes will close
+        let app_name_for_wait = options.app_name.clone();
+        tokio::spawn(async move {
+            match child.wait().await {
+                Ok(status) => {
+                    // Wait for output tasks to finish processing remaining output
+                    let _ = tokio::join!(stdout_task, stderr_task);
+                    
+                    if status.success() {
+                        if show_output {
+                            println!("[{}] Process exited successfully", app_name_for_wait.cyan().bold());
+                        }
+                    } else if show_output {
+                        eprintln!("[{}] Process exited with status: {}", app_name_for_wait.cyan().bold(), status);
+                    }
+                }
+                Err(e) => {
+                    if show_output {
+                        eprintln!("[{}] Error waiting for process: {}", app_name_for_wait.cyan().bold(), e);
+                    }
+                }
             }
         });
 
@@ -193,9 +223,13 @@ pub async fn spawn_process(
 
         // Configure the process:
         cmd.current_dir(&options.working_dir) // Set working directory
-            .envs(&options.env_vars) // Add environment variables
             .stdout(Stdio::piped()) // Capture stdout so we can read it
             .stderr(Stdio::piped()); // Capture stderr so we can read it
+        
+        // Add environment variables (these will override inherited ones)
+        for (key, value) in &options.env_vars {
+            cmd.env(key, value);
+        }
 
         // Spawn the async process
         let mut child = cmd.spawn().context("Failed to spawn process")?;

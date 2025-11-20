@@ -122,16 +122,21 @@ impl AppState {
     }
 
     /// Extracts commands from app configuration
-    /// Groups commands by environment (local, docker, orbstack, k8s)
+    /// Groups commands by environment (local, docker, orbstack, k8s, etc.)
     fn extract_commands(app: &App) -> HashMap<String, Vec<CommandInfo>> {
-        use crate::config::models::Environment;
-        
         let mut commands = HashMap::new();
 
-        // Extract commands for each environment dynamically
-        for env_type in Environment::all() {
-            let env_key = env_type.as_str();
-            if let Some(env_cmds) = app.commands.get(env_key) {
+        // Extract commands for each environment dynamically from the app's commands
+        // Check all possible environment fields
+        let env_maps = [
+            ("local", &app.commands.local),
+            ("docker", &app.commands.docker),
+            ("orbstack", &app.commands.orbstack),
+            ("k8s", &app.commands.k8s),
+        ];
+
+        for (env_key, env_cmds_opt) in env_maps {
+            if let Some(env_cmds) = env_cmds_opt {
                 let mut cmd_list: Vec<CommandInfo> = env_cmds
                     .iter()
                     .map(|(name, cmd)| CommandInfo {
