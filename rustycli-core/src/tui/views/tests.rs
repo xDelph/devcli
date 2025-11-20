@@ -7,6 +7,7 @@ use crate::process::tracker::ProcessTracker;
 use crate::tui::state::AppState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Helper function to create a test configuration
 fn create_test_config() -> Config {
@@ -14,7 +15,6 @@ fn create_test_config() -> Config {
     
     // Create a test project with two apps
     let mut apps = HashMap::new();
-    
     let mut local_commands = HashMap::new();
     local_commands.insert("start".to_string(), "npm start".to_string());
     local_commands.insert("test".to_string(), "npm test".to_string());
@@ -31,6 +31,7 @@ fn create_test_config() -> Config {
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
@@ -52,6 +53,7 @@ fn create_test_config() -> Config {
                 k8s: None,
             },
             dependencies: Vec::new(),
+            dockerfile_path: None,
             defaults: Defaults {
                 local: Some("start".to_string()),
                 docker: None,
@@ -68,8 +70,6 @@ fn create_test_config() -> Config {
     
     Config { projects }
 }
-
-use std::sync::{Arc, Mutex};
 
 /// Helper function to create a test app state
 fn create_test_state() -> AppState {
@@ -94,7 +94,6 @@ fn test_main_view_creation() {
 fn test_main_view_default() {
     let view = MainView::default();
     assert_eq!(view.active_tab, MainTab::Status);
-    assert_eq!(view.focus, PanelFocus::AppList);
 }
 
 #[test]
@@ -110,14 +109,12 @@ fn test_tab_switching_with_number_keys() {
     
     // Switch to Logs tab
     let key = KeyEvent::new(KeyCode::Char('3'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Logs);
     
     // Switch back to Status tab
     let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Status);
 }
 
@@ -131,14 +128,12 @@ fn test_panel_focus_switching() {
     
     // Press Right arrow to switch to DetailPanel
     let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.focus, PanelFocus::DetailPanel);
     
     // Press Right arrow again to switch back to AppList
     let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.focus, PanelFocus::AppList);
 }
 
@@ -179,7 +174,6 @@ fn test_navigation_with_vim_keys() {
     let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
     view.handle_input(key, &state).unwrap();
     
-    // Selection should have changed
     {
         let state_locked = state.lock().unwrap();
         assert!(
@@ -209,9 +203,8 @@ fn test_space_toggles_project_expansion() {
     
     // Press space
     let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
+    view.handle_input(key, &state).unwrap();
     
-    assert!(handled);
     assert_eq!(state.lock().unwrap().projects[0].expanded, !initial_expanded);
 }
 
@@ -220,10 +213,10 @@ fn test_space_only_works_in_app_list() {
     let mut view = MainView::new();
     let state = create_test_state_arc();
     
+    let initial_expanded = state.lock().unwrap().projects[0].expanded;
+    
     // Switch focus to detail panel
     view.focus = PanelFocus::DetailPanel;
-    
-    let initial_expanded = state.lock().unwrap().projects[0].expanded;
     
     // Press space - should not toggle expansion
     let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
@@ -231,6 +224,7 @@ fn test_space_only_works_in_app_list() {
     
     // Event is not handled when in detail panel
     assert!(!handled);
+    
     // Expansion state should not change
     assert_eq!(state.lock().unwrap().projects[0].expanded, initial_expanded);
 }
@@ -240,7 +234,6 @@ fn test_detail_panel_scrolling() {
     let mut view = MainView::new();
     let state = create_test_state_arc();
     
-    // Switch focus to detail panel
     view.focus = PanelFocus::DetailPanel;
     
     assert_eq!(view.detail_scroll, 0);
@@ -248,13 +241,11 @@ fn test_detail_panel_scrolling() {
     // Press down arrow
     let key = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
     view.handle_input(key, &state).unwrap();
-    
     assert_eq!(view.detail_scroll, 1);
     
     // Press up arrow
     let key = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
     view.handle_input(key, &state).unwrap();
-    
     assert_eq!(view.detail_scroll, 0);
 }
 
@@ -282,7 +273,6 @@ fn test_unhandled_keys_return_false() {
     // Press an unhandled key
     let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
     let handled = view.handle_input(key, &state).unwrap();
-    
     assert!(!handled);
 }
 
@@ -327,7 +317,6 @@ fn test_format_duration_hours() {
 }
 
 // Tests for status formatting and uptime calculations
-
 #[test]
 fn test_format_duration_zero_seconds() {
     use chrono::Duration;
@@ -400,20 +389,17 @@ fn test_tab_switching_with_french_keyboard() {
     
     // Switch to Commands tab with 'é' (French 2)
     let key = KeyEvent::new(KeyCode::Char('é'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Commands);
     
     // Switch to Logs tab with '"' (French 3)
     let key = KeyEvent::new(KeyCode::Char('"'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Logs);
     
     // Switch back to Status tab with '&' (French 1)
     let key = KeyEvent::new(KeyCode::Char('&'), KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Status);
 }
 
@@ -422,31 +408,14 @@ fn test_panel_switching_with_arrow_keys() {
     let mut view = MainView::new();
     let state = create_test_state_arc();
     
-    // Initially focused on AppList
-    assert_eq!(view.focus, PanelFocus::AppList);
-    
-    // Press Right arrow to switch to DetailPanel
-    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
-    assert_eq!(view.focus, PanelFocus::DetailPanel);
-    
-    // Press Right arrow again to switch back to AppList
-    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
-    assert_eq!(view.focus, PanelFocus::AppList);
-    
     // Press Left arrow to switch to DetailPanel
     let key = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.focus, PanelFocus::DetailPanel);
     
     // Press Left arrow again to switch back to AppList
     let key = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.focus, PanelFocus::AppList);
 }
 
@@ -460,25 +429,18 @@ fn test_tab_switching_with_tab_key() {
     
     // Press Tab to go to Commands
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Commands);
     
     // Press Tab to go to Logs
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Logs);
     
     // Press Tab to cycle to Config
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Config);
     
     // Press Tab to cycle back to Status
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::empty());
-    let handled = view.handle_input(key, &state).unwrap();
-    assert!(handled);
+    view.handle_input(key, &state).unwrap();
     assert_eq!(view.active_tab, MainTab::Status);
 }

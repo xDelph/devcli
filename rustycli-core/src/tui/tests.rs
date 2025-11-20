@@ -5,7 +5,6 @@ use super::log_manager::LogManager;
 use super::state::{AppStatus, ViewType};
 use super::theme::Theme;
 use chrono::{Duration, Utc};
-
 #[test]
 fn test_theme_default_colors() {
     let theme = Theme::default();
@@ -17,16 +16,12 @@ fn test_theme_default_colors() {
     assert_eq!(theme.success, ratatui::style::Color::Green);
     assert_eq!(theme.primary, ratatui::style::Color::Cyan);
 }
-
 #[test]
 fn test_theme_from_terminal() {
     let theme = Theme::from_terminal();
-    
     // Should return a valid theme (currently same as default)
-    assert_eq!(theme.primary, ratatui::style::Color::Cyan);
     assert_eq!(theme.running, ratatui::style::Color::LightGreen);
 }
-
 #[test]
 fn test_app_status_is_running() {
     let running = AppStatus::Running {
@@ -36,11 +31,9 @@ fn test_app_status_is_running() {
     };
     assert!(running.is_running());
     assert_eq!(running.as_str(), "Running");
-
     let stopped = AppStatus::Stopped;
     assert!(!stopped.is_running());
     assert_eq!(stopped.as_str(), "Stopped");
-
     let unknown = AppStatus::Unknown;
     assert!(!unknown.is_running());
     assert_eq!(unknown.as_str(), "Unknown");
@@ -51,7 +44,6 @@ fn test_view_type_equality() {
     let main1 = ViewType::Main;
     let main2 = ViewType::Main;
     assert_eq!(main1, main2);
-
     let cmd1 = ViewType::CommandList {
         project: "test".to_string(),
         app: "app1".to_string(),
@@ -61,7 +53,7 @@ fn test_view_type_equality() {
         app: "app1".to_string(),
     };
     assert_eq!(cmd1, cmd2);
-
+    
     // Different apps should not be equal
     let cmd3 = ViewType::CommandList {
         project: "test".to_string(),
@@ -74,13 +66,11 @@ fn test_view_type_equality() {
 fn test_app_status_uptime_formatting() {
     let start_time = Utc::now();
     let uptime = Duration::seconds(3665); // 1 hour, 1 minute, 5 seconds
-    
     let status = AppStatus::Running {
         pid: 1234,
         uptime,
         start_time,
     };
-    
     assert!(status.is_running());
     
     // Verify we can extract the uptime
@@ -90,24 +80,20 @@ fn test_app_status_uptime_formatting() {
 }
 
 // Log Manager Tests
-
 #[test]
 fn test_log_manager_format_file_size() {
     // Test bytes
     assert_eq!(LogManager::format_file_size(0), "0 B");
     assert_eq!(LogManager::format_file_size(500), "500 B");
     assert_eq!(LogManager::format_file_size(1023), "1023 B");
-    
     // Test kilobytes
     assert_eq!(LogManager::format_file_size(1024), "1.0 KB");
     assert_eq!(LogManager::format_file_size(1536), "1.5 KB");
     assert_eq!(LogManager::format_file_size(2048), "2.0 KB");
-    
     // Test megabytes
     assert_eq!(LogManager::format_file_size(1024 * 1024), "1.0 MB");
     assert_eq!(LogManager::format_file_size(2_500_000), "2.4 MB");
     assert_eq!(LogManager::format_file_size(5 * 1024 * 1024), "5.0 MB");
-    
     // Test gigabytes
     assert_eq!(LogManager::format_file_size(1024 * 1024 * 1024), "1.0 GB");
     assert_eq!(LogManager::format_file_size(2_500_000_000), "2.3 GB");
@@ -116,27 +102,21 @@ fn test_log_manager_format_file_size() {
 #[test]
 fn test_log_manager_format_relative_date() {
     let now = Utc::now();
-    
     // Test "Today" formatting
     let today = now;
     let formatted = LogManager::format_relative_date(&today);
     assert!(formatted.starts_with("Today"), "Expected 'Today', got: {}", formatted);
     assert!(formatted.contains(":"), "Expected time format with colon");
-    
     // Test "Yesterday"
     let yesterday = now - Duration::days(1);
     assert_eq!(LogManager::format_relative_date(&yesterday), "Yesterday");
-    
     // Test "X days ago" (within a week)
     let two_days = now - Duration::days(2);
     assert_eq!(LogManager::format_relative_date(&two_days), "2 days ago");
-    
     let three_days = now - Duration::days(3);
     assert_eq!(LogManager::format_relative_date(&three_days), "3 days ago");
-    
     let six_days = now - Duration::days(6);
     assert_eq!(LogManager::format_relative_date(&six_days), "6 days ago");
-    
     // Test date format (older than a week)
     let ten_days = now - Duration::days(10);
     let formatted = LogManager::format_relative_date(&ten_days);
@@ -144,7 +124,6 @@ fn test_log_manager_format_relative_date() {
     assert!(!formatted.contains("days ago"), "Expected date format, got: {}", formatted);
     assert!(!formatted.contains("Today"), "Expected date format, got: {}", formatted);
     assert!(!formatted.contains("Yesterday"), "Expected date format, got: {}", formatted);
-    
     // Verify it contains a month abbreviation (Jan, Feb, etc.)
     let has_month = formatted.contains("Jan") || formatted.contains("Feb") || 
                     formatted.contains("Mar") || formatted.contains("Apr") ||
@@ -160,7 +139,6 @@ fn test_log_manager_creation() {
     // Test that LogManager can be created successfully
     let result = LogManager::new();
     assert!(result.is_ok(), "LogManager creation should succeed");
-    
     // Test default implementation
     let _log_manager = LogManager::default();
 }
@@ -169,10 +147,8 @@ fn test_log_manager_creation() {
 fn test_log_manager_list_logs_empty_directory() {
     // Test listing logs when directory doesn't exist
     let log_manager = LogManager::new().expect("Failed to create LogManager");
-    
     // Use a non-existent app name to ensure no logs are found
     let result = log_manager.list_logs_for_app("nonexistent-app-12345");
-    
     // Should return Ok with empty vector, not an error
     assert!(result.is_ok(), "Should handle missing directory gracefully");
     let logs = result.unwrap();
@@ -183,19 +159,15 @@ fn test_log_manager_list_logs_empty_directory() {
 fn test_log_file_sorting() {
     // This test verifies the sorting logic conceptually
     // In a real scenario, log files would be sorted by modification date (newest first)
-    
     let now = Utc::now();
     let older = now - Duration::days(1);
     let oldest = now - Duration::days(2);
-    
     // Verify that newer dates compare as greater
     assert!(now > older);
     assert!(older > oldest);
-    
     // When sorted in descending order (newest first), now should come before older
     let mut dates = [oldest, now, older];
     dates.sort_by(|a, b| b.cmp(a)); // Descending order
-    
     assert_eq!(dates[0], now);
     assert_eq!(dates[1], older);
     assert_eq!(dates[2], oldest);

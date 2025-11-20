@@ -3,7 +3,6 @@
 
 use super::command_popup::{CommandPopup, PopupState};
 use super::help_overlay::HelpOverlay;
-
 #[test]
 fn test_command_popup_initial_state() {
     let popup = CommandPopup::new(
@@ -53,7 +52,6 @@ fn test_command_popup_error_state() {
     );
     
     popup.set_error("Connection failed".to_string());
-    
     match popup.state() {
         PopupState::Error(msg) => assert_eq!(msg, "Connection failed"),
         _ => panic!("Expected Error state"),
@@ -86,12 +84,14 @@ fn test_output_lines_management() {
 #[test]
 fn test_output_lines_limit_enforcement() {
     let mut popup = CommandPopup::new(
-        "start".to_string(),
-        "npm start".to_string(),
+        "test".to_string(),
+        "npm test".to_string(),
         "app".to_string(),
-        "test-project".to_string(),
+        "project".to_string(),
         "local".to_string(),
     );
+    
+    popup.set_executing();
     
     // Add 15 lines (more than the 10 line limit)
     for i in 0..15 {
@@ -101,7 +101,6 @@ fn test_output_lines_limit_enforcement() {
     // Verify only last 10 lines are kept
     // This is tested in the command_popup module tests as well
     // but we verify the behavior from the public API perspective
-    popup.set_executing();
     
     // Add lines after executing state
     for i in 0..12 {
@@ -109,11 +108,10 @@ fn test_output_lines_limit_enforcement() {
     }
     
     // Should still respect the limit
-    assert_eq!(popup.state(), &PopupState::Executing);
+    assert!(popup.state() == &PopupState::Executing);
 }
 
 // Help Overlay Tests
-
 #[test]
 fn test_help_overlay_initial_state() {
     let overlay = HelpOverlay::new();
@@ -160,7 +158,6 @@ fn test_help_overlay_default() {
 }
 
 // Error Display Tests
-
 #[test]
 fn test_error_message_formatting() {
     // Test that error messages are properly formatted
