@@ -388,4 +388,173 @@ mod tests {
         assert_eq!(config.projects.len(), 10);
         assert_eq!(deserialized.projects.len(), 10);
     }
+
+    // Test: Backward compatibility - loading config without stage field
+    #[test]
+    fn test_backward_compatibility_no_stage_field() {
+        // Simulate an old config JSON without stage field
+        let old_config_json = r#"{
+            "projects": {
+                "my-project": {
+                    "apps": {
+                        "api": {
+                            "type": "nodejs",
+                            "path": "/tmp/api",
+                            "commands": {
+                                "local": {
+                                    "start": "npm start"
+                                },
+                                "docker": {
+                                    "run": "docker run api"
+                                }
+                            },
+                            "defaults": {
+                                "local": "start",
+                                "docker": "run"
+                            },
+                            "dependencies": []
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        // Should deserialize successfully
+        let config: Config = serde_json::from_str(old_config_json).unwrap();
+        
+        // Stage should be None
+        let app = &config.projects["my-project"].apps["api"];
+        assert!(app.stage.is_none());
+        
+        // Re-serialize and verify stage field is omitted
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("\"stage\""));
+    }
+
+    // Test: Config with stage field serializes and deserializes correctly
+    #[test]
+    fn test_stage_field_serialization() {
+        let mut config = Config {
+            projects: HashMap::new(),
+        };
+        
+        let mut apps = HashMap::new();
+        apps.insert(
+            "api".to_string(),
+            App {
+                app_type: "nodejs".to_string(),
+                path: "/tmp/api".to_string(),
+                commands: Commands {
+                    local: Some({
+                        let mut cmds = HashMap::new();
+                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds
+                    }),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+                dependencies: Vec::new(),
+                dockerfile_path: None,
+                stage: Some("dev".to_string()),
+                defaults: Defaults {
+                    local: Some("start".to_string()),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+            },
+        );
+        
+        config.projects.insert("test".to_string(), Project { apps });
+        
+        // Serialize and verify stage is included
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"stage\""));
+        assert!(json.contains("\"dev\""));
+        
+        // Deserialize and verify stage value
+        let deserialized: Config = serde_json::from_str(&json).unwrap();
+        let app = &deserialized.projects["test"].apps["api"];
+        assert_eq!(app.stage, Some("dev".to_string()));
+    }
+
+    // Test: Mixed config with some apps having stage and others not
+    #[test]
+    fn test_mixed_stage_configuration() {
+        let mut config = Config {
+            projects: HashMap::new(),
+        };
+        
+        let mut apps = HashMap::new();
+        
+        // App with stage
+        apps.insert(
+            "api".to_string(),
+            App {
+                app_type: "nodejs".to_string(),
+                path: "/tmp/api".to_string(),
+                commands: Commands {
+                    local: Some({
+                        let mut cmds = HashMap::new();
+                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds
+                    }),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+                dependencies: Vec::new(),
+                dockerfile_path: None,
+                stage: Some("prod".to_string()),
+                defaults: Defaults {
+                    local: Some("start".to_string()),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+            },
+        );
+        
+        // App without stage
+        apps.insert(
+            "worker".to_string(),
+            App {
+                app_type: "nodejs".to_string(),
+                path: "/tmp/worker".to_string(),
+                commands: Commands {
+                    local: Some({
+                        let mut cmds = HashMap::new();
+                        cmds.insert("start".to_string(), "npm start".to_string());
+                        cmds
+                    }),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+                dependencies: Vec::new(),
+                dockerfile_path: None,
+                stage: None,
+                defaults: Defaults {
+                    local: Some("start".to_string()),
+                    docker: None,
+                    orbstack: None,
+                    k8s: None,
+                },
+            },
+        );
+        
+        config.projects.insert("test".to_string(), Project { apps });
+        
+        // Serialize and deserialize
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: Config = serde_json::from_str(&json).unwrap();
+        
+        // Verify mixed configuration
+        let api = &deserialized.projects["test"].apps["api"];
+        let worker = &deserialized.projects["test"].apps["worker"];
+        
+        assert_eq!(api.stage, Some("prod".to_string()));
+        assert!(worker.stage.is_none());
+    }
 }
