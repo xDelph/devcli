@@ -31,7 +31,7 @@
   - Create `commands/config/stage_test.rs` for stage configuration tests
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 5. Add stage detection to auto-add command
+- [x] 5. Add stage detection to auto-add command
 
   - Create `detect_stage_files()` helper function in `commands/auto_add/interactive.rs`
   - Add stage prompting logic to interactive flow

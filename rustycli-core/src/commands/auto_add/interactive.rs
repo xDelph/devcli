@@ -4,6 +4,7 @@
 
 use crate::Result;
 use inquire::{MultiSelect, Select, Confirm, Text};
+use std::path::Path;
 
 use super::validation::validate_app_name;
 
@@ -225,6 +226,63 @@ pub fn interactive_app_selection(apps: &[crate::detection::DetectedApp]) -> Resu
         }
     }
 }
+
+/// Detect available stage-specific environment files in an app directory
+/// Scans for .env.dev, .env.qa, .env.preprod, and .env.prod files
+/// Returns a list of stage names (without the .env. prefix) for files that exist
+///
+/// # Arguments
+/// * `app_path` - The root directory of the app to scan
+///
+/// # Returns
+/// Vector of stage names (e.g., ["dev", "qa", "prod"]) for which stage-specific files exist
+pub fn detect_stage_files(app_path: &Path) -> Vec<String> {
+    let mut stages = Vec::new();
+
+    // Check for each supported stage
+    for stage in ["dev", "qa", "preprod", "prod"] {
+        let stage_file = app_path.join(format!(".env.{}", stage));
+        if stage_file.exists() {
+            stages.push(stage.to_string());
+        }
+    }
+
+    stages
+}
+
+/// Prompt user to select a deployment stage from available stage-specific env files
+/// Shows which stage files were detected and allows user to choose one or skip
+///
+/// # Arguments
+/// * `available_stages` - List of stage names that have corresponding .env files
+///
+/// # Returns
+/// Optional stage name selected by user, or None if user chose to skip
+pub fn prompt_stage_selection(available_stages: &[String]) -> Result<Option<String>> {
+    if available_stages.is_empty() {
+        return Ok(None);
+    }
+
+    println!("\nDetected stage-specific environment files:");
+    for stage in available_stages {
+        println!("  .env.{}", stage);
+    }
+
+    // Build options list with available stages plus "none" option
+    let mut options = available_stages.to_vec();
+    options.push("none".to_string());
+
+    let selected = Select::new("Select default deployment stage:", options)
+        .with_help_message("Choose which stage to use by default, or 'none' to skip")
+        .prompt()?;
+
+    if selected == "none" {
+        Ok(None)
+    } else {
+        Ok(Some(selected))
+    }
+}
+
 #[cfg(
 test)]
 #[path = "interactive_test.rs"]

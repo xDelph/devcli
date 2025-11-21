@@ -10,7 +10,7 @@ use std::env;
 
 use super::interactive::{
     prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
-    interactive_app_selection
+    interactive_app_selection, detect_stage_files, prompt_stage_selection
 };
 
 // Entry point for the auto-add command
@@ -100,6 +100,11 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     // Show preview of what will be added
     show_preview(&project_name, &app_name, &detected);
     
+    // Detect and prompt for stage selection
+    let app_path = crate::utils::path::expand_path(&detected.path);
+    let available_stages = detect_stage_files(&app_path);
+    let stage = prompt_stage_selection(&available_stages)?;
+    
     // Final confirmation before adding (default to yes)
     if !confirm_default_yes("Add to config?")? {
         println!("Cancelled.");
@@ -107,7 +112,7 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     }
     
     // Add to config and save
-    add_to_config(config, project_name, app_name, detected)?;
+    add_to_config(config, project_name, app_name, detected, stage)?;
     
     println!("✓ Added successfully!");
     
@@ -310,6 +315,11 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
         // Show preview
         show_preview(&project_name, &app_name, detected);
         
+        // Detect and prompt for stage selection
+        let app_path = crate::utils::path::expand_path(&detected.path);
+        let available_stages = detect_stage_files(&app_path);
+        let stage = prompt_stage_selection(&available_stages)?;
+        
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
@@ -334,7 +344,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
-            stage: None, // No stage configured during auto-add (will be added in future task)
+            stage, // Set stage from user selection
         };
         
         // Insert the app into the config
@@ -363,11 +373,13 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 //   - project_name: Which project to add the app to
 //   - app_name: The name for the app
 //   - detected: The detection results with all app information
+//   - stage: Optional deployment stage selected by user
 fn add_to_config(
     mut config: crate::config::Config,
     project_name: String,
     app_name: String,
     detected: crate::detection::DetectedApp,
+    stage: Option<String>,
 ) -> Result<()> {
     // Build the App struct from detection results
     let app = App {
@@ -387,7 +399,7 @@ fn add_to_config(
             k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
         dockerfile_path: detected.dockerfile_path,
-        stage: None, // No stage configured during auto-add (will be added in future task)
+        stage, // Set stage from user selection
     };
     
     // Insert the app into the config

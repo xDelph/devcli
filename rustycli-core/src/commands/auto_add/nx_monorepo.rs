@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use super::interactive::{
     prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
-    interactive_nx_app_selection
+    interactive_nx_app_selection, detect_stage_files, prompt_stage_selection
 };
 
 // Handle detection and addition of apps in an Nx monorepo
@@ -57,6 +57,11 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         // Show preview of what will be added
         show_preview(&project_name, &app_name, detected);
         
+        // Detect and prompt for stage selection
+        let app_path = crate::utils::path::expand_path(&detected.path);
+        let available_stages = detect_stage_files(&app_path);
+        let stage = prompt_stage_selection(&available_stages)?;
+        
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
@@ -81,7 +86,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
-            stage: None, // No stage configured during auto-add (will be added in future task)
+            stage, // Set stage from user selection
         };
         
         // Insert the app into the config
