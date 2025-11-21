@@ -197,7 +197,7 @@ fn test_multiple_injections_combined() {
     let cmd = "docker --context orbstack run --name api --rm -p 3000:3000 myimage";
 
     // First inject platform
-    let cmd = inject_docker_platform(&cmd, "linux/amd64");
+    let cmd = inject_docker_platform(cmd, "linux/amd64");
     assert_eq!(
         cmd,
         "docker --context orbstack run --platform linux/amd64 --name api --rm -p 3000:3000 myimage"

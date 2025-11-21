@@ -1,38 +1,23 @@
 // Tests for input handling functionality
 
-use crate::config::models::{App, Commands, Defaults, Project};
 use crate::process::tracker::ProcessTracker;
+use crate::test_utils::{AppBuilder, ConfigBuilder};
 use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
 fn create_test_state() -> Arc<Mutex<AppState>> {
-    let mut projects = HashMap::new();
-    let mut apps = HashMap::new();
+    let app = AppBuilder::new("nodejs", "/test/path")
+        .with_local_command("start", "npm start")
+        .with_local_command("test", "npm test")
+        .with_local_default("start")
+        .build();
     
-    let mut local_cmds = HashMap::new();
-    local_cmds.insert("start".to_string(), "npm start".to_string());
-    local_cmds.insert("test".to_string(), "npm test".to_string());
-    apps.insert(
-        "test-app".to_string(),
-        App {
-            app_type: "nodejs".to_string(),
-            path: "/test/path".to_string(),
-            commands: Commands {
-                local: Some(local_cmds),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: vec![],
-            defaults: Defaults {
-                local: Some("start".to_string()),
-            dockerfile_path: None,
-        },
-    );
-    projects.insert("test-project".to_string(), Project { apps });
-    let config = crate::config::models::Config { projects };
+    let config = ConfigBuilder::new()
+        .with_app("test-project", "test-app", app)
+        .build();
+    
     let tracker = ProcessTracker::new().unwrap();
     let state = AppState::from_config(&config, &tracker).unwrap();
     Arc::new(Mutex::new(state))

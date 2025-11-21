@@ -102,8 +102,8 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     
     // Detect and prompt for stage selection
     let app_path = crate::utils::path::expand_path(&detected.path);
-    let available_stages = detect_stage_files(&app_path);
-    let stage = prompt_stage_selection(&available_stages)?;
+    let available_env_files = detect_stage_files(&app_path);
+    let stage_info = prompt_stage_selection(&available_env_files)?;
     
     // Final confirmation before adding (default to yes)
     if !confirm_default_yes("Add to config?")? {
@@ -112,7 +112,7 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     }
     
     // Add to config and save
-    add_to_config(config, project_name, app_name, detected, stage)?;
+    add_to_config(config, project_name, app_name, detected, stage_info)?;
     
     println!("✓ Added successfully!");
     
@@ -317,14 +317,20 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
         
         // Detect and prompt for stage selection
         let app_path = crate::utils::path::expand_path(&detected.path);
-        let available_stages = detect_stage_files(&app_path);
-        let stage = prompt_stage_selection(&available_stages)?;
+        let available_env_files = detect_stage_files(&app_path);
+        let stage_info = prompt_stage_selection(&available_env_files)?;
         
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
             continue;
         }
+        
+        // Extract stage and env_file_path from stage_info
+        let (stage, env_file_path) = match stage_info {
+            Some((s, p)) => (Some(s), Some(p)),
+            None => (None, None),
+        };
         
         // Build the App struct from detected data
         let app = App {
@@ -345,6 +351,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             },
             dockerfile_path: detected.dockerfile_path.clone(),
             stage, // Set stage from user selection
+            env_file_path, // Set env file path from user selection
         };
         
         // Insert the app into the config
@@ -373,14 +380,20 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 //   - project_name: Which project to add the app to
 //   - app_name: The name for the app
 //   - detected: The detection results with all app information
-//   - stage: Optional deployment stage selected by user
+//   - stage_info: Optional tuple of (stage_name, env_file_path) selected by user
 fn add_to_config(
     mut config: crate::config::Config,
     project_name: String,
     app_name: String,
     detected: crate::detection::DetectedApp,
-    stage: Option<String>,
+    stage_info: Option<(String, String)>,
 ) -> Result<()> {
+    // Extract stage and env_file_path from stage_info
+    let (stage, env_file_path) = match stage_info {
+        Some((s, p)) => (Some(s), Some(p)),
+        None => (None, None),
+    };
+    
     // Build the App struct from detection results
     let app = App {
         app_type: detected.app_type,
@@ -400,6 +413,7 @@ fn add_to_config(
         },
         dockerfile_path: detected.dockerfile_path,
         stage, // Set stage from user selection
+        env_file_path, // Set env file path from user selection
     };
     
     // Insert the app into the config

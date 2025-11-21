@@ -171,11 +171,17 @@ pub struct App {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dockerfile_path: Option<String>,
     
-    // Deployment stage for this app (dev, qa, preprod, prod)
+    // Deployment stage for this app (dev, qa, preprod, prod, or custom)
     // Used to determine which stage-specific .env file to load (e.g., .env.dev, .env.prod)
     // OPTIONAL: If not set, uses base .env file
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+    
+    // Relative path to the environment file from app root
+    // Examples: ".env.qa", "config/.env.prod", "environments/.env.dev"
+    // OPTIONAL: If not set, auto-detects based on stage or uses .env
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file_path: Option<String>,
 }
 
 // Commands for different environments
@@ -348,6 +354,12 @@ pub struct Preferences {
     // Can be set to "linux/arm64" for ARM-based systems
     #[serde(default = "default_docker_platform")]
     pub docker_platform: String,
+    
+    // Default deployment stage to use when starting apps
+    // Can be any string (dev, qa, preprod, prod, staging, etc.)
+    // OPTIONAL: If not set, no default stage is applied
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_stage: Option<String>,
 }
 
 // Helper function called by serde when default_env is missing from JSON
@@ -382,6 +394,7 @@ impl Default for Preferences {
             detached_mode: false,
             auto_start_deps: true,
             docker_platform: "linux/amd64".to_string(),
+            default_stage: None,
         }
     }
 }

@@ -8,8 +8,6 @@ pub mod orbstack;
 
 // Test modules
 #[cfg(test)]
-mod local_tests;
-#[cfg(test)]
 mod orbstack_stage_test;
 
 // Re-export main functions for convenience

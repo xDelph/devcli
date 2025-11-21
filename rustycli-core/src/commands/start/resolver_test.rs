@@ -5,28 +5,11 @@ mod tests {
     use super::super::resolver::*;
     use crate::config::models::*;
     use crate::config::resolver::ResolvedApp;
+    use crate::test_utils::AppBuilder;
     use std::collections::HashMap;
 
     fn create_test_app() -> App {
-        App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(),
-            commands: Commands {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        }
+        AppBuilder::new("test", "/tmp").build()
     }
 
     #[test]
@@ -50,25 +33,10 @@ mod tests {
 
     #[test]
     fn test_get_available_environments_all() {
-        let app = App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(),
-            commands: Commands {
-                local: Some(HashMap::new()),
-                docker: Some(HashMap::new()),
-                orbstack: None,
-                k8s: Some(HashMap::new()),
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
+        let mut app = AppBuilder::new("test", "/tmp").build();
+        app.commands.local = Some(HashMap::new());
+        app.commands.docker = Some(HashMap::new());
+        app.commands.k8s = Some(HashMap::new());
         
         let result = super::super::resolver::get_available_environments(&app);
         assert_eq!(result, "local, docker, k8s");
@@ -76,25 +44,9 @@ mod tests {
 
     #[test]
     fn test_get_available_environments_partial() {
-        let app = App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(),
-            commands: Commands {
-                local: Some(HashMap::new()),
-                docker: Some(HashMap::new()),
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
+        let mut app = AppBuilder::new("test", "/tmp").build();
+        app.commands.local = Some(HashMap::new());
+        app.commands.docker = Some(HashMap::new());
         
         let result = super::super::resolver::get_available_environments(&app);
         assert_eq!(result, "local, docker");
@@ -170,11 +122,10 @@ mod tests {
 
     #[test]
     fn test_validate_and_get_command_success() {
-        let mut app = create_test_app();
-        let mut commands = HashMap::new();
-        commands.insert("start".to_string(), "npm start".to_string());
-        app.commands.local = Some(commands);
-        app.defaults.local = Some("start".to_string());
+        let app = AppBuilder::new("test", "/tmp")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .build();
         
         let resolved_app = ResolvedApp {
             app,

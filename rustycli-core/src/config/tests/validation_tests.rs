@@ -4,82 +4,31 @@
 #[cfg(test)]
 mod tests {
     use crate::config::*;
-    use std::collections::HashMap;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
 
     // Test: Circular dependency handling (A->B->A)
     // Note: Current implementation uses BFS with visited set, which prevents infinite loops
     // but doesn't explicitly detect/report circular dependencies
     #[test]
     fn test_circular_dependency_simple() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // A depends on B
-        apps.insert(
-            "a".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/a".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "b".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app_a = AppBuilder::new("nodejs", "/tmp/a")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "b")
+            .build();
         
         // B depends on A (circular!)
-        apps.insert(
-            "b".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/b".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "a".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app_b = AppBuilder::new("nodejs", "/tmp/b")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "a")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "a", app_a)
+            .with_app("test", "b", app_b)
+            .build();
         
         // Current implementation handles this gracefully (no infinite loop)
         // It returns both A and B in the dependency chain
@@ -99,106 +48,32 @@ mod tests {
     // Current implementation handles this without explicit cycle detection
     #[test]
     fn test_circular_dependency_complex() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // A depends on B
-        apps.insert(
-            "a".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/a".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "b".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app_a = AppBuilder::new("nodejs", "/tmp/a")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "b")
+            .build();
         
         // B depends on C
-        apps.insert(
-            "b".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/b".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "c".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app_b = AppBuilder::new("nodejs", "/tmp/b")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "c")
+            .build();
         
         // C depends on A (circular!)
-        apps.insert(
-            "c".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/c".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "a".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app_c = AppBuilder::new("nodejs", "/tmp/c")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "a")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "a", app_a)
+            .with_app("test", "b", app_b)
+            .with_app("test", "c", app_c)
+            .build();
         
         // Should handle gracefully (visited set prevents infinite loop)
         let a_app = resolve_app(&config, "a", None).unwrap();
@@ -213,44 +88,16 @@ mod tests {
     // Test: Missing dependency app
     #[test]
     fn test_missing_dependency() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // App depends on non-existent dependency
-        apps.insert(
-            "app".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/app".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "nonexistent".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let app = AppBuilder::new("nodejs", "/tmp/app")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("test", "nonexistent")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "app", app)
+            .build();
         
         // Should fail when resolving dependency chain
         let app = resolve_app(&config, "app", None).unwrap();

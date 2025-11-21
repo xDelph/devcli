@@ -4,77 +4,28 @@
 #[cfg(test)]
 mod tests {
     use crate::config::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
     use std::collections::HashMap;
 
     // Helper: Create config with multiple projects and apps
     fn create_multi_project_config() -> Config {
-        let mut projects = HashMap::new();
-        
         // Project 1: infrastructure
-        let mut infra_apps = HashMap::new();
-        infra_apps.insert(
-            "redis".to_string(),
-            App {
-                app_type: "redis".to_string(),
-                path: "/tmp/redis".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "redis-server".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
-        
-        projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
+        let redis = AppBuilder::new("redis", "/tmp/redis")
+            .with_local_command("start", "redis-server")
+            .with_local_default("start")
+            .build();
         
         // Project 2: api (depends on redis)
-        let mut api_apps = HashMap::new();
-        api_apps.insert(
-            "api".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/api".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "infrastructure".to_string(),
-                    app: "redis".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let api = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("infrastructure", "redis")
+            .build();
         
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
-        Config { projects }
+        ConfigBuilder::new()
+            .with_app("infrastructure", "redis", redis)
+            .with_app("api-project", "api", api)
+            .build()
     }
 
     // Test: Resolve app with project specified
@@ -136,14 +87,15 @@ mod tests {
                         k8s: None,
                     },
                     dependencies: Vec::new(),
-                    dockerfile_path: None,
                     defaults: Defaults {
                         local: Some("start".to_string()),
                         docker: None,
                         orbstack: None,
                         k8s: None,
                     },
+                    dockerfile_path: None,
                     stage: None,
+                    env_file_path: None,
                 },
             );
             config.projects.insert(project_name.to_string(), Project { apps });

@@ -2,75 +2,32 @@
 // Focuses on navigation state, selection logic, and view behavior
 
 use super::main_view::{MainTab, MainView, PanelFocus};
-use crate::config::models::{App, Commands, Config, Defaults, Project};
+use crate::config::models::Config;
 use crate::process::tracker::ProcessTracker;
+use crate::test_utils::{AppBuilder, ConfigBuilder};
 use crate::tui::state::AppState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Helper function to create a test configuration
 fn create_test_config() -> Config {
-    let mut projects = HashMap::new();
-    
     // Create a test project with two apps
-    let mut apps = HashMap::new();
-    let mut local_commands = HashMap::new();
-    local_commands.insert("start".to_string(), "npm start".to_string());
-    local_commands.insert("test".to_string(), "npm test".to_string());
+    let app1 = AppBuilder::new("nodejs", "/path/to/app1")
+        .with_local_command("start", "npm start")
+        .with_local_command("test", "npm test")
+        .with_local_default("start")
+        .build();
     
-    apps.insert(
-        "app1".to_string(),
-        App {
-            app_type: "nodejs".to_string(),
-            path: "/path/to/app1".to_string(),
-            commands: Commands {
-                local: Some(local_commands.clone()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            defaults: Defaults {
-                local: Some("start".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            stage: None,
-        },
-    );
+    let app2 = AppBuilder::new("python", "/path/to/app2")
+        .with_local_command("start", "npm start")
+        .with_local_command("test", "npm test")
+        .with_local_default("start")
+        .build();
     
-    apps.insert(
-        "app2".to_string(),
-        App {
-            app_type: "python".to_string(),
-            path: "/path/to/app2".to_string(),
-            commands: Commands {
-                local: Some(local_commands),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            defaults: Defaults {
-                local: Some("start".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            stage: None,
-        },
-    );
-    
-    projects.insert(
-        "test-project".to_string(),
-        Project { apps },
-    );
-    
-    Config { projects }
+    ConfigBuilder::new()
+        .with_app("test-project", "app1", app1)
+        .with_app("test-project", "app2", app2)
+        .build()
 }
 
 /// Helper function to create a test app state

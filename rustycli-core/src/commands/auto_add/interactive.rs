@@ -227,59 +227,120 @@ pub fn interactive_app_selection(apps: &[crate::detection::DetectedApp]) -> Resu
     }
 }
 
-/// Detect available stage-specific environment files in an app directory
-/// Scans for .env.dev, .env.qa, .env.preprod, and .env.prod files
-/// Returns a list of stage names (without the .env. prefix) for files that exist
+/// Information about a detected environment file
+#[derive(Debug, Clone)]
+pub struct EnvFileInfo {
+    /// Relative path from app root (e.g., ".env.qa", "config/.env.prod")
+    pub relative_path: String,
+    /// Detected stage name (e.g., "qa", "prod", "staging")
+    pub stage_name: String,
+    /// Display name for user selection (e.g., ".env.qa", "config/.env.prod")
+    pub display_name: String,
+}
+
+/// Detect available environment files in an app directory and its subfolders
+/// Scans for .env.* files up to 3 levels deep
+/// Returns a list of EnvFileInfo with paths and detected stage names
 ///
 /// # Arguments
 /// * `app_path` - The root directory of the app to scan
 ///
 /// # Returns
-/// Vector of stage names (e.g., ["dev", "qa", "prod"]) for which stage-specific files exist
-pub fn detect_stage_files(app_path: &Path) -> Vec<String> {
-    let mut stages = Vec::new();
+/// Vector of EnvFileInfo for all detected environment files
+pub fn detect_stage_files(app_path: &Path) -> Vec<EnvFileInfo> {
+    use std::fs;
+    
+    let mut env_files = Vec::new();
 
-    // Check for each supported stage
-    for stage in ["dev", "qa", "preprod", "prod"] {
-        let stage_file = app_path.join(format!(".env.{}", stage));
-        if stage_file.exists() {
-            stages.push(stage.to_string());
+    // Helper function to scan a directory for .env.* files
+    fn scan_dir(dir: &Path, app_root: &Path, current_depth: usize, max_depth: usize, results: &mut Vec<EnvFileInfo>) {
+        if current_depth > max_depth {
+            return;
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                
+                // Skip hidden directories (except .env files themselves)
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                    }
+                    // Recursively scan subdirectories
+                    scan_dir(&path, app_root, current_depth + 1, max_depth, results);
+                } else if path.is_file() {
+                    // Check if it's an .env.* file
+                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                        if filename.starts_with(".env.") && filename.len() > 5 {
+                            // Extract stage name (everything after .env.)
+                            let stage_name = filename[5..].to_string();
+                            
+                            // Calculate relative path from app root
+                            let relative_path = path.strip_prefix(app_root)
+                                .unwrap_or(&path)
+                                .to_string_lossy()
+                                .to_string();
+                            
+                            results.push(EnvFileInfo {
+                                relative_path: relative_path.clone(),
+                                stage_name,
+                                display_name: relative_path,
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 
-    stages
+    // Scan app directory and up to 3 levels of subdirectories
+    scan_dir(app_path, app_path, 0, 3, &mut env_files);
+    
+    // Sort by path for consistent ordering
+    env_files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+    env_files
 }
 
-/// Prompt user to select a deployment stage from available stage-specific env files
-/// Shows which stage files were detected and allows user to choose one or skip
+/// Prompt user to select an environment file from detected files
+/// Shows which env files were detected and allows user to choose one or skip
 ///
 /// # Arguments
-/// * `available_stages` - List of stage names that have corresponding .env files
+/// * `available_files` - List of detected environment files with paths and stage names
 ///
 /// # Returns
-/// Optional stage name selected by user, or None if user chose to skip
-pub fn prompt_stage_selection(available_stages: &[String]) -> Result<Option<String>> {
-    if available_stages.is_empty() {
+/// Optional tuple of (stage_name, env_file_path) selected by user, or None if user chose to skip
+pub fn prompt_stage_selection(available_files: &[EnvFileInfo]) -> Result<Option<(String, String)>> {
+    if available_files.is_empty() {
         return Ok(None);
     }
 
-    println!("\nDetected stage-specific environment files:");
-    for stage in available_stages {
-        println!("  .env.{}", stage);
+    println!("\nDetected environment files:");
+    for file in available_files {
+        println!("  {} (stage: {})", file.display_name, file.stage_name);
     }
 
-    // Build options list with available stages plus "none" option
-    let mut options = available_stages.to_vec();
-    options.push("none".to_string());
+    // Build options list with available files plus "none" option
+    let options: Vec<String> = available_files
+        .iter()
+        .map(|f| format!("{} ({})", f.display_name, f.stage_name))
+        .chain(std::iter::once("none (skip stage configuration)".to_string()))
+        .collect();
 
-    let selected = Select::new("Select default deployment stage:", options)
-        .with_help_message("Choose which stage to use by default, or 'none' to skip")
+    let selected = Select::new("Select environment file to use:", options.clone())
+        .with_help_message("Choose which env file to use by default, or 'none' to skip")
         .prompt()?;
 
-    if selected == "none" {
+    if selected.starts_with("none") {
         Ok(None)
     } else {
-        Ok(Some(selected))
+        // Find the selected file info by matching the display string
+        let selected_idx = options.iter().position(|o| o == &selected).unwrap();
+        let file_info = &available_files[selected_idx];
+        Ok(Some((file_info.stage_name.clone(), file_info.relative_path.clone())))
     }
 }
 

@@ -4,82 +4,31 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
     use std::collections::HashMap;
 
     // Helper: Create a test config with known structure
     fn create_test_config() -> Config {
-        let mut projects = HashMap::new();
-        
         // Create infrastructure project with redis
-        let mut infra_apps = HashMap::new();
-        infra_apps.insert(
-            "redis".to_string(),
-            App {
-                app_type: "redis".to_string(),
-                path: "/tmp/redis".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "redis-server".to_string());
-                        cmds
-                    }),
-                    docker: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("run".to_string(), "docker run redis".to_string());
-                        cmds
-                    }),
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: Some("run".to_string()),
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
-        
-        projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
+        let redis = AppBuilder::new("redis", "/tmp/redis")
+            .with_local_command("start", "redis-server")
+            .with_local_default("start")
+            .with_docker_command("run", "docker run redis")
+            .with_docker_default("run")
+            .build();
         
         // Create api project that depends on redis
-        let mut api_apps = HashMap::new();
-        api_apps.insert(
-            "api".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/api".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds.insert("test".to_string(), "npm test".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "infrastructure".to_string(),
-                    app: "redis".to_string(),
-                }],
-                dockerfile_path: None,
-                stage: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
+        let api = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_command("test", "npm test")
+            .with_local_default("start")
+            .with_dependency("infrastructure", "redis")
+            .build();
         
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
-        Config { projects }
+        ConfigBuilder::new()
+            .with_app("infrastructure", "redis", redis)
+            .with_app("api-project", "api", api)
+            .build()
     }
 
     // Test: Config serialization and deserialization
@@ -107,44 +56,17 @@ mod tests {
     // Test: Config with all three environments
     #[test]
     fn test_config_with_k8s_environment() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
+        let web = AppBuilder::new("nodejs", "/tmp/web")
+            .with_docker_command("run", "docker run web")
+            .with_docker_default("run")
+            .with_k8s_command("apply", "kubectl apply -f k8s/")
+            .with_k8s_command("delete", "kubectl delete -f k8s/")
+            .with_k8s_default("apply")
+            .build();
         
-        let mut apps = HashMap::new();
-        apps.insert(
-            "web".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/web".to_string(),
-                commands: Commands {
-                    local: None,
-                    docker: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("run".to_string(), "docker run web".to_string());
-                        cmds
-                    }),
-                    orbstack: None,
-                    k8s: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("apply".to_string(), "kubectl apply -f k8s/".to_string());
-                        cmds.insert("delete".to_string(), "kubectl delete -f k8s/".to_string());
-                        cmds
-                    }),
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: None,
-                defaults: Defaults {
-                    local: None,
-                    docker: Some("run".to_string()),
-                    orbstack: None,
-                    k8s: Some("apply".to_string()),
-                },
-            },
-        );
-        
-        config.projects.insert("web-project".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("web-project", "web", web)
+            .build();
         
         // Serialize and check
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -173,25 +95,7 @@ mod tests {
     // Test: App with no commands fails validation
     #[test]
     fn test_app_with_no_commands() {
-        let app = App {
-            app_type: "nodejs".to_string(),
-            path: "/tmp/app".to_string(),
-            commands: Commands {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: None,
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
+        let app = AppBuilder::new("nodejs", "/tmp/app").build();
         
         // App should serialize/deserialize fine
         let json = serde_json::to_string(&app).unwrap();
@@ -216,6 +120,7 @@ mod tests {
             detached_mode: true,
             auto_start_deps: false,
             docker_platform: "linux/arm64".to_string(),
+            default_stage: Some("qa".to_string()),
         };
         
         let json = serde_json::to_string_pretty(&prefs).unwrap();
@@ -224,6 +129,7 @@ mod tests {
         assert!(deserialized.detached_mode);
         assert_eq!(deserialized.docker_platform, "linux/arm64");
         assert!(!deserialized.auto_start_deps);
+        assert_eq!(deserialized.default_stage, Some("qa".to_string()));
     }
 
     // Test: Commands with only one environment
@@ -304,35 +210,18 @@ mod tests {
             projects: HashMap::new(),
         };
         
-        let mut apps = HashMap::new();
-        apps.insert(
-            "my-app".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "~/Projects/my app/with spaces".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
+        let app = AppBuilder::new("nodejs", "~/Projects/my app/with spaces")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        config.projects.insert("test".to_string(), Project { 
+            apps: {
+                let mut apps = HashMap::new();
+                apps.insert("my-app".to_string(), app);
+                apps
+            }
+        });
         
         // Should serialize/deserialize with special chars
         let json = serde_json::to_string(&config).unwrap();
@@ -344,43 +233,20 @@ mod tests {
     // Test: Large config with many projects and apps
     #[test]
     fn test_large_config() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
+        let mut builder = ConfigBuilder::new();
         
         // Create 10 projects, each with 5 apps
         for i in 0..10 {
-            let mut apps = HashMap::new();
             for j in 0..5 {
-                apps.insert(
-                    format!("app-{}", j),
-                    App {
-                        app_type: "nodejs".to_string(),
-                        path: format!("/tmp/project{}/app{}", i, j),
-                        commands: Commands {
-                            local: Some({
-                                let mut cmds = HashMap::new();
-                                cmds.insert("start".to_string(), "npm start".to_string());
-                                cmds
-                            }),
-                            docker: None,
-                            orbstack: None,
-                            k8s: None,
-                        },
-                        dependencies: Vec::new(),
-                        dockerfile_path: None,
-                        stage: None,
-                        defaults: Defaults {
-                            local: Some("start".to_string()),
-                            docker: None,
-                            orbstack: None,
-                            k8s: None,
-                        },
-                    },
-                );
+                let app = AppBuilder::new("nodejs", &format!("/tmp/project{}/app{}", i, j))
+                    .with_local_command("start", "npm start")
+                    .with_local_default("start")
+                    .build();
+                builder = builder.with_app(&format!("project-{}", i), &format!("app-{}", j), app);
             }
-            config.projects.insert(format!("project-{}", i), Project { apps });
         }
+        
+        let config = builder.build();
         
         // Should handle large configs
         let json = serde_json::to_string(&config).unwrap();
@@ -434,39 +300,15 @@ mod tests {
     // Test: Config with stage field serializes and deserializes correctly
     #[test]
     fn test_stage_field_serialization() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
+        let app = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_stage("dev")
+            .build();
         
-        let mut apps = HashMap::new();
-        apps.insert(
-            "api".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/api".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: Some("dev".to_string()),
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
-        
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "api", app)
+            .build();
         
         // Serialize and verify stage is included
         let json = serde_json::to_string(&config).unwrap();
@@ -482,69 +324,23 @@ mod tests {
     // Test: Mixed config with some apps having stage and others not
     #[test]
     fn test_mixed_stage_configuration() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // App with stage
-        apps.insert(
-            "api".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/api".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: Some("prod".to_string()),
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
+        let api = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_stage("prod")
+            .build();
         
         // App without stage
-        apps.insert(
-            "worker".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/worker".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                stage: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-            },
-        );
+        let worker = AppBuilder::new("nodejs", "/tmp/worker")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "api", api)
+            .with_app("test", "worker", worker)
+            .build();
         
         // Serialize and deserialize
         let json = serde_json::to_string(&config).unwrap();

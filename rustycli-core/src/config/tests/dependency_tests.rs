@@ -4,77 +4,27 @@
 #[cfg(test)]
 mod tests {
     use crate::config::*;
-    use std::collections::HashMap;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
 
     // Helper: Create config with multiple projects and apps
     fn create_multi_project_config() -> Config {
-        let mut projects = HashMap::new();
-        
         // Project 1: infrastructure
-        let mut infra_apps = HashMap::new();
-        infra_apps.insert(
-            "redis".to_string(),
-            App {
-                app_type: "redis".to_string(),
-                path: "/tmp/redis".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "redis-server".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
-        
-        projects.insert("infrastructure".to_string(), Project { apps: infra_apps });
+        let redis = AppBuilder::new("redis", "/tmp/redis")
+            .with_local_command("start", "redis-server")
+            .with_local_default("start")
+            .build();
         
         // Project 2: api (depends on redis)
-        let mut api_apps = HashMap::new();
-        api_apps.insert(
-            "api".to_string(),
-            App {
-                app_type: "nodejs".to_string(),
-                path: "/tmp/api".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "npm start".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "infrastructure".to_string(),
-                    app: "redis".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let api = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_dependency("infrastructure", "redis")
+            .build();
         
-        projects.insert("api-project".to_string(), Project { apps: api_apps });
-        Config { projects }
+        ConfigBuilder::new()
+            .with_app("infrastructure", "redis", redis)
+            .with_app("api-project", "api", api)
+            .build()
     }
 
     // Test: Simple dependency chain
@@ -92,103 +42,31 @@ mod tests {
     // Test: Complex dependency chain (A->B->C)
     #[test]
     fn test_complex_dependency_chain() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // C: no dependencies
-        apps.insert(
-            "c".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/c".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo c".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let c = AppBuilder::new("test", "/tmp/c")
+            .with_local_command("start", "echo c")
+            .with_local_default("start")
+            .build();
         
         // B: depends on C
-        apps.insert(
-            "b".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/b".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo b".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "c".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let b = AppBuilder::new("test", "/tmp/b")
+            .with_local_command("start", "echo b")
+            .with_local_default("start")
+            .with_dependency("test", "c")
+            .build();
         
         // A: depends on B
-        apps.insert(
-            "a".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/a".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo a".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "b".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let a = AppBuilder::new("test", "/tmp/a")
+            .with_local_command("start", "echo a")
+            .with_local_default("start")
+            .with_dependency("test", "b")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "c", c)
+            .with_app("test", "b", b)
+            .with_app("test", "a", a)
+            .build();
         
         // Resolve dependency chain for A
         let a_app = resolve_app(&config, "a", None).unwrap();
@@ -206,140 +84,40 @@ mod tests {
     // Test: Diamond dependency (A depends on B and C, both depend on D)
     #[test]
     fn test_diamond_dependency() {
-        let mut config = Config {
-            projects: HashMap::new(),
-        };
-        
-        let mut apps = HashMap::new();
-        
         // D: no dependencies (base)
-        apps.insert(
-            "d".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/d".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo d".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: Vec::new(),
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let d = AppBuilder::new("test", "/tmp/d")
+            .with_local_command("start", "echo d")
+            .with_local_default("start")
+            .build();
         
         // B depends on D
-        apps.insert(
-            "b".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/b".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo b".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "d".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let b = AppBuilder::new("test", "/tmp/b")
+            .with_local_command("start", "echo b")
+            .with_local_default("start")
+            .with_dependency("test", "d")
+            .build();
         
         // C depends on D
-        apps.insert(
-            "c".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/c".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo c".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![Dependency {
-                    project: "test".to_string(),
-                    app: "d".to_string(),
-                }],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let c = AppBuilder::new("test", "/tmp/c")
+            .with_local_command("start", "echo c")
+            .with_local_default("start")
+            .with_dependency("test", "d")
+            .build();
         
         // A depends on B and C
-        apps.insert(
-            "a".to_string(),
-            App {
-                app_type: "test".to_string(),
-                path: "/tmp/a".to_string(),
-                commands: Commands {
-                    local: Some({
-                        let mut cmds = HashMap::new();
-                        cmds.insert("start".to_string(), "echo a".to_string());
-                        cmds
-                    }),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                dependencies: vec![
-                    Dependency {
-                        project: "test".to_string(),
-                        app: "b".to_string(),
-                    },
-                    Dependency {
-                        project: "test".to_string(),
-                        app: "c".to_string(),
-                    },
-                ],
-                dockerfile_path: None,
-                defaults: Defaults {
-                    local: Some("start".to_string()),
-                    docker: None,
-                    orbstack: None,
-                    k8s: None,
-                },
-                stage: None,
-            },
-        );
+        let a = AppBuilder::new("test", "/tmp/a")
+            .with_local_command("start", "echo a")
+            .with_local_default("start")
+            .with_dependency("test", "b")
+            .with_dependency("test", "c")
+            .build();
         
-        config.projects.insert("test".to_string(), Project { apps });
+        let config = ConfigBuilder::new()
+            .with_app("test", "d", d)
+            .with_app("test", "b", b)
+            .with_app("test", "c", c)
+            .with_app("test", "a", a)
+            .build();
         
         // Resolve dependency chain for A
         let a_app = resolve_app(&config, "a", None).unwrap();

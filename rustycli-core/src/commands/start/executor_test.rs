@@ -3,33 +3,14 @@
 #[cfg(test)]
 mod tests {
     use super::super::resolver::*;
-    use crate::config::models::*;
     use crate::config::resolver::ResolvedApp;
-    use std::collections::HashMap;
+    use crate::test_utils::AppBuilder;
 
     fn create_test_app_to_start(app_name: &str, project: &str) -> AppToStart {
-        let mut commands = HashMap::new();
-        commands.insert("start".to_string(), "echo test".to_string());
-        
-        let app = App {
-            app_type: "test".to_string(),
-            path: "/tmp".to_string(), // Use a path that exists
-            commands: Commands {
-                local: Some(commands),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: Vec::new(),
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: Some("start".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
+        let app = AppBuilder::new("test", "/tmp")
+            .with_local_command("start", "echo test")
+            .with_local_default("start")
+            .build();
         
         let resolved_app = ResolvedApp {
             app,

@@ -50,7 +50,7 @@ inclusion: always
 
 ## Command Usage
 
-- **AVOID sed, awk, or similar text manipulation commands**
+- **FORBIDDEN sed, awk, perl or similar text manipulation commands**
 - These tools can easily break code syntax
 - Use proper code editing tools (strReplace, fsWrite) instead
 - Prefer Rust-aware tooling when available

@@ -59,14 +59,20 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         
         // Detect and prompt for stage selection
         let app_path = crate::utils::path::expand_path(&detected.path);
-        let available_stages = detect_stage_files(&app_path);
-        let stage = prompt_stage_selection(&available_stages)?;
+        let available_env_files = detect_stage_files(&app_path);
+        let stage_info = prompt_stage_selection(&available_env_files)?;
         
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
             continue;
         }
+        
+        // Extract stage and env_file_path from stage_info
+        let (stage, env_file_path) = match stage_info {
+            Some((s, p)) => (Some(s), Some(p)),
+            None => (None, None),
+        };
         
         // Build the App struct from detected data
         let app = App {
@@ -87,6 +93,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             },
             dockerfile_path: detected.dockerfile_path.clone(),
             stage, // Set stage from user selection
+            env_file_path, // Set env file path from user selection
         };
         
         // Insert the app into the config

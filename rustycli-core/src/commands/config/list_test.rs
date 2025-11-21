@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod list_tests {
-    use crate::config::{Config, Project, App, Commands, Defaults};
-    use std::collections::HashMap;
+    use crate::config::Config;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
     use std::fs;
     use tempfile::TempDir;
 
@@ -15,63 +15,21 @@ mod list_tests {
         fs::create_dir_all(&app1_dir).unwrap();
         fs::create_dir_all(&app2_dir).unwrap();
         
-        let mut projects = HashMap::new();
+        let app1 = AppBuilder::new("nodejs", &app1_dir.to_string_lossy())
+            .with_local_command("start", "npm start")
+            .with_local_command("test", "npm test")
+            .with_local_default("start")
+            .build();
         
-        // Project 1 with 2 apps
-        let mut apps1 = HashMap::new();
+        let app2 = AppBuilder::new("python", &app2_dir.to_string_lossy())
+            .with_local_command("serve", "python -m http.server")
+            .with_local_default("serve")
+            .build();
         
-        let mut local_commands1 = HashMap::new();
-        local_commands1.insert("start".to_string(), "npm start".to_string());
-        local_commands1.insert("test".to_string(), "npm test".to_string());
-        
-        let app1 = App {
-            app_type: "nodejs".to_string(),
-            path: app1_dir.to_string_lossy().to_string(),
-            commands: Commands {
-                local: Some(local_commands1),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: vec![],
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: Some("start".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
-        
-        let mut local_commands2 = HashMap::new();
-        local_commands2.insert("serve".to_string(), "python -m http.server".to_string());
-        
-        let app2 = App {
-            app_type: "python".to_string(),
-            path: app2_dir.to_string_lossy().to_string(),
-            commands: Commands {
-                local: Some(local_commands2),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: vec![],
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: Some("serve".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
-        
-        apps1.insert("app1".to_string(), app1);
-        apps1.insert("app2".to_string(), app2);
-        projects.insert("project1".to_string(), Project { apps: apps1 });
-        
-        Config { projects }
+        ConfigBuilder::new()
+            .with_app("project1", "app1", app1)
+            .with_app("project1", "app2", app2)
+            .build()
     }
 
     #[test]

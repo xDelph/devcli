@@ -2,7 +2,8 @@
 
 #[cfg(test)]
 mod edit_tests {
-    use crate::config::{Config, Project, App, Commands, Defaults};
+    use crate::config::Config;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
@@ -12,35 +13,15 @@ mod edit_tests {
         let app_dir = temp_dir.path().join("test-app");
         fs::create_dir_all(&app_dir).unwrap();
         
-        let mut projects = HashMap::new();
-        let mut apps = HashMap::new();
-        let mut local_commands = HashMap::new();
-        local_commands.insert("start".to_string(), "npm start".to_string());
-        local_commands.insert("test".to_string(), "npm test".to_string());
+        let app = AppBuilder::new("nodejs", &app_dir.to_string_lossy())
+            .with_local_command("start", "npm start")
+            .with_local_command("test", "npm test")
+            .with_local_default("start")
+            .build();
         
-        let app = App {
-            app_type: "nodejs".to_string(),
-            path: app_dir.to_string_lossy().to_string(),
-            commands: Commands {
-                local: Some(local_commands),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-            dependencies: vec![],
-            dockerfile_path: None,
-            stage: None,
-            defaults: Defaults {
-                local: Some("start".to_string()),
-                docker: None,
-                orbstack: None,
-                k8s: None,
-            },
-        };
-        
-        apps.insert("test-app".to_string(), app);
-        projects.insert("test-project".to_string(), Project { apps });
-        Config { projects }
+        ConfigBuilder::new()
+            .with_app("test-project", "test-app", app)
+            .build()
     }
 
     #[test]

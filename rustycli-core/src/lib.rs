@@ -9,6 +9,11 @@ pub mod process;
 pub mod tui;
 pub mod utils;
 
+// Test utilities for creating mock data in tests
+// Only compiled when running tests
+#[cfg(test)]
+pub mod test_utils;
+
 // Re-export commonly used types from the anyhow crate for error handling
 // This allows users of our library to use these types without importing anyhow directly
 pub use anyhow::{Context, Result};

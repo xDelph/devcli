@@ -322,6 +322,7 @@ impl MainView {
             },
             dockerfile_path: None,
             stage: None, // No stage configured in TUI editor (will be added in future task)
+            env_file_path: None, // No env file path configured in TUI editor
         }
     }
 
