@@ -38,7 +38,7 @@
   - Update app creation to include stage field
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ] 6. Update TUI to display stage information
+- [x] 6. Update TUI to display stage information
 
   - Add stage indicator to app list rendering in `tui/views/main_view/renderer.rs`
   - Update process info display to show stage

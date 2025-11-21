@@ -172,10 +172,44 @@ impl MainView {
             Style::default().fg(theme.text)
         };
         
+        // Build stage indicator
+        // Show active_stage if running (may be overridden), otherwise show configured stage
+        let stage_indicator = if app.status.is_running() {
+            // For running apps, show the active stage (the one actually used)
+            if let Some(ref stage) = app.active_stage {
+                format!(" [{}]", stage.to_uppercase())
+            } else {
+                String::new()
+            }
+        } else {
+            // For stopped apps, show the configured stage
+            if let Some(ref stage) = app.stage {
+                format!(" [{}]", stage.to_uppercase())
+            } else {
+                String::new()
+            }
+        };
+        
+        // Style for stage indicator - use a distinct color
+        let stage_style = if is_selected {
+            if self.focus == PanelFocus::AppList {
+                Style::default()
+                    .bg(theme.selected_bg)
+                    .fg(theme.secondary)
+            } else {
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD)
+            }
+        } else {
+            Style::default().fg(theme.secondary)
+        };
+        
         Line::from(vec![
             Span::raw("  "),
             Span::styled(status_icon, Style::default().fg(status_color)),
             Span::styled(format!(" {}", app.name), text_style),
+            Span::styled(stage_indicator, stage_style),
         ])
     }
 
@@ -258,6 +292,30 @@ impl MainView {
             Span::styled("Project:     ", Style::default().fg(theme.text_dim)),
             Span::styled(app.project.clone(), Style::default().fg(theme.text)),
         ]));
+
+        // Show stage information
+        // For running apps, show active stage (may be overridden with --stage flag)
+        // For stopped apps, show configured stage
+        if app.status.is_running() {
+            if let Some(ref active_stage) = app.active_stage {
+                lines.push(Line::from(vec![
+                    Span::styled("Stage:       ", Style::default().fg(theme.text_dim)),
+                    Span::styled(
+                        active_stage.to_uppercase(),
+                        Style::default().fg(theme.secondary).add_modifier(Modifier::BOLD)
+                    ),
+                    Span::styled(" (active)", Style::default().fg(theme.text_dim)),
+                ]));
+            }
+        } else if let Some(ref stage) = app.stage {
+            lines.push(Line::from(vec![
+                Span::styled("Stage:       ", Style::default().fg(theme.text_dim)),
+                Span::styled(
+                    stage.to_uppercase(),
+                    Style::default().fg(theme.secondary)
+                ),
+            ]));
+        }
 
         if let Some(path) = &app.path {
             lines.push(Line::from(vec![

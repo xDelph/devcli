@@ -52,6 +52,13 @@ impl AppState {
             for (app_name, app_config) in &project_config.apps {
                 // Determine if the app is running by checking the process tracker
                 let status = Self::determine_status(app_name, process_tracker);
+                
+                // Get the active stage from the running process (if any)
+                let active_stage = process_tracker
+                    .get_process(app_name)
+                    .ok()
+                    .flatten()
+                    .and_then(|info| info.stage);
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
@@ -67,6 +74,10 @@ impl AppState {
                         .iter()
                         .map(|dep| format!("{}/{}", dep.project, dep.app))
                         .collect(),
+                    // Stage from configuration
+                    stage: app_config.stage.clone(),
+                    // Active stage from running process (may differ if overridden)
+                    active_stage,
                 };
 
                 apps.push(app_state);
@@ -270,6 +281,13 @@ pub struct AppStateData {
     pub path: Option<String>,
     /// List of dependency app names
     pub dependencies: Vec<String>,
+    /// Deployment stage (dev, qa, preprod, prod) if configured
+    /// This is the stage from the app configuration
+    pub stage: Option<String>,
+    /// Active stage for running processes
+    /// This is the stage that was actually used when starting the process
+    /// (may differ from configured stage if overridden with --stage flag)
+    pub active_stage: Option<String>,
 }
 
 /// Information about a command
