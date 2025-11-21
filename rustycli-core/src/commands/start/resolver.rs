@@ -21,6 +21,7 @@ pub struct StartCommandArgs {
     pub env: Option<String>,        // Optional: "local" or "docker" (overrides preference)
     pub skip_deps: bool,            // If true, don't check/start dependencies
     pub silent: bool,               // If true, don't show output to terminal (for TUI mode)
+    pub stage: Option<String>,      // Optional: deployment stage override (dev, qa, preprod, prod)
 }
 
 /// Information about an app that's ready to start

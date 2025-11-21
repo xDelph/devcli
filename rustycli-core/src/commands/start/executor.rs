@@ -25,7 +25,12 @@ use super::resolver::{AppToStart, StartCommandArgs};
 /// Start all apps in parallel
 /// 
 /// Returns a vector of successfully started app names
-pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment: &str, silent: bool) -> Result<Vec<String>> {
+pub async fn start_apps_in_parallel(
+    apps_to_start: Vec<AppToStart>,
+    environment: &str,
+    silent: bool,
+    stage_override: Option<String>,
+) -> Result<Vec<String>> {
     if !silent {
         println!("\nStarting {} app(s) in parallel...", apps_to_start.len());
     }
@@ -39,6 +44,7 @@ pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment:
     for app_info in apps_to_start {
         let app_name = app_info.resolved_app.app_name.clone();
         let environment = environment.to_string();
+        let stage = stage_override.clone();
         
         let task = tokio::spawn(async move {
             start_single_app_process(
@@ -47,6 +53,7 @@ pub async fn start_apps_in_parallel(apps_to_start: Vec<AppToStart>, environment:
                 app_info.default_command,
                 environment,
                 show_output,
+                stage,
             ).await
                 .map_err(|e| format!("{}: {}", app_name, e))
         });
@@ -98,8 +105,25 @@ async fn start_single_app_process(
     default_command: String,
     environment: String,
     show_output: bool,
+    stage_override: Option<String>,
 ) -> Result<String> {
     let app_name = resolved_app.app_name.clone();
+    
+    // Determine which stage to use (override takes precedence over config)
+    let effective_stage = stage_override
+        .or_else(|| resolved_app.app.stage.clone());
+    
+    // Validate stage if present
+    if let Some(ref stage) = effective_stage {
+        use crate::config::models::Stage;
+        if Stage::from_string(stage).is_none() {
+            anyhow::bail!(
+                "Invalid stage '{}'. Must be one of: {}",
+                stage,
+                Stage::all_names()
+            );
+        }
+    }
     
     // Step 1: Expand the working directory path
     let working_dir = expand_path(&resolved_app.app.path);
@@ -137,12 +161,21 @@ async fn start_single_app_process(
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
             
             // For Docker, use --env-file flag if .env exists
-            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref(), None) {
+            // Priority: Stage-specific file > base .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(
+                &working_dir,
+                resolved_app.app.dockerfile_path.as_deref(),
+                effective_stage.as_deref()
+            ) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,
                     &env_file_path
                 );
+                
+                // Log which env file is being used
+                if show_output {
+                    println!("  Using env file: {}", env_file_path);
+                }
             }
             
             // Inject dockerfile path for build commands
@@ -154,12 +187,21 @@ async fn start_single_app_process(
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
             
             // For OrbStack, use --env-file flag (same as Docker)
-            // Priority: Dockerfile-level .env > root .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(&working_dir, resolved_app.app.dockerfile_path.as_deref(), None) {
+            // Priority: Stage-specific file > base .env (using dockerfile_path from config)
+            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(
+                &working_dir,
+                resolved_app.app.dockerfile_path.as_deref(),
+                effective_stage.as_deref()
+            ) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,
                     &env_file_path
                 );
+                
+                // Log which env file is being used
+                if show_output {
+                    println!("  Using env file: {}", env_file_path);
+                }
             }
             
             // Inject dockerfile path for build commands
@@ -216,7 +258,7 @@ async fn start_single_app_process(
         app_config_name: Some(resolved_app.app_name.clone()),
         environment: Some(environment),
         command_variant: Some(default_command),
-        stage: None, // Stage tracking will be added in future task
+        stage: effective_stage,
     };
     
     // Step 8: Save the process info to a PID file
@@ -301,7 +343,14 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
     }
     
     // Step 10: Start the single app using our helper function
-    start_single_app_process(resolved_app, command, default_command, environment, show_output).await?;
+    start_single_app_process(
+        resolved_app,
+        command,
+        default_command,
+        environment,
+        show_output,
+        args.stage,
+    ).await?;
     
     // Step 11: Ensure background monitor is running
     let binary_path = crate::process::monitor::get_rustycli_binary_path()?;

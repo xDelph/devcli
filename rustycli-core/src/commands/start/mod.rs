@@ -56,7 +56,12 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     }
     
     // Step 3: Start all apps in parallel
-    let started_apps = start_apps_in_parallel(apps_to_start, &environment, silent).await?;
+    let started_apps = start_apps_in_parallel(
+        apps_to_start,
+        &environment,
+        silent,
+        args.stage.clone(),
+    ).await?;
     
     // Step 4: Handle different modes and keep process alive for log viewing
     setup_log_monitoring(&started_apps, silent).await?;

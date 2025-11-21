@@ -14,7 +14,7 @@
   - Create `detection/environments/orbstack_stage_test.rs` for stage-specific file detection tests
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-- [ ] 3. Integrate stage into start command execution
+- [x] 3. Integrate stage into start command execution
 
   - Add `stage` field to `StartCommandArgs` in `commands/start/resolver.rs`
   - Update `start_single_app_process()` in `commands/start/executor.rs` to accept and use stage parameter

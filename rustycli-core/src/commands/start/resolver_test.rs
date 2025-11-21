@@ -37,12 +37,14 @@ mod tests {
             env: Some("local".to_string()),
             skip_deps: true,
             silent: false,
+            stage: Some("dev".to_string()),
         };
         
         let cloned = args.clone();
         assert_eq!(args.app_names, cloned.app_names);
         assert_eq!(args.project, cloned.project);
         assert_eq!(args.env, cloned.env);
+        assert_eq!(args.stage, cloned.stage);
         assert_eq!(args.skip_deps, cloned.skip_deps);
     }
 

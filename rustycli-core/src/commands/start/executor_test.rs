@@ -52,6 +52,7 @@ mod tests {
             env: None,
             skip_deps: false,
             silent: false,
+            stage: None,
         };
         
         // Empty app_names should be handled by the caller
@@ -66,6 +67,7 @@ mod tests {
             env: Some("local".to_string()),
             skip_deps: true,
             silent: false,
+            stage: Some("dev".to_string()),
         };
         
         assert_eq!(args.app_names.len(), 1);
@@ -73,6 +75,7 @@ mod tests {
         assert_eq!(args.project.as_ref().unwrap(), "test-project");
         assert_eq!(args.env.as_ref().unwrap(), "local");
         assert!(args.skip_deps);
+        assert_eq!(args.stage.as_ref().unwrap(), "dev");
     }
 
     #[test]
@@ -83,6 +86,7 @@ mod tests {
             env: None,
             skip_deps: false,
             silent: false,
+            stage: None,
         };
         
         assert_eq!(args.app_names.len(), 3);
@@ -92,6 +96,7 @@ mod tests {
         assert!(args.project.is_none());
         assert!(args.env.is_none());
         assert!(!args.skip_deps);
+        assert!(args.stage.is_none());
     }
 
     #[test]

@@ -54,6 +54,9 @@ enum Commands {
         
         #[arg(long, help = "Skip dependency checks")]
         skip_deps: bool, // Boolean flag: --skip-deps (no value needed)
+        
+        #[arg(short, long, help = "Deployment stage: 'dev', 'qa', 'preprod', or 'prod' (overrides config)")]
+        stage: Option<String>, // Optional flag: --stage or -s
     },
     
     // The "restart" subcommand
@@ -321,6 +324,7 @@ async fn run() -> Result<()> {
             project,
             env,
             skip_deps,
+            stage,
         } => {
             // Bundle the arguments into a struct
             // This is the pattern we use: CLI args → struct → command function
@@ -331,6 +335,7 @@ async fn run() -> Result<()> {
                 env,
                 skip_deps,
                 silent: false, // CLI mode - show output to terminal
+                stage,
             };
             
             // Call the start command from our core library

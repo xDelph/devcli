@@ -106,6 +106,7 @@ async fn start_missing_dependencies(missing: Vec<String>, environment: &str, sil
                     env: Some(env),
                     skip_deps: false,
                     silent,
+                    stage: None, // Dependencies use their own configured stage, not parent's override
                 };
                 
                 super::executor::start_single_app_internal(dep_args, show_output).await

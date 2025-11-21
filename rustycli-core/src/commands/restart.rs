@@ -233,6 +233,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
                                     env: Some(env),
                                     skip_deps: false,
                                     silent, // Pass through silent flag
+                                    stage: None, // Dependencies use their own configured stage
                                 };
 
                                 crate::commands::start::start_command(dep_args)
