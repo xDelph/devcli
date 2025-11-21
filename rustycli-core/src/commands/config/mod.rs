@@ -27,7 +27,8 @@ pub use edit::{
     config_add_command, 
     config_remove_command, 
     config_set_default, 
-    config_edit_command
+    config_edit_command,
+    config_set_stage
 };
 
 // Internal helper functions are not re-exported - they remain private to this module

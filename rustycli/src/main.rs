@@ -12,8 +12,9 @@ use clap::{Parser, Subcommand};
 use rustycli_core::commands::{
     auto_add_command, config_add_command, config_edit, config_edit_command, config_init, 
     config_list, config_list_commands, config_remove_command, config_set_default, 
-    config_show, config_validate, monitor_command, pref_reset, pref_set, pref_show, 
-    restart_command, run_command, start_command, status_command, stop_command, ui_command,
+    config_set_stage, config_show, config_validate, monitor_command, pref_reset, pref_set, 
+    pref_show, restart_command, run_command, start_command, status_command, stop_command, 
+    ui_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -269,6 +270,18 @@ enum ConfigAction {
         #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
         project: Option<String>,
     },
+    
+    #[command(about = "Set the deployment stage for an app")]
+    SetStage {
+        #[arg(help = "App name (optional - will prompt if not provided)")]
+        app_name: Option<String>,
+        
+        #[arg(help = "Stage (dev, qa, preprod, prod, none) (optional - will prompt if not provided)")]
+        stage: Option<String>,
+        
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+    },
 }
 
 // Nested subcommands for "pref"
@@ -446,6 +459,9 @@ async fn run() -> Result<()> {
             },
             ConfigAction::EditCommand { app_name, environment, command_name, project } => {
                 config_edit_command(app_name, project, environment, command_name).await?
+            },
+            ConfigAction::SetStage { app_name, stage, project } => {
+                config_set_stage(app_name, project, stage).await?
             },
         },
         

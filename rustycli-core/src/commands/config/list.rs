@@ -5,6 +5,7 @@
 //! command functionality.
 
 use crate::config::{list_all_apps, load_config, resolve_app};
+use crate::utils::path::expand_tilde;
 use crate::Result;
 use std::collections::HashMap;
 
@@ -66,6 +67,11 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                 // Show path
                 println!("    Path: {}", app.path);
                 
+                // Show stage if configured
+                if let Some(ref stage) = app.stage {
+                    println!("    Stage: {}", stage);
+                }
+                
                 // Show default commands (if configured)
                 let local_default = app.defaults.local.as_deref().unwrap_or("none");
                 let docker_default = app.defaults.docker.as_deref().unwrap_or("none");
@@ -74,6 +80,38 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                     "    Defaults: local='{}', docker='{}', k8s='{}'",
                     local_default, docker_default, k8s_default
                 );
+                
+                // Show environment files for each configured environment
+                // Expand the path to resolve ~ and check for env files
+                let expanded_path = expand_tilde(&app.path);
+                let app_path = expanded_path.as_path();
+                
+                // Only show env files if the path exists
+                if app_path.exists() {
+                    let mut env_files_shown = false;
+                    
+                    // Check each environment that has commands configured
+                    for env in ["local", "docker", "orbstack", "k8s"] {
+                        if app.commands.get(env).is_some() {
+                            // Find which env file would be used for this environment
+                            let env_file = crate::detection::find_env_file(
+                                app_path,
+                                app.dockerfile_path.as_deref(),
+                                app.stage.as_deref()
+                            ).ok().flatten();
+                            
+                            // Only print header if we have at least one env file to show
+                            if !env_files_shown && env_file.is_some() {
+                                println!("    Environment Files:");
+                                env_files_shown = true;
+                            }
+                            
+                            if let Some(path) = env_file {
+                                println!("      {}: {}", env, path);
+                            }
+                        }
+                    }
+                }
                 
                 // Show dependencies if any
                 if !app.dependencies.is_empty() {
@@ -121,6 +159,11 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     println!("Type: {}", resolved.app.app_type);
     println!("Path: {}", resolved.app.path);
     
+    // Display stage if configured
+    if let Some(ref stage) = resolved.app.stage {
+        println!("Stage: {}", stage);
+    }
+    
     // Display defaults (if configured)
     println!("\nDefaults:");
     if let Some(default_local) = &resolved.app.defaults.local {
@@ -160,6 +203,39 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
         }
     } else {
         println!("  (none configured)");
+    }
+    
+    // Display environment files for each configured environment
+    let expanded_path = expand_tilde(&resolved.app.path);
+    let app_path = expanded_path.as_path();
+    
+    if app_path.exists() {
+        println!("\nEnvironment Files:");
+        let mut found_any = false;
+        
+        for env in ["local", "docker", "orbstack", "k8s"] {
+            if resolved.app.commands.get(env).is_some() {
+                let env_file = crate::detection::find_env_file(
+                    app_path,
+                    resolved.app.dockerfile_path.as_deref(),
+                    resolved.app.stage.as_deref()
+                ).ok().flatten();
+                
+                match env_file {
+                    Some(path) => {
+                        println!("  {}: {}", env, path);
+                        found_any = true;
+                    }
+                    None => {
+                        println!("  {}: No environment file", env);
+                    }
+                }
+            }
+        }
+        
+        if !found_any {
+            println!("  (no environment files found)");
+        }
     }
     
     Ok(())

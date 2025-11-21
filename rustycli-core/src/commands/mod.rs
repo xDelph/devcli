@@ -14,7 +14,8 @@ pub mod ui;
 pub use auto_add::auto_add_command;
 pub use config::{
     config_add_command, config_edit, config_edit_command, config_init, config_list,
-    config_list_commands, config_remove_command, config_set_default, config_show, config_validate,
+    config_list_commands, config_remove_command, config_set_default, config_set_stage, 
+    config_show, config_validate,
 };
 pub use monitor::monitor_command;
 pub use preferences::{pref_reset, pref_set, pref_show};

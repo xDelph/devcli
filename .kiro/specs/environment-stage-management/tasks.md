@@ -23,7 +23,7 @@
   - Add logging to show which env file is being used
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 6.1, 6.2, 6.5_
 
-- [ ] 4. Add stage management to config commands
+- [x] 4. Add stage management to config commands
 
   - Create `config_set_stage()` function in `commands/config/edit.rs`
   - Update `config_list()` in `commands/config/list.rs` to display stage and env file information

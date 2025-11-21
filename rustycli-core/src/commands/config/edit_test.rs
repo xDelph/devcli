@@ -122,4 +122,66 @@ mod edit_tests {
         let new_default = app.defaults.local.as_ref().unwrap();
         assert!(local_commands.contains_key(new_default), "New default should exist in commands");
     }
+
+    #[test]
+    fn test_stage_validation() {
+        use crate::config::models::Stage;
+        
+        // Test valid stages
+        assert!(Stage::from_string("dev").is_some());
+        assert!(Stage::from_string("qa").is_some());
+        assert!(Stage::from_string("preprod").is_some());
+        assert!(Stage::from_string("prod").is_some());
+        
+        // Test invalid stages
+        assert!(Stage::from_string("invalid").is_none());
+        assert!(Stage::from_string("development").is_none());
+        assert!(Stage::from_string("production").is_none());
+        assert!(Stage::from_string("").is_none());
+    }
+
+    #[test]
+    fn test_stage_configuration_logic() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = create_test_config(&temp_dir);
+        
+        let app = config.projects.get_mut("test-project").unwrap()
+            .apps.get_mut("test-app").unwrap();
+        
+        // Initially stage should be None
+        assert!(app.stage.is_none());
+        
+        // Set stage to dev
+        app.stage = Some("dev".to_string());
+        assert_eq!(app.stage.as_ref().unwrap(), "dev");
+        
+        // Change stage to prod
+        app.stage = Some("prod".to_string());
+        assert_eq!(app.stage.as_ref().unwrap(), "prod");
+        
+        // Remove stage
+        app.stage = None;
+        assert!(app.stage.is_none());
+    }
+
+    #[test]
+    fn test_stage_all_names() {
+        use crate::config::models::Stage;
+        
+        let all_names = Stage::all_names();
+        assert!(all_names.contains("dev"));
+        assert!(all_names.contains("qa"));
+        assert!(all_names.contains("preprod"));
+        assert!(all_names.contains("prod"));
+    }
+
+    #[test]
+    fn test_stage_as_str() {
+        use crate::config::models::Stage;
+        
+        assert_eq!(Stage::Dev.as_str(), "dev");
+        assert_eq!(Stage::Qa.as_str(), "qa");
+        assert_eq!(Stage::Preprod.as_str(), "preprod");
+        assert_eq!(Stage::Prod.as_str(), "prod");
+    }
 }
