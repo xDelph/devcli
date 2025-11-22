@@ -176,6 +176,7 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         suggested_docker_default,
         suggested_orbstack_default: None,
         dockerfile_path,
+        env_files: None, // Env files detection not implemented for Nx yet
     })
 }
 
@@ -285,6 +286,7 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         suggested_docker_default,
         suggested_orbstack_default: None,
         dockerfile_path,
+        env_files: None, // Env files detection not implemented for Nx workspace yet
     })
 }
 

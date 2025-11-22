@@ -109,9 +109,12 @@ async fn start_single_app_process(
 ) -> Result<String> {
     let app_name = resolved_app.app_name.clone();
     
-    // Determine which stage to use (override takes precedence over config)
+    // Load preferences to get default_stage
+    let preferences = load_preferences()?;
+    
+    // Determine which stage to use (override takes precedence over default_stages)
     let effective_stage = stage_override
-        .or_else(|| resolved_app.app.stage.clone());
+        .or_else(|| resolved_app.app.get_default_stage(&environment, preferences.default_stage.as_deref()));
     
     // Validate stage if present
     if let Some(ref stage) = effective_stage {
@@ -161,11 +164,13 @@ async fn start_single_app_process(
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
             
             // For Docker, use --env-file flag if .env exists
-            // Priority: Stage-specific file > base .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(
+            // Uses new env_files structure with fallback to legacy logic
+            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
                 &working_dir,
-                resolved_app.app.dockerfile_path.as_deref(),
-                effective_stage.as_deref()
+                resolved_app.app.env_files.as_ref(),
+                effective_stage.as_deref(),
+                "docker",
+                resolved_app.app.dockerfile_path.as_deref()
             ) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,
@@ -187,11 +192,13 @@ async fn start_single_app_process(
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
             
             // For OrbStack, use --env-file flag (same as Docker)
-            // Priority: Stage-specific file > base .env (using dockerfile_path from config)
-            if let Ok(Some(env_file_path)) = crate::detection::find_env_file(
+            // Uses new env_files structure with fallback to legacy logic
+            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
                 &working_dir,
-                resolved_app.app.dockerfile_path.as_deref(),
-                effective_stage.as_deref()
+                resolved_app.app.env_files.as_ref(),
+                effective_stage.as_deref(),
+                "orbstack",
+                resolved_app.app.dockerfile_path.as_deref()
             ) {
                 final_command = crate::utils::command::inject_docker_env_file(
                     &final_command,

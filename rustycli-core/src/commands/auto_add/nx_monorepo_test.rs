@@ -30,6 +30,7 @@ mod tests {
             suggested_local_default: if has_commands { Some("start".to_string()) } else { None },
             suggested_docker_default: None,
             suggested_orbstack_default: None,
+            env_files: None,
         }
     }
 

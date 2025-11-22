@@ -166,6 +166,72 @@ pub fn load_env_vars_for_runtime(
     Ok(HashMap::new())
 }
 
+/// Resolve env file path using new env_files structure with fallback to legacy
+/// This function bridges the new env_files map with the old find_env_file logic
+/// 
+/// Priority order (context-first approach):
+/// 1. stage + environment (e.g., qa + docker)
+/// 2. base + environment (e.g., base + docker)
+/// 3. stage + any available context
+/// 4. base + any available context
+/// 
+/// # Arguments
+/// * `app_path` - The root directory of the app
+/// * `env_files_map` - Optional new env_files structure from config
+/// * `stage` - Optional deployment stage
+/// * `environment` - Runtime environment (local, docker, orbstack, k8s)
+/// * `dockerfile_path` - Optional relative path to Dockerfile (for fallback)
+/// 
+/// # Returns
+/// Relative path to env file if found
+pub fn resolve_env_file_path(
+    app_path: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<String>> {
+    // Try new env_files structure first
+    if let Some(env_files) = env_files_map {
+        // Priority 1: stage + environment (e.g., qa + docker)
+        if let Some(stage_name) = stage {
+            if let Some(stage_map) = env_files.get(stage_name) {
+                if let Some(path) = stage_map.get(environment) {
+                    return Ok(Some(path.clone()));
+                }
+            }
+        }
+        
+        // Priority 2: base + environment (e.g., base + docker)
+        if let Some(base_map) = env_files.get("base") {
+            if let Some(path) = base_map.get(environment) {
+                return Ok(Some(path.clone()));
+            }
+        }
+        
+        // Priority 3: stage + any available context (fallback)
+        if let Some(stage_name) = stage {
+            if let Some(stage_map) = env_files.get(stage_name) {
+                // Return first available env file for this stage
+                if let Some((_, path)) = stage_map.iter().next() {
+                    return Ok(Some(path.clone()));
+                }
+            }
+        }
+        
+        // Priority 4: base + any available context (fallback)
+        if let Some(base_map) = env_files.get("base") {
+            // Return first available env file for base
+            if let Some((_, path)) = base_map.iter().next() {
+                return Ok(Some(path.clone()));
+            }
+        }
+    }
+    
+    // Fall back to legacy find_env_file logic
+    find_env_file(app_path, dockerfile_path, stage)
+}
+
 /// Phase 2c: Detect OrbStack commands if Dockerfile exists
 /// Similar to Docker detection but uses OrbStack context
 /// Environment variables from .env files are applied at runtime, not baked into commands

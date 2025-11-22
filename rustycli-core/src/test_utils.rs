@@ -14,7 +14,6 @@ use std::collections::HashMap;
 /// 
 /// let app = AppBuilder::new("nodejs", "/tmp/app")
 ///     .with_stage("qa")
-///     .with_env_file_path(".env.qa")
 ///     .with_local_command("start", "npm start")
 ///     .build();
 /// ```
@@ -31,8 +30,6 @@ pub struct AppBuilder {
     orbstack_default: Option<String>,
     k8s_default: Option<String>,
     dockerfile_path: Option<String>,
-    stage: Option<String>,
-    env_file_path: Option<String>,
 }
 
 impl AppBuilder {
@@ -51,8 +48,6 @@ impl AppBuilder {
             orbstack_default: None,
             k8s_default: None,
             dockerfile_path: None,
-            stage: None,
-            env_file_path: None,
         }
     }
 
@@ -119,18 +114,6 @@ impl AppBuilder {
         self
     }
 
-    /// Set stage
-    pub fn with_stage(mut self, stage: &str) -> Self {
-        self.stage = Some(stage.to_string());
-        self
-    }
-
-    /// Set env file path
-    pub fn with_env_file_path(mut self, path: &str) -> Self {
-        self.env_file_path = Some(path.to_string());
-        self
-    }
-
     /// Build the App
     pub fn build(self) -> App {
         App {
@@ -166,8 +149,8 @@ impl AppBuilder {
                 k8s: self.k8s_default,
             },
             dockerfile_path: self.dockerfile_path,
-            stage: self.stage,
-            env_file_path: self.env_file_path,
+            env_files: None, // Test utils don't set env_files by default
+            default_stages: None, // Test utils don't set default_stages by default
         }
     }
 }
@@ -343,8 +326,7 @@ mod tests {
         assert_eq!(app.path, "/tmp/app");
         assert!(app.commands.local.is_none());
         assert!(app.dependencies.is_empty());
-        assert!(app.stage.is_none());
-        assert!(app.env_file_path.is_none());
+        assert!(app.env_files.is_none());
     }
 
     #[test]
@@ -360,17 +342,6 @@ mod tests {
         assert_eq!(local.get("start").unwrap(), "npm start");
         assert_eq!(local.get("test").unwrap(), "npm test");
         assert_eq!(app.defaults.local.unwrap(), "start");
-    }
-
-    #[test]
-    fn test_app_builder_with_stage() {
-        let app = AppBuilder::new("nodejs", "/tmp/app")
-            .with_stage("qa")
-            .with_env_file_path(".env.qa")
-            .build();
-        
-        assert_eq!(app.stage.unwrap(), "qa");
-        assert_eq!(app.env_file_path.unwrap(), ".env.qa");
     }
 
     #[test]

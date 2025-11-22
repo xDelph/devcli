@@ -122,27 +122,29 @@ mod edit_tests {
     }
 
     #[test]
-    fn test_stage_configuration_logic() {
+    fn test_default_stages_configuration_logic() {
         let temp_dir = TempDir::new().unwrap();
         let mut config = create_test_config(&temp_dir);
         
         let app = config.projects.get_mut("test-project").unwrap()
             .apps.get_mut("test-app").unwrap();
         
-        // Initially stage should be None
-        assert!(app.stage.is_none());
+        // Initially default_stages should be None
+        assert!(app.default_stages.is_none());
         
-        // Set stage to dev
-        app.stage = Some("dev".to_string());
-        assert_eq!(app.stage.as_ref().unwrap(), "dev");
+        // Set default stages
+        let mut stages = std::collections::HashMap::new();
+        stages.insert("local".to_string(), "dev".to_string());
+        stages.insert("docker".to_string(), "qa".to_string());
+        app.default_stages = Some(stages);
         
-        // Change stage to prod
-        app.stage = Some("prod".to_string());
-        assert_eq!(app.stage.as_ref().unwrap(), "prod");
+        assert!(app.default_stages.is_some());
+        assert_eq!(app.default_stages.as_ref().unwrap().get("local").unwrap(), "dev");
+        assert_eq!(app.default_stages.as_ref().unwrap().get("docker").unwrap(), "qa");
         
-        // Remove stage
-        app.stage = None;
-        assert!(app.stage.is_none());
+        // Remove default_stages
+        app.default_stages = None;
+        assert!(app.default_stages.is_none());
     }
 
     #[test]

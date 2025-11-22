@@ -171,17 +171,19 @@ pub struct App {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dockerfile_path: Option<String>,
     
-    // Deployment stage for this app (dev, qa, preprod, prod, or custom)
-    // Used to determine which stage-specific .env file to load (e.g., .env.dev, .env.prod)
-    // OPTIONAL: If not set, uses base .env file
+    // Environment files mapped by stage and context
+    // Structure: { "dev": { "local": ".env.dev", "docker": "docker/.env.dev" }, ... }
+    // Allows different env files for different runtime contexts within the same stage
+    // OPTIONAL: If not set, auto-detects .env files
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<String>,
+    pub env_files: Option<HashMap<String, HashMap<String, String>>>,
     
-    // Relative path to the environment file from app root
-    // Examples: ".env.qa", "config/.env.prod", "environments/.env.dev"
-    // OPTIONAL: If not set, auto-detects based on stage or uses .env
+    // Default stage to use for each environment when starting the app
+    // Structure: { "local": "dev", "docker": "qa", "orbstack": "qa", "k8s": "prod" }
+    // Similar to defaults for commands, but for stages
+    // OPTIONAL: Falls back to preferences.default_stage or no stage
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_file_path: Option<String>,
+    pub default_stages: Option<HashMap<String, String>>,
 }
 
 // Commands for different environments
@@ -324,6 +326,67 @@ impl Defaults {
             "k8s" => &mut self.k8s,
             _ => &mut self.local, // Fallback (shouldn't happen)
         }
+    }
+}
+
+impl App {
+    /// Get the env file path for a specific stage and environment
+    /// Falls back to stage-only or base .env if context-specific not found
+    pub fn get_env_file(&self, stage: Option<&str>, env: &str) -> Option<String> {
+        // Check env_files structure
+        if let Some(ref env_files) = self.env_files {
+            if let Some(stage_name) = stage {
+                // Try stage + environment specific
+                if let Some(stage_map) = env_files.get(stage_name) {
+                    if let Some(path) = stage_map.get(env) {
+                        return Some(path.clone());
+                    }
+                    // Try stage with "all" context
+                    if let Some(path) = stage_map.get("all") {
+                        return Some(path.clone());
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Get the default stage for a specific environment
+    /// Falls back to preferences default_stage
+    pub fn get_default_stage(&self, env: &str, preferences_default: Option<&str>) -> Option<String> {
+        // Check default_stages structure
+        if let Some(ref default_stages) = self.default_stages {
+            if let Some(stage) = default_stages.get(env) {
+                return Some(stage.clone());
+            }
+        }
+        
+        // Fall back to preferences default
+        preferences_default.map(|s| s.to_string())
+    }
+    
+    /// Set env file for a specific stage and environment
+    pub fn set_env_file(&mut self, stage: &str, env: &str, path: String) {
+        if self.env_files.is_none() {
+            self.env_files = Some(HashMap::new());
+        }
+        
+        let env_files = self.env_files.as_mut().unwrap();
+        if !env_files.contains_key(stage) {
+            env_files.insert(stage.to_string(), HashMap::new());
+        }
+        
+        env_files.get_mut(stage).unwrap().insert(env.to_string(), path);
+    }
+    
+    /// Set default stage for a specific environment
+    pub fn set_default_stage(&mut self, env: &str, stage: String) {
+        if self.default_stages.is_none() {
+            self.default_stages = Some(HashMap::new());
+        }
+        
+        self.default_stages.as_mut().unwrap().insert(env.to_string(), stage);
     }
 }
 

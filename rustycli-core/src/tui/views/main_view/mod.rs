@@ -46,6 +46,21 @@ mod main_view_core {
         pub(crate) selected_add_dep_project_idx: usize,
         /// Selected app index when adding dependency
         pub(crate) selected_add_dep_app_idx: usize,
+        /// Selected env file index (stage) in env files editor
+        pub(crate) selected_env_file_idx: usize,
+        /// Delete confirmation message
+        pub(crate) delete_confirm_message: String,
+        /// Delete confirmation action type
+        pub(crate) delete_confirm_type: DeleteType,
+    }
+    
+    /// Type of deletion being confirmed
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum DeleteType {
+        App,
+        Command,
+        Dependency,
+        EnvFile,
     }
 
     /// Config editor modes
@@ -58,6 +73,10 @@ mod main_view_core {
         EditCommand,
         EditDependencies,
         AddDependency,
+        EditEnvFiles,
+        AddEnvFile,
+        EditEnvFile,
+        ConfirmDelete,
     }
 
     /// Form data for config editor
@@ -72,6 +91,9 @@ mod main_view_core {
         pub edit_command_env: String,
         pub edit_command_name: String,
         pub edit_command_value: String,
+        pub env_file_stage: String,
+        pub env_file_context: String,
+        pub env_file_path: String,
         pub cursor_project_name: usize,
         pub cursor_app_name: usize,
         pub cursor_app_type: usize,
@@ -80,6 +102,9 @@ mod main_view_core {
         pub cursor_docker_start_cmd: usize,
         pub cursor_edit_command_name: usize,
         pub cursor_edit_command_value: usize,
+        pub cursor_env_file_stage: usize,
+        pub cursor_env_file_context: usize,
+        pub cursor_env_file_path: usize,
     }
 
     /// Config form fields
@@ -94,6 +119,9 @@ mod main_view_core {
         EditCommandEnv,
         EditCommandName,
         EditCommandValue,
+        EnvFileStage,
+        EnvFileContext,
+        EnvFilePath,
     }
 
     /// The four main tabs in the interface
@@ -130,6 +158,9 @@ mod main_view_core {
                 selected_dependency_idx: 0,
                 selected_add_dep_project_idx: 0,
                 selected_add_dep_app_idx: 0,
+                selected_env_file_idx: 0,
+                delete_confirm_message: String::new(),
+                delete_confirm_type: DeleteType::App,
             }
         }
 

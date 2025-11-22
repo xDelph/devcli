@@ -16,10 +16,15 @@ impl MainView {
         // Use expect instead of context since PoisonError doesn't implement StdError
         let mut state = state.lock().expect("Failed to lock state");
         
+        // Handle delete confirmation mode
+        if self.config_mode == ConfigMode::ConfirmDelete {
+            return self.handle_delete_confirmation(key, &mut state);
+        }
+        
         // In edit mode, only handle specific keys - everything else is for typing
         let in_edit_mode = self.active_tab == MainTab::Config && matches!(
             self.config_mode,
-            ConfigMode::Add | ConfigMode::Edit | ConfigMode::AddCommand | ConfigMode::EditCommand
+            ConfigMode::Add | ConfigMode::Edit | ConfigMode::AddCommand | ConfigMode::EditCommand | ConfigMode::AddEnvFile | ConfigMode::EditEnvFile
         );
         
         if in_edit_mode {
@@ -34,7 +39,18 @@ impl MainView {
     fn handle_edit_mode_input(&mut self, key: KeyEvent, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
         match key.code {
             KeyCode::Esc => {
-                self.config_mode = ConfigMode::View;
+                // Handle ESC based on current mode to return to the right parent view
+                match self.config_mode {
+                    ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
+                        self.config_mode = ConfigMode::EditEnvFiles;
+                    }
+                    ConfigMode::AddDependency => {
+                        self.config_mode = ConfigMode::EditDependencies;
+                    }
+                    _ => {
+                        self.config_mode = ConfigMode::View;
+                    }
+                }
                 Ok(true)
             }
             KeyCode::Enter => self.handle_edit_mode_enter(state),
@@ -85,6 +101,11 @@ impl MainView {
             ConfigMode::Add | ConfigMode::Edit => {
                 if let Err(e) = self.save_config_form() {
                     eprintln!("Error saving config: {}", e);
+                } else {
+                    // Reload state after saving
+                    if let Err(e) = self.reload_state_from_config(state) {
+                        eprintln!("Error reloading state: {}", e);
+                    }
                 }
                 Ok(true)
             }
@@ -120,6 +141,21 @@ impl MainView {
                 }
                 Ok(true)
             }
+            ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
+                if let Some(app) = state.selected_app() {
+                    let app_name = app.name.clone();
+                    
+                    if let Err(e) = self.save_env_file(&app_name) {
+                        eprintln!("Error saving env file: {}", e);
+                        return Ok(true);
+                    }
+                    
+                    if let Err(e) = self.reload_state_from_config(state) {
+                        eprintln!("Error reloading state: {}", e);
+                    }
+                }
+                Ok(true)
+            }
             _ => Ok(false)
         }
     }
@@ -138,6 +174,13 @@ impl MainView {
                 ConfigField::EditCommandName => ConfigField::EditCommandValue,
                 ConfigField::EditCommandValue => ConfigField::EditCommandName,
                 _ => ConfigField::EditCommandName,
+            };
+        } else if self.config_mode == ConfigMode::AddEnvFile || self.config_mode == ConfigMode::EditEnvFile {
+            self.config_focused_field = match self.config_focused_field {
+                ConfigField::EnvFileStage => ConfigField::EnvFileContext,
+                ConfigField::EnvFileContext => ConfigField::EnvFilePath,
+                ConfigField::EnvFilePath => ConfigField::EnvFileStage,
+                _ => ConfigField::EnvFileStage,
             };
         } else if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
             self.config_focused_field = match self.config_focused_field {
@@ -194,6 +237,9 @@ impl MainView {
             ConfigField::EditCommandEnv => return, // No typing for dropdown
             ConfigField::EditCommandName => (&mut self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&mut self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
+            ConfigField::EnvFileStage => (&mut self.config_form.env_file_stage, &mut self.config_form.cursor_env_file_stage),
+            ConfigField::EnvFileContext => (&mut self.config_form.env_file_context, &mut self.config_form.cursor_env_file_context),
+            ConfigField::EnvFilePath => (&mut self.config_form.env_file_path, &mut self.config_form.cursor_env_file_path),
         };
         field.insert(*cursor, c);
         *cursor += 1;
@@ -211,6 +257,9 @@ impl MainView {
             ConfigField::EditCommandEnv => return, // No editing for dropdown
             ConfigField::EditCommandName => (&mut self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&mut self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
+            ConfigField::EnvFileStage => (&mut self.config_form.env_file_stage, &mut self.config_form.cursor_env_file_stage),
+            ConfigField::EnvFileContext => (&mut self.config_form.env_file_context, &mut self.config_form.cursor_env_file_context),
+            ConfigField::EnvFilePath => (&mut self.config_form.env_file_path, &mut self.config_form.cursor_env_file_path),
         };
         if *cursor > 0 {
             *cursor -= 1;
@@ -230,6 +279,9 @@ impl MainView {
             ConfigField::EditCommandName => &mut self.config_form.cursor_edit_command_name,
             ConfigField::EditCommandValue => &mut self.config_form.cursor_edit_command_value,
             ConfigField::EditCommandEnv => return, // No cursor for dropdown
+            ConfigField::EnvFileStage => &mut self.config_form.cursor_env_file_stage,
+            ConfigField::EnvFileContext => &mut self.config_form.cursor_env_file_context,
+            ConfigField::EnvFilePath => &mut self.config_form.cursor_env_file_path,
         };
         *cursor = cursor.saturating_sub(1);
     }
@@ -246,6 +298,9 @@ impl MainView {
             ConfigField::EditCommandName => (&self.config_form.edit_command_name, &mut self.config_form.cursor_edit_command_name),
             ConfigField::EditCommandValue => (&self.config_form.edit_command_value, &mut self.config_form.cursor_edit_command_value),
             ConfigField::EditCommandEnv => return, // No cursor for dropdown
+            ConfigField::EnvFileStage => (&self.config_form.env_file_stage, &mut self.config_form.cursor_env_file_stage),
+            ConfigField::EnvFileContext => (&self.config_form.env_file_context, &mut self.config_form.cursor_env_file_context),
+            ConfigField::EnvFilePath => (&self.config_form.env_file_path, &mut self.config_form.cursor_env_file_path),
         };
         if *cursor < field.len() {
             *cursor += 1;
@@ -326,9 +381,28 @@ impl MainView {
             }
             // Enter key actions
             KeyCode::Enter => self.handle_enter(state),
-            // Config tab specific keys
+            // Env files view actions (must come BEFORE general config tab keys for proper matching)
+            KeyCode::Char('a') if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditEnvFiles => {
+                self.config_mode = ConfigMode::AddEnvFile;
+                self.config_form.env_file_stage.clear();
+                self.config_form.env_file_context.clear();
+                self.config_form.env_file_path.clear();
+                self.config_form.cursor_env_file_stage = 0;
+                self.config_form.cursor_env_file_context = 0;
+                self.config_form.cursor_env_file_path = 0;
+                self.config_focused_field = ConfigField::EnvFileStage;
+                Ok(true)
+            }
+            KeyCode::Char('e') if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditEnvFiles => {
+                self.handle_edit_env_file(state)
+            }
+            KeyCode::Char('d') if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditEnvFiles => {
+                self.handle_delete_env_file(state)
+            }
+            // Config tab specific keys (general patterns come after specific EditEnvFiles patterns)
             KeyCode::Char('a') if self.active_tab == MainTab::Config => self.handle_config_add(state),
             KeyCode::Char('e') if self.active_tab == MainTab::Config => self.handle_config_edit(state),
+            KeyCode::Char('f') if self.active_tab == MainTab::Config => self.handle_config_edit_env_files(state),
             KeyCode::Char('E') if self.active_tab == MainTab::Config => self.handle_config_edit_app(state),
             KeyCode::Char('D') if self.active_tab == MainTab::Config => self.handle_config_edit_deps(),
             KeyCode::Char('s') if self.active_tab == MainTab::Config => self.handle_config_set_default(state),
@@ -449,6 +523,11 @@ impl MainView {
             self.selected_add_dep_app_idx = 0;
             return;
         }
+        // Env files popup navigation
+        if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditEnvFiles {
+            self.selected_env_file_idx = self.selected_env_file_idx.saturating_sub(1);
+            return;
+        }
         
         match self.focus {
             PanelFocus::AppList => {
@@ -487,6 +566,19 @@ impl MainView {
                 if self.selected_add_dep_project_idx < config.projects.len().saturating_sub(1) {
                     self.selected_add_dep_project_idx += 1;
                     self.selected_add_dep_app_idx = 0;
+                }
+            }
+            return;
+        }
+        // Env files view navigation
+        if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::EditEnvFiles {
+            if let Some(app) = state.selected_app() {
+                if let Some(env_files) = &app.env_files {
+                    // Count total entries (not just stages)
+                    let total_entries: usize = env_files.values().map(|contexts| contexts.len()).sum();
+                    if self.selected_env_file_idx < total_entries.saturating_sub(1) {
+                        self.selected_env_file_idx += 1;
+                    }
                 }
             }
             return;
@@ -583,6 +675,14 @@ impl MainView {
                             }
                         }
                         return Ok(true);
+                    } else if self.config_mode == ConfigMode::AddEnvFile || self.config_mode == ConfigMode::EditEnvFile {
+                        if let Some(app) = state.selected_app() {
+                            let app_name = app.name.clone();
+                            if let Err(e) = self.save_env_file(&app_name) {
+                                eprintln!("Error saving env file: {}", e);
+                            }
+                        }
+                        return Ok(true);
                     }
                 }
                 MainTab::Status => {
@@ -652,6 +752,14 @@ impl MainView {
         Ok(true)
     }
 
+    fn handle_config_edit_env_files(&mut self, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
+        if self.config_mode == ConfigMode::View && state.selected_app().is_some() {
+            self.config_mode = ConfigMode::EditEnvFiles;
+            self.selected_env_file_idx = 0;
+        }
+        Ok(true)
+    }
+
     fn handle_config_set_default(&mut self, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
         if self.config_mode == ConfigMode::View && self.focus == PanelFocus::DetailPanel {
             if let Some(app) = state.selected_app() {
@@ -666,20 +774,31 @@ impl MainView {
     }
 
     fn handle_config_delete(&mut self, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
+        use super::DeleteType;
+        
         if self.config_mode == ConfigMode::View {
             if let Some(app) = state.selected_app() {
-                let project = app.project.clone();
-                let app_name = app.name.clone();
-                if let Err(e) = self.delete_app(&project, &app_name) {
-                    eprintln!("Error deleting app: {}", e);
+                // Check if we're focused on the detail panel (commands) or app list
+                if self.focus == PanelFocus::DetailPanel {
+                    // Delete the selected command
+                    if let Some((env, cmd_info)) = self.get_selected_config_command(app) {
+                        self.delete_confirm_message = format!("Delete command '{}' ({})?", cmd_info.name, env.to_uppercase());
+                        self.delete_confirm_type = DeleteType::Command;
+                        self.config_mode = ConfigMode::ConfirmDelete;
+                    }
+                } else {
+                    // Delete the app
+                    self.delete_confirm_message = format!("Delete app '{}'?", app.name);
+                    self.delete_confirm_type = DeleteType::App;
+                    self.config_mode = ConfigMode::ConfirmDelete;
                 }
             }
         } else if self.config_mode == ConfigMode::EditDependencies {
             if let Some(app) = state.selected_app() {
-                let project = app.project.clone();
-                let app_name = app.name.clone();
-                if let Err(e) = self.remove_dependency(&project, &app_name, self.selected_dependency_idx) {
-                    eprintln!("Error removing dependency: {}", e);
+                if let Some(dep_name) = app.dependencies.get(self.selected_dependency_idx) {
+                    self.delete_confirm_message = format!("Remove dependency '{}'?", dep_name);
+                    self.delete_confirm_type = DeleteType::Dependency;
+                    self.config_mode = ConfigMode::ConfirmDelete;
                 }
             }
         }
@@ -694,6 +813,14 @@ impl MainView {
             }
             ConfigMode::AddDependency => {
                 self.config_mode = ConfigMode::EditDependencies;
+                Ok(true)
+            }
+            ConfigMode::EditEnvFiles => {
+                self.config_mode = ConfigMode::View;
+                Ok(true)
+            }
+            ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
+                self.config_mode = ConfigMode::EditEnvFiles;
                 Ok(true)
             }
             _ => Ok(false)
@@ -718,5 +845,202 @@ impl MainView {
             }
         }
         Ok(true)
+    }
+}
+
+impl MainView {
+    /// Saves a new or edited environment file configuration
+    fn save_env_file(&mut self, app_name: &str) -> Result<()> {
+        use crate::commands::env::add_env_file;
+        
+        let stage = self.config_form.env_file_stage.trim();
+        let context = self.config_form.env_file_context.trim();
+        let file_path = self.config_form.env_file_path.trim();
+        
+        if stage.is_empty() || context.is_empty() || file_path.is_empty() {
+            return Err(anyhow::anyhow!("All fields are required"));
+        }
+        
+        add_env_file(app_name, stage, context, file_path)?;
+        
+        self.config_mode = ConfigMode::EditEnvFiles;
+        Ok(())
+    }
+    
+    /// Loads the selected env file entry into the form for editing
+    fn handle_edit_env_file(&mut self, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
+        if let Some(app) = state.selected_app() {
+            if let Some(env_files) = &app.env_files {
+                // Build flat list of entries
+                let mut entries: Vec<(String, String, String)> = Vec::new();
+                for (stage, contexts) in env_files {
+                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                    
+                    for (context, file_path) in sorted_contexts {
+                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                    }
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                
+                if let Some((stage, context, file_path)) = entries.get(self.selected_env_file_idx) {
+                    self.config_form.env_file_stage = stage.clone();
+                    self.config_form.env_file_context = context.clone();
+                    self.config_form.env_file_path = file_path.clone();
+                    self.config_form.cursor_env_file_stage = stage.len();
+                    self.config_form.cursor_env_file_context = context.len();
+                    self.config_form.cursor_env_file_path = file_path.len();
+                    self.config_focused_field = ConfigField::EnvFileStage;
+                    self.config_mode = ConfigMode::EditEnvFile;
+                }
+            }
+        }
+        Ok(true)
+    }
+    
+    /// Deletes the selected environment file entry
+    fn handle_delete_env_file(&mut self, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
+        use super::DeleteType;
+        
+        if let Some(app) = state.selected_app() {
+            if let Some(env_files) = &app.env_files {
+                // Build flat list of entries
+                let mut entries: Vec<(String, String, String)> = Vec::new();
+                for (stage, contexts) in env_files {
+                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                    
+                    for (context, file_path) in sorted_contexts {
+                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                    }
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                
+                if let Some((stage, context, file_path)) = entries.get(self.selected_env_file_idx) {
+                    self.delete_confirm_message = format!(
+                        "Delete env file?\n\nStage: {}\nContext: {}\nFile: {}",
+                        stage, context, file_path
+                    );
+                    self.delete_confirm_type = DeleteType::EnvFile;
+                    self.config_mode = ConfigMode::ConfirmDelete;
+                }
+            }
+        }
+        Ok(true)
+    }
+    
+    /// Handles input when in delete confirmation mode
+    fn handle_delete_confirmation(&mut self, key: KeyEvent, state: &mut std::sync::MutexGuard<AppState>) -> Result<bool> {
+        use super::DeleteType;
+        use crate::commands::env::remove_env_file;
+        
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // User confirmed deletion - perform the delete action
+                let previous_mode = match self.delete_confirm_type {
+                    DeleteType::App => {
+                        if let Some(app) = state.selected_app() {
+                            let project = app.project.clone();
+                            let app_name = app.name.clone();
+                            if let Err(e) = self.delete_app(&project, &app_name) {
+                                eprintln!("Error deleting app: {}", e);
+                            } else {
+                                // Reload state after deletion
+                                if let Err(e) = self.reload_state_from_config(state) {
+                                    eprintln!("Error reloading state: {}", e);
+                                }
+                            }
+                        }
+                        ConfigMode::View
+                    }
+                    DeleteType::Command => {
+                        if let Some(app) = state.selected_app() {
+                            let project = app.project.clone();
+                            let app_name = app.name.clone();
+                            if let Some((env, cmd_info)) = self.get_selected_config_command(app) {
+                                let cmd_name = cmd_info.name.clone();
+                                if let Err(e) = self.delete_command(&project, &app_name, env, &cmd_name) {
+                                    eprintln!("Error deleting command: {}", e);
+                                } else {
+                                    // Adjust selection if needed
+                                    let total_commands = Self::count_total_commands(app);
+                                    if self.selected_config_command_idx >= total_commands.saturating_sub(1) {
+                                        self.selected_config_command_idx = total_commands.saturating_sub(2).max(0);
+                                    }
+                                    // Reload state after deletion
+                                    if let Err(e) = self.reload_state_from_config(state) {
+                                        eprintln!("Error reloading state: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        ConfigMode::View
+                    }
+                    DeleteType::Dependency => {
+                        if let Some(app) = state.selected_app() {
+                            let project = app.project.clone();
+                            let app_name = app.name.clone();
+                            if let Err(e) = self.remove_dependency(&project, &app_name, self.selected_dependency_idx) {
+                                eprintln!("Error removing dependency: {}", e);
+                            } else {
+                                // Reload state after deletion
+                                if let Err(e) = self.reload_state_from_config(state) {
+                                    eprintln!("Error reloading state: {}", e);
+                                }
+                            }
+                        }
+                        ConfigMode::EditDependencies
+                    }
+                    DeleteType::EnvFile => {
+                        if let Some(app) = state.selected_app() {
+                            if let Some(env_files) = &app.env_files {
+                                // Build flat list of entries
+                                let mut entries: Vec<(String, String, String)> = Vec::new();
+                                for (stage, contexts) in env_files {
+                                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                                    
+                                    for (context, file_path) in sorted_contexts {
+                                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                                    }
+                                }
+                                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                                
+                                if let Some((stage, context, _)) = entries.get(self.selected_env_file_idx) {
+                                    if let Err(e) = remove_env_file(&app.name, stage, Some(context)) {
+                                        eprintln!("Error removing env file: {}", e);
+                                    } else {
+                                        // Adjust selection if needed
+                                        let total_entries: usize = env_files.values().map(|contexts| contexts.len()).sum();
+                                        if self.selected_env_file_idx >= total_entries.saturating_sub(1) {
+                                            self.selected_env_file_idx = total_entries.saturating_sub(2).max(0);
+                                        }
+                                        // Reload state after deletion
+                                        if let Err(e) = self.reload_state_from_config(state) {
+                                            eprintln!("Error reloading state: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        ConfigMode::EditEnvFiles
+                    }
+                };
+                self.config_mode = previous_mode;
+                Ok(true)
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                // User cancelled - return to previous mode
+                let previous_mode = match self.delete_confirm_type {
+                    DeleteType::App => ConfigMode::View,
+                    DeleteType::Command => ConfigMode::View,
+                    DeleteType::Dependency => ConfigMode::EditDependencies,
+                    DeleteType::EnvFile => ConfigMode::EditEnvFiles,
+                };
+                self.config_mode = previous_mode;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 }

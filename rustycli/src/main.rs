@@ -10,11 +10,11 @@ use clap::{Parser, Subcommand};
 
 // Import our command implementations from the core library
 use rustycli_core::commands::{
-    auto_add_command, config_add_command, config_edit, config_edit_command, config_init, 
-    config_list, config_list_commands, config_remove_command, config_set_default, 
-    config_set_stage, config_show, config_validate, monitor_command, pref_reset, pref_set, 
-    pref_show, restart_command, run_command, start_command, status_command, stop_command, 
-    ui_command,
+    add_env_file, auto_add_command, config_add_command, config_edit, config_edit_command, 
+    config_init, config_list, config_list_commands, config_remove_command, config_set_default,
+    config_show, config_validate, list_env_files, monitor_command, pref_reset, pref_set, 
+    pref_show, remove_env_file, restart_command, run_command, set_default_stage, start_command, 
+    status_command, stop_command, ui_command,
 };
 use rustycli_core::Result; // Our error handling type
 
@@ -151,6 +151,14 @@ enum Commands {
         action: ConfigAction, // Nested subcommands (init, validate, etc.)
     },
     
+    // The "env" subcommand with nested subcommands
+    // Example: rustycli env add myapp --stage qa --context local --file .env.qa
+    #[command(about = "Manage environment files")]
+    Env {
+        #[command(subcommand)]
+        action: EnvAction, // Nested subcommands (add, remove, list, set-default)
+    },
+    
     // The "pref" subcommand with nested subcommands
     // Example: rustycli pref set default-env local
     #[command(about = "Manage preferences")]
@@ -270,17 +278,55 @@ enum ConfigAction {
         #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
         project: Option<String>,
     },
+}
+
+// Nested subcommands for "env"
+// Each becomes: rustycli env <action>
+#[derive(Subcommand)]
+enum EnvAction {
+    #[command(about = "Add an environment file to an app")]
+    Add {
+        #[arg(help = "App name")]
+        app_name: String,
+        
+        #[arg(short, long, help = "Stage name (e.g., 'qa', 'prod', 'dev')")]
+        stage: String,
+        
+        #[arg(short, long, help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')")]
+        context: String,
+        
+        #[arg(short, long, help = "Path to env file relative to app root")]
+        file: String,
+    },
     
-    #[command(about = "Set the deployment stage for an app")]
-    SetStage {
-        #[arg(help = "App name (optional - will prompt if not provided)")]
-        app_name: Option<String>,
+    #[command(about = "Remove an environment file or stage from an app")]
+    Remove {
+        #[arg(help = "App name")]
+        app_name: String,
         
-        #[arg(help = "Stage (dev, qa, preprod, prod, none) (optional - will prompt if not provided)")]
-        stage: Option<String>,
+        #[arg(short, long, help = "Stage name to remove")]
+        stage: String,
         
-        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
-        project: Option<String>,
+        #[arg(short, long, help = "Context name (if omitted, removes entire stage)")]
+        context: Option<String>,
+    },
+    
+    #[command(about = "List environment files for an app")]
+    List {
+        #[arg(help = "App name")]
+        app_name: String,
+    },
+    
+    #[command(about = "Set default stage for a context")]
+    SetDefault {
+        #[arg(help = "App name")]
+        app_name: String,
+        
+        #[arg(short, long, help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')")]
+        context: String,
+        
+        #[arg(short, long, help = "Stage name to set as default")]
+        stage: String,
     },
 }
 
@@ -460,8 +506,21 @@ async fn run() -> Result<()> {
             ConfigAction::EditCommand { app_name, environment, command_name, project } => {
                 config_edit_command(app_name, project, environment, command_name).await?
             },
-            ConfigAction::SetStage { app_name, stage, project } => {
-                config_set_stage(app_name, project, stage).await?
+        },
+        
+        // Handle the "env" command and its subcommands
+        Commands::Env { action } => match action {
+            EnvAction::Add { app_name, stage, context, file } => {
+                add_env_file(&app_name, &stage, &context, &file)?
+            },
+            EnvAction::Remove { app_name, stage, context } => {
+                remove_env_file(&app_name, &stage, context.as_deref())?
+            },
+            EnvAction::List { app_name } => {
+                list_env_files(&app_name)?
+            },
+            EnvAction::SetDefault { app_name, context, stage } => {
+                set_default_stage(&app_name, &context, &stage)?
             },
         },
         

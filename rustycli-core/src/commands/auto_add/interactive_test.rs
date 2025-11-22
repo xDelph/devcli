@@ -25,6 +25,7 @@ mod tests {
             suggested_local_default: Some("start".to_string()),
             suggested_docker_default: Some("up".to_string()),
             suggested_orbstack_default: None,
+            env_files: None,
         }
     }
     #[test]
@@ -53,6 +54,7 @@ mod tests {
             suggested_docker_default: None,
             suggested_orbstack_default: None,
             dockerfile_path: None,
+            env_files: None,
         };
         
         // Smoke test: verify show_preview handles minimal app data without panicking
@@ -80,6 +82,7 @@ mod tests {
             suggested_docker_default: None,
             suggested_orbstack_default: None,
             dockerfile_path: None,
+            env_files: None,
         };
         
         // Smoke test: verify show_preview handles K8s commands without panicking
@@ -112,6 +115,7 @@ mod tests {
             suggested_docker_default: Some("up".to_string()),
             suggested_orbstack_default: None,
             dockerfile_path: None,
+            env_files: None,
         };
         
         // Smoke test: verify show_preview handles all environments without panicking

@@ -74,10 +74,12 @@ impl AppState {
                         .iter()
                         .map(|dep| format!("{}/{}", dep.project, dep.app))
                         .collect(),
-                    // Stage from configuration
-                    stage: app_config.stage.clone(),
+                    // Stage from configuration (no longer stored in config, use default_stages)
+                    stage: None,
                     // Active stage from running process (may differ if overridden)
                     active_stage,
+                    // Environment files configuration
+                    env_files: app_config.env_files.clone(),
                 };
 
                 apps.push(app_state);
@@ -288,6 +290,10 @@ pub struct AppStateData {
     /// This is the stage that was actually used when starting the process
     /// (may differ from configured stage if overridden with --stage flag)
     pub active_stage: Option<String>,
+    /// Environment files configuration
+    /// Maps stage -> context -> file path
+    /// Example: { "qa": { "local": ".env.qa", "docker": ".env.qa" } }
+    pub env_files: Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
 }
 
 /// Information about a command

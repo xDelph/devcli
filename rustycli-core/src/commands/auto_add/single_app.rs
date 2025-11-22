@@ -10,7 +10,7 @@ use std::env;
 
 use super::interactive::{
     prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
-    interactive_app_selection, detect_stage_files, prompt_stage_selection
+    interactive_app_selection
 };
 
 // Entry point for the auto-add command
@@ -100,11 +100,6 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     // Show preview of what will be added
     show_preview(&project_name, &app_name, &detected);
     
-    // Detect and prompt for stage selection
-    let app_path = crate::utils::path::expand_path(&detected.path);
-    let available_env_files = detect_stage_files(&app_path);
-    let stage_info = prompt_stage_selection(&available_env_files)?;
-    
     // Final confirmation before adding (default to yes)
     if !confirm_default_yes("Add to config?")? {
         println!("Cancelled.");
@@ -112,7 +107,7 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
     }
     
     // Add to config and save
-    add_to_config(config, project_name, app_name, detected, stage_info)?;
+    add_to_config(config, project_name, app_name, detected)?;
     
     println!("✓ Added successfully!");
     
@@ -222,6 +217,7 @@ fn create_redis_app_from_config(config_path: &std::path::Path, config_filename: 
         suggested_docker_default: None,
         suggested_orbstack_default: None,
         dockerfile_path: None,
+        env_files: None, // No env files detected for Redis
     })
 }
 
@@ -256,6 +252,7 @@ fn create_traefik_app_from_config(config_path: &std::path::Path, config_filename
         suggested_docker_default: None,
         suggested_orbstack_default: None,
         dockerfile_path: None,
+        env_files: None, // No env files detected for Traefik
     })
 }
 
@@ -315,21 +312,44 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
         // Show preview
         show_preview(&project_name, &app_name, detected);
         
-        // Detect and prompt for stage selection
-        let app_path = crate::utils::path::expand_path(&detected.path);
-        let available_env_files = detect_stage_files(&app_path);
-        let stage_info = prompt_stage_selection(&available_env_files)?;
-        
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
             continue;
         }
         
-        // Extract stage and env_file_path from stage_info
-        let (stage, env_file_path) = match stage_info {
-            Some((s, p)) => (Some(s), Some(p)),
-            None => (None, None),
+        // Re-detect env files with interactive prompts
+        let mut available_envs = Vec::new();
+        if detected.local_commands.is_some() {
+            available_envs.push("local");
+        }
+        if detected.docker_commands.is_some() {
+            available_envs.push("docker");
+            available_envs.push("orbstack");
+        }
+        if detected.k8s_commands.is_some() {
+            available_envs.push("k8s");
+        }
+        
+        let env_files = if !available_envs.is_empty() {
+            let app_path = std::path::Path::new(&detected.path);
+            if let Ok(detected_env_files) = crate::detection::detect_env_files(
+                app_path,
+                detected.dockerfile_path.as_deref()
+            ) {
+                if !detected_env_files.is_empty() {
+                    match crate::detection::build_env_files_map_interactive(&detected_env_files, &available_envs) {
+                        Ok(map) if !map.is_empty() => Some(map),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
         
         // Build the App struct from detected data
@@ -350,8 +370,8 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
-            stage, // Set stage from user selection
-            env_file_path, // Set env file path from user selection
+            env_files, // Interactive env files with user-selected environments
+            default_stages: None, // Will be set by user via preferences or explicit command
         };
         
         // Insert the app into the config
@@ -380,18 +400,68 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 //   - project_name: Which project to add the app to
 //   - app_name: The name for the app
 //   - detected: The detection results with all app information
-//   - stage_info: Optional tuple of (stage_name, env_file_path) selected by user
 fn add_to_config(
     mut config: crate::config::Config,
     project_name: String,
     app_name: String,
     detected: crate::detection::DetectedApp,
-    stage_info: Option<(String, String)>,
 ) -> Result<()> {
-    // Extract stage and env_file_path from stage_info
-    let (stage, env_file_path) = match stage_info {
-        Some((s, p)) => (Some(s), Some(p)),
-        None => (None, None),
+    // Re-detect env files with interactive prompts for unspecified contexts
+    // Determine which environments are available for this app
+    let mut available_envs = Vec::new();
+    if detected.local_commands.is_some() {
+        available_envs.push("local");
+    }
+    if detected.docker_commands.is_some() {
+        available_envs.push("docker");
+        available_envs.push("orbstack"); // Docker and OrbStack are equivalent
+    }
+    if detected.k8s_commands.is_some() {
+        available_envs.push("k8s");
+    }
+    
+    // Re-detect env files and build map with interactive prompts
+    let env_files = if !available_envs.is_empty() {
+        let expanded_path = crate::utils::path::expand_path(&detected.path);
+        let app_path = std::path::Path::new(&expanded_path);
+        println!("\n🔍 DEBUG: Detecting env files in: {}", app_path.display());
+        println!("   Available envs: {:?}", available_envs);
+        
+        if let Ok(detected_env_files) = crate::detection::detect_env_files(
+            app_path,
+            detected.dockerfile_path.as_deref()
+        ) {
+            println!("   Found {} env files", detected_env_files.len());
+            for file in &detected_env_files {
+                println!("     - {} (stage: {:?}, context: {})", file.path, file.stage, file.context);
+            }
+            
+            if !detected_env_files.is_empty() {
+                match crate::detection::build_env_files_map_interactive(&detected_env_files, &available_envs) {
+                    Ok(map) if !map.is_empty() => {
+                        println!("   ✓ Built env_files map with {} stages", map.len());
+                        Some(map)
+                    },
+                    Ok(_) => {
+                        println!("   ⚠ Map is empty");
+                        None
+                    },
+                    Err(e) => {
+                        println!("   ✗ Error building map: {}", e);
+                        None
+                    }
+                }
+            } else {
+                println!("   No env files detected");
+                None
+            }
+        } else {
+            println!("   Error detecting env files");
+            None
+        }
+    } else {
+        println!("\n⚠ No available environments");
+        None
     };
     
     // Build the App struct from detection results
@@ -412,8 +482,8 @@ fn add_to_config(
             k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
         },
         dockerfile_path: detected.dockerfile_path,
-        stage, // Set stage from user selection
-        env_file_path, // Set env file path from user selection
+        env_files, // Interactive env files with user-selected environments
+        default_stages: None, // Will be set by user via preferences or explicit command
     };
     
     // Insert the app into the config

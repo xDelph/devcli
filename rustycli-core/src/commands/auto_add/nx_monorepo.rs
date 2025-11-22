@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use super::interactive::{
     prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
-    interactive_nx_app_selection, detect_stage_files, prompt_stage_selection
+    interactive_nx_app_selection
 };
 
 // Handle detection and addition of apps in an Nx monorepo
@@ -57,21 +57,44 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         // Show preview of what will be added
         show_preview(&project_name, &app_name, detected);
         
-        // Detect and prompt for stage selection
-        let app_path = crate::utils::path::expand_path(&detected.path);
-        let available_env_files = detect_stage_files(&app_path);
-        let stage_info = prompt_stage_selection(&available_env_files)?;
-        
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
             continue;
         }
         
-        // Extract stage and env_file_path from stage_info
-        let (stage, env_file_path) = match stage_info {
-            Some((s, p)) => (Some(s), Some(p)),
-            None => (None, None),
+        // Re-detect env files with interactive prompts for unspecified contexts
+        let mut available_envs = Vec::new();
+        if detected.local_commands.is_some() {
+            available_envs.push("local");
+        }
+        if detected.docker_commands.is_some() {
+            available_envs.push("docker");
+            available_envs.push("orbstack");
+        }
+        if detected.k8s_commands.is_some() {
+            available_envs.push("k8s");
+        }
+        
+        let env_files = if !available_envs.is_empty() {
+            let app_path = std::path::Path::new(&detected.path);
+            if let Ok(detected_env_files) = crate::detection::detect_env_files(
+                app_path,
+                detected.dockerfile_path.as_deref()
+            ) {
+                if !detected_env_files.is_empty() {
+                    match crate::detection::build_env_files_map_interactive(&detected_env_files, &available_envs) {
+                        Ok(map) if !map.is_empty() => Some(map),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
         
         // Build the App struct from detected data
@@ -92,8 +115,8 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
                 k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
-            stage, // Set stage from user selection
-            env_file_path, // Set env file path from user selection
+            env_files, // Interactive env files with user-selected environments
+            default_stages: None, // Will be set by user via preferences or explicit command
         };
         
         // Insert the app into the config

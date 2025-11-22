@@ -29,7 +29,7 @@ use std::path::Path;
 
 // Re-export main functions to maintain public API
 pub use app_types::{detect_app_type, extract_app_name};
-pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands, detect_orbstack_commands, load_env_vars_for_runtime, find_env_file};
+pub use environments::{detect_local_commands, detect_docker_commands, detect_k8s_commands, detect_orbstack_commands, load_env_vars_for_runtime, find_env_file, resolve_env_file_path, build_env_files_map_interactive, detect_env_files};
 pub use environments::local::suggest_local_default;
 pub use environments::docker::suggest_docker_default;
 pub use environments::orbstack::suggest_orbstack_default;
@@ -50,6 +50,7 @@ pub struct DetectedApp {
     pub suggested_docker_default: Option<String>,         // Suggested default docker command
     pub suggested_orbstack_default: Option<String>,       // Suggested default orbstack command
     pub dockerfile_path: Option<String>,                  // Relative path to Dockerfile (e.g., "docker/Dockerfile")
+    pub env_files: Option<HashMap<String, HashMap<String, String>>>, // Detected env files by stage and context
 }
 
 /// Main detection function for a single app
@@ -88,6 +89,17 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
         None
     };
     
+    // Detect all env files and build the map
+    let env_files = if let Ok(detected_env_files) = environments::detect_env_files(path, dockerfile_path.as_deref()) {
+        if detected_env_files.is_empty() {
+            None
+        } else {
+            Some(environments::build_env_files_map(&detected_env_files))
+        }
+    } else {
+        None
+    };
+    
     // Build and return the complete detection result
     Ok(DetectedApp {
         app_type,
@@ -101,6 +113,7 @@ pub fn detect_app(path: &Path) -> Result<DetectedApp> {
         suggested_docker_default,
         suggested_orbstack_default,
         dockerfile_path,
+        env_files,
     })
 }
 

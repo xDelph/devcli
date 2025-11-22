@@ -321,8 +321,8 @@ impl MainView {
                 k8s: None,
             },
             dockerfile_path: None,
-            stage: None, // No stage configured in TUI editor (will be added in future task)
-            env_file_path: None, // No env file path configured in TUI editor
+            env_files: None, // No env files configured in TUI editor (will be added in future task)
+            default_stages: None, // No default stages configured in TUI editor
         }
     }
 
@@ -446,6 +446,75 @@ impl MainView {
             }
         }
 
+        Ok(())
+    }
+
+    /// Gets the currently selected command in config view (environment, CommandInfo)
+    pub(super) fn get_selected_config_command<'a>(&self, app: &'a AppStateData) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
+        use crate::config::models::Environment;
+        let mut current_idx = 0;
+        
+        // Iterate through environments in standard order
+        for env in Environment::all() {
+            let env_str = env.as_str();
+            if let Some(commands) = app.commands.get(env_str) {
+                if self.selected_config_command_idx < current_idx + commands.len() {
+                    let cmd_idx = self.selected_config_command_idx - current_idx;
+                    return Some((env_str, &commands[cmd_idx]));
+                }
+                current_idx += commands.len();
+            }
+        }
+        
+        None
+    }
+    
+    /// Deletes a command from an app
+    pub(super) fn delete_command(&mut self, project: &str, app_name: &str, env: &str, command_name: &str) -> Result<()> {
+        let mut config = load_config()?;
+        
+        if let Some(proj) = config.projects.get_mut(project) {
+            if let Some(app) = proj.apps.get_mut(app_name) {
+                match env {
+                    "local" => {
+                        if let Some(local) = &mut app.commands.local {
+                            local.remove(command_name);
+                            if local.is_empty() {
+                                app.commands.local = None;
+                            }
+                        }
+                    }
+                    "docker" => {
+                        if let Some(docker) = &mut app.commands.docker {
+                            docker.remove(command_name);
+                            if docker.is_empty() {
+                                app.commands.docker = None;
+                            }
+                        }
+                    }
+                    "orbstack" => {
+                        if let Some(orbstack) = &mut app.commands.orbstack {
+                            orbstack.remove(command_name);
+                            if orbstack.is_empty() {
+                                app.commands.orbstack = None;
+                            }
+                        }
+                    }
+                    "k8s" => {
+                        if let Some(k8s) = &mut app.commands.k8s {
+                            k8s.remove(command_name);
+                            if k8s.is_empty() {
+                                app.commands.k8s = None;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                
+                save_config(&config)?;
+            }
+        }
+        
         Ok(())
     }
 }

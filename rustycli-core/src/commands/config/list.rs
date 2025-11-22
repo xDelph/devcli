@@ -67,9 +67,12 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                 // Show path
                 println!("    Path: {}", app.path);
                 
-                // Show stage if configured
-                if let Some(ref stage) = app.stage {
-                    println!("    Stage: {}", stage);
+                // Show default stages if configured
+                if let Some(ref default_stages) = app.default_stages {
+                    println!("    Default Stages:");
+                    for (env, stage) in default_stages {
+                        println!("      {}: {}", env, stage);
+                    }
                 }
                 
                 // Show default commands (if configured)
@@ -97,7 +100,7 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                             let env_file = crate::detection::find_env_file(
                                 app_path,
                                 app.dockerfile_path.as_deref(),
-                                app.stage.as_deref()
+                                None // No single stage anymore, use default_stages
                             ).ok().flatten();
                             
                             // Only print header if we have at least one env file to show
@@ -159,9 +162,12 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     println!("Type: {}", resolved.app.app_type);
     println!("Path: {}", resolved.app.path);
     
-    // Display stage if configured
-    if let Some(ref stage) = resolved.app.stage {
-        println!("Stage: {}", stage);
+    // Display default stages if configured
+    if let Some(ref default_stages) = resolved.app.default_stages {
+        println!("\nDefault Stages:");
+        for (env, stage) in default_stages {
+            println!("  {}: {}", env, stage);
+        }
     }
     
     // Display defaults (if configured)
@@ -218,7 +224,7 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
                 let env_file = crate::detection::find_env_file(
                     app_path,
                     resolved.app.dockerfile_path.as_deref(),
-                    resolved.app.stage.as_deref()
+                    None // No single stage anymore, use default_stages
                 ).ok().flatten();
                 
                 match env_file {

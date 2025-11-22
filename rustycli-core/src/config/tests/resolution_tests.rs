@@ -94,8 +94,8 @@ mod tests {
                         k8s: None,
                     },
                     dockerfile_path: None,
-                    stage: None,
-                    env_file_path: None,
+                    env_files: None,
+                    default_stages: None,
                 },
             );
             config.projects.insert(project_name.to_string(), Project { apps });

@@ -85,9 +85,29 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
             println!("✓ Set docker-platform to '{}'", value);
         }
         
+        "default-stage" => {
+            // Validate that the value is a valid stage
+            use crate::config::models::Stage;
+            if value == "none" {
+                prefs.default_stage = None;
+                save_preferences(&prefs)?;
+                println!("✓ Removed default-stage");
+            } else if Stage::from_string(&value).is_some() {
+                prefs.default_stage = Some(value.clone());
+                save_preferences(&prefs)?;
+                println!("✓ Set default-stage to '{}'", value);
+            } else {
+                anyhow::bail!(
+                    "Invalid value '{}' for default-stage. Must be one of: {}, none",
+                    value,
+                    Stage::all_names()
+                );
+            }
+        }
+        
         // If someone tries to set a key that doesn't exist
         _ => {
-            anyhow::bail!("Unknown preference key '{}'. Valid keys: default-env, detached-mode, auto-start-deps, docker-platform", key);
+            anyhow::bail!("Unknown preference key '{}'. Valid keys: default-env, detached-mode, auto-start-deps, docker-platform, default-stage", key);
         }
     }
     
@@ -106,8 +126,7 @@ pub async fn pref_show() -> Result<()> {
     println!("  detached-mode: {}", prefs.detached_mode);
     println!("  auto-start-deps: {}", prefs.auto_start_deps);
     println!("  docker-platform: {}", prefs.docker_platform);
-    // Future preferences would be added here:
-    // println!("  some-other-pref: {}", prefs.some_other_pref);
+    println!("  default-stage: {}", prefs.default_stage.as_deref().unwrap_or("(not set)"));
     
     Ok(())
 }

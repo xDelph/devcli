@@ -288,69 +288,13 @@ mod tests {
         // Should deserialize successfully
         let config: Config = serde_json::from_str(old_config_json).unwrap();
         
-        // Stage should be None
+        // Default stages should be None
         let app = &config.projects["my-project"].apps["api"];
-        assert!(app.stage.is_none());
+        assert!(app.default_stages.is_none());
         
         // Re-serialize and verify stage field is omitted
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("\"stage\""));
     }
 
-    // Test: Config with stage field serializes and deserializes correctly
-    #[test]
-    fn test_stage_field_serialization() {
-        let app = AppBuilder::new("nodejs", "/tmp/api")
-            .with_local_command("start", "npm start")
-            .with_local_default("start")
-            .with_stage("dev")
-            .build();
-        
-        let config = ConfigBuilder::new()
-            .with_app("test", "api", app)
-            .build();
-        
-        // Serialize and verify stage is included
-        let json = serde_json::to_string(&config).unwrap();
-        assert!(json.contains("\"stage\""));
-        assert!(json.contains("\"dev\""));
-        
-        // Deserialize and verify stage value
-        let deserialized: Config = serde_json::from_str(&json).unwrap();
-        let app = &deserialized.projects["test"].apps["api"];
-        assert_eq!(app.stage, Some("dev".to_string()));
-    }
-
-    // Test: Mixed config with some apps having stage and others not
-    #[test]
-    fn test_mixed_stage_configuration() {
-        // App with stage
-        let api = AppBuilder::new("nodejs", "/tmp/api")
-            .with_local_command("start", "npm start")
-            .with_local_default("start")
-            .with_stage("prod")
-            .build();
-        
-        // App without stage
-        let worker = AppBuilder::new("nodejs", "/tmp/worker")
-            .with_local_command("start", "npm start")
-            .with_local_default("start")
-            .build();
-        
-        let config = ConfigBuilder::new()
-            .with_app("test", "api", api)
-            .with_app("test", "worker", worker)
-            .build();
-        
-        // Serialize and deserialize
-        let json = serde_json::to_string(&config).unwrap();
-        let deserialized: Config = serde_json::from_str(&json).unwrap();
-        
-        // Verify mixed configuration
-        let api = &deserialized.projects["test"].apps["api"];
-        let worker = &deserialized.projects["test"].apps["worker"];
-        
-        assert_eq!(api.stage, Some("prod".to_string()));
-        assert!(worker.stage.is_none());
-    }
 }

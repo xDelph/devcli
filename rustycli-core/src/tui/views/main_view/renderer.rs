@@ -324,6 +324,20 @@ impl MainView {
             ]));
         }
 
+        // Show env files summary if configured
+        if let Some(env_files) = &app.env_files {
+            let total_stages = env_files.len();
+            if total_stages > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("Env Files:   ", Style::default().fg(theme.text_dim)),
+                    Span::styled(
+                        format!("{} stage(s) configured", total_stages),
+                        Style::default().fg(theme.secondary)
+                    ),
+                ]));
+            }
+        }
+
         if !app.dependencies.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -579,7 +593,7 @@ impl MainView {
             }
             MainTab::Config => match self.config_mode {
                 ConfigMode::View => {
-                    "↑↓/jk: Navigate  a: Add Cmd  e: Edit Cmd  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit"
+                    "↑↓/jk: Navigate  a: Add Cmd  e: Edit Cmd  f: Env Files  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit"
                 }
                 ConfigMode::Add | ConfigMode::Edit => {
                     "Tab/↑↓: Navigate Fields  Type: Edit  Enter: Save  Esc: Cancel"
@@ -587,11 +601,20 @@ impl MainView {
                 ConfigMode::AddCommand | ConfigMode::EditCommand => {
                     "Tab: Switch Field  ←→: Move Cursor  Type: Edit  Enter: Save  Esc: Cancel"
                 }
+                ConfigMode::EditEnvFiles => {
+                    "↑↓/jk: Navigate  a: Add  e: Edit  d: Delete  Esc: Close"
+                }
+                ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
+                    "Tab: Switch Field  ←→: Move Cursor  Type: Edit  Enter: Save  Esc: Cancel"
+                }
                 ConfigMode::EditDependencies => {
                     "↑↓/jk: Navigate  a: Add  d: Delete  Esc: Close"
                 }
                 ConfigMode::AddDependency => {
                     "↑↓/jk: Navigate  Enter: Add  Esc: Cancel"
+                }
+                ConfigMode::ConfirmDelete => {
+                    "Y: Confirm  N/Esc: Cancel"
                 }
             },
         };
@@ -614,6 +637,8 @@ impl MainView {
             ConfigMode::View => self.render_config_view(frame, area, state, theme),
             ConfigMode::Add | ConfigMode::Edit => self.render_config_form(frame, area, theme),
             ConfigMode::AddCommand | ConfigMode::EditCommand => self.render_command_edit_form(frame, area, theme),
+            ConfigMode::EditEnvFiles => self.render_env_files_view(frame, area, state, theme),
+            ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => self.render_add_env_file_form(frame, area, theme),
             ConfigMode::EditDependencies => {
                 self.render_config_view(frame, area, state, theme);
                 self.render_dependencies_popup(frame, state, theme);
@@ -621,6 +646,20 @@ impl MainView {
             ConfigMode::AddDependency => {
                 self.render_config_view(frame, area, state, theme);
                 self.render_add_dependency_popup(frame, theme);
+            }
+            ConfigMode::ConfirmDelete => {
+                // Render the underlying view based on delete type
+                use super::DeleteType;
+                match self.delete_confirm_type {
+                    DeleteType::App | DeleteType::Command => self.render_config_view(frame, area, state, theme),
+                    DeleteType::Dependency => {
+                        self.render_config_view(frame, area, state, theme);
+                        self.render_dependencies_popup(frame, state, theme);
+                    }
+                    DeleteType::EnvFile => self.render_env_files_view(frame, area, state, theme),
+                }
+                // Render confirmation popup on top
+                self.render_delete_confirmation_popup(frame, theme);
             }
         }
     }
@@ -716,6 +755,40 @@ impl MainView {
 
                             lines.push(Line::from(""));
 
+                            // Display env_files configuration
+                            if let Some(env_files) = &full_app.env_files {
+                                lines.push(Line::from(Span::styled(
+                                    "Environment Files:".to_string(),
+                                    Style::default()
+                                        .fg(theme.secondary)
+                                        .add_modifier(Modifier::BOLD),
+                                )));
+                                
+                                // Sort stages alphabetically for consistent display
+                                let mut sorted_stages: Vec<_> = env_files.iter().collect();
+                                sorted_stages.sort_by_key(|(stage, _)| stage.as_str());
+                                
+                                for (stage, contexts) in sorted_stages {
+                                    lines.push(Line::from(vec![
+                                        Span::styled("  ".to_string(), Style::default()),
+                                        Span::styled(format!("{}: ", stage), Style::default().fg(theme.primary)),
+                                    ]));
+                                    
+                                    // Sort contexts alphabetically for consistent display
+                                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                                    
+                                    for (context, file_path) in sorted_contexts {
+                                        lines.push(Line::from(vec![
+                                            Span::styled("    • ".to_string(), Style::default().fg(theme.text_dim)),
+                                            Span::styled(format!("{}: ", context), Style::default().fg(theme.secondary)),
+                                            Span::styled(file_path.clone(), Style::default().fg(theme.text)),
+                                        ]));
+                                    }
+                                }
+                                lines.push(Line::from(""));
+                            }
+
                             if !full_app.dependencies.is_empty() {
                                 lines.push(Line::from(Span::styled(
                                     "Dependencies:".to_string(),
@@ -746,6 +819,10 @@ impl MainView {
                             lines.push(Line::from(vec![
                                 Span::styled("  e", Style::default().fg(theme.primary)),
                                 Span::styled(" - Edit selected command", Style::default().fg(theme.text)),
+                            ]));
+                            lines.push(Line::from(vec![
+                                Span::styled("  f", Style::default().fg(theme.primary)),
+                                Span::styled(" - Edit environment files", Style::default().fg(theme.text)),
                             ]));
                             lines.push(Line::from(vec![
                                 Span::styled("  E", Style::default().fg(theme.primary)),
@@ -1202,5 +1279,268 @@ impl MainView {
                 Constraint::Percentage((100 - percent_x) / 2),
             ])
             .split(popup_layout[1])[1]
+    }
+}
+
+impl MainView {
+    /// Renders the environment files view (full panel like config view)
+    fn render_env_files_view(&self, frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+        let mut lines = Vec::new();
+
+        if let Some(app) = state.selected_app() {
+            lines.push(Line::from(vec![
+                Span::styled("─ ", Style::default().fg(theme.border)),
+                Span::styled("● ", Style::default().fg(theme.primary)),
+                Span::styled(
+                    format!("{} - Environment Files", app.name),
+                    Style::default()
+                        .fg(theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ─", Style::default().fg(theme.border)),
+            ]));
+            lines.push(Line::from(""));
+
+            if let Some(env_files) = &app.env_files {
+                // Build a flat list of all entries (stage, context, file_path) for navigation
+                let mut entries: Vec<(String, String, String)> = Vec::new();
+                for (stage, contexts) in env_files {
+                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                    
+                    for (context, file_path) in sorted_contexts {
+                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                    }
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+                if entries.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "No environment files configured.",
+                        Style::default().fg(theme.text_dim),
+                    )));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "Press 'a' to add an environment file.",
+                        Style::default().fg(theme.text_dim),
+                    )));
+                } else {
+                    // Display grouped by stage, but track flat index for selection
+                    let mut sorted_stages: Vec<_> = env_files.iter().collect();
+                    sorted_stages.sort_by_key(|(stage, _)| stage.as_str());
+                    
+                    let mut flat_idx = 0;
+                    for (stage, contexts) in sorted_stages {
+                        // Stage header
+                        lines.push(Line::from(vec![
+                            Span::styled("  ", Style::default()),
+                            Span::styled(format!("{}:", stage), Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+                        ]));
+                        
+                        // Sort contexts for consistent display
+                        let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                        sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                        
+                        for (context, file_path) in sorted_contexts {
+                            let is_selected = flat_idx == self.selected_env_file_idx;
+                            let entry_style = if is_selected {
+                                Style::default().bg(theme.selected_bg).fg(theme.text)
+                            } else {
+                                Style::default().fg(theme.text)
+                            };
+
+                            let prefix = if is_selected { "   > " } else { "     " };
+                            lines.push(Line::from(vec![
+                                Span::styled(prefix.to_string(), Style::default().fg(theme.primary)),
+                                Span::styled(format!("{}: ", context), Style::default().fg(theme.secondary)),
+                                Span::styled(file_path.clone(), entry_style),
+                            ]));
+                            
+                            flat_idx += 1;
+                        }
+                        
+                        lines.push(Line::from("")); // Blank line between stages
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "No environment files configured.",
+                    Style::default().fg(theme.text_dim),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Press 'a' to add an environment file.",
+                    Style::default().fg(theme.text_dim),
+                )));
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Actions:",
+                Style::default()
+                    .fg(theme.secondary)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled("  a", Style::default().fg(theme.primary)),
+                Span::styled(" - Add environment file", Style::default().fg(theme.text)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  e", Style::default().fg(theme.primary)),
+                Span::styled(" - Edit selected entry", Style::default().fg(theme.text)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  d", Style::default().fg(theme.primary)),
+                Span::styled(" - Delete selected entry", Style::default().fg(theme.text)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Esc", Style::default().fg(theme.primary)),
+                Span::styled(" - Back to config view", Style::default().fg(theme.text)),
+            ]));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "No app selected",
+                Style::default().fg(theme.text_dim),
+            )));
+        }
+
+        let border_style = Style::default().fg(theme.primary);
+
+        let panel = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Environment Files")
+                    .border_style(border_style)
+            );
+
+        frame.render_widget(panel, area);
+    }
+
+    /// Renders the add/edit environment file form
+    fn render_add_env_file_form(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let title = if self.config_mode == ConfigMode::EditEnvFile {
+            "Edit Environment File"
+        } else {
+            "Add Environment File"
+        };
+        
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("─ ", Style::default().fg(theme.border)),
+                Span::styled(
+                    title,
+                    Style::default()
+                        .fg(theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ─", Style::default().fg(theme.border)),
+            ]),
+            Line::from(""),
+        ];
+
+        // Stage field
+        self.render_form_field(
+            &mut lines,
+            "Stage (e.g., qa, prod, dev):",
+            &self.config_form.env_file_stage,
+            self.config_form.cursor_env_file_stage,
+            ConfigField::EnvFileStage,
+            theme,
+        );
+        
+        lines.push(Line::from(""));
+
+        // Context field
+        self.render_form_field(
+            &mut lines,
+            "Context (local, docker, orbstack, k8s):",
+            &self.config_form.env_file_context,
+            self.config_form.cursor_env_file_context,
+            ConfigField::EnvFileContext,
+            theme,
+        );
+        
+        lines.push(Line::from(""));
+
+        // File path field
+        self.render_form_field(
+            &mut lines,
+            "File Path (relative to app root):",
+            &self.config_form.env_file_path,
+            self.config_form.cursor_env_file_path,
+            ConfigField::EnvFilePath,
+            theme,
+        );
+
+        let config_panel = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(theme.primary)),
+        );
+
+        frame.render_widget(config_panel, area);
+    }
+    
+    /// Renders the delete confirmation popup
+    fn render_delete_confirmation_popup(&self, frame: &mut Frame, theme: &Theme) {
+        let area = frame.area();
+        
+        // Parse message lines
+        let message_lines: Vec<&str> = self.delete_confirm_message.lines().collect();
+        let max_line_len = message_lines.iter().map(|l| l.len()).max().unwrap_or(40);
+        
+        // Calculate popup size with generous padding to avoid text cutoff
+        // Use a larger multiplier and minimum to ensure text fits
+        let popup_width = ((max_line_len as f32 * 1.2) as u16 + 16).max(70);
+        let popup_height = (message_lines.len() + 6) as u16;
+        
+        // Center the popup
+        let popup_area = Rect {
+            x: (area.width.saturating_sub(popup_width)) / 2,
+            y: (area.height.saturating_sub(popup_height)) / 2,
+            width: popup_width.min(area.width),
+            height: popup_height.min(area.height),
+        };
+        
+        // Build popup content with proper padding
+        let mut lines = Vec::new();
+        lines.push(Line::from(""));
+        
+        // Add message lines with left padding
+        for line in message_lines {
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    line.to_string(),
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        
+        lines.push(Line::from(""));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  Press ", Style::default().fg(theme.text_dim)),
+            Span::styled("Y", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(" to confirm, ", Style::default().fg(theme.text_dim)),
+            Span::styled("N", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(" or ", Style::default().fg(theme.text_dim)),
+            Span::styled("Esc", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(" to cancel", Style::default().fg(theme.text_dim)),
+        ]));
+        
+        let popup = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.primary))
+                    .title(" Confirm Delete ")
+                    .style(Style::default().bg(theme.bg))
+            );
+        
+        frame.render_widget(popup, popup_area);
     }
 }
