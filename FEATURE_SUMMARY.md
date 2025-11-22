@@ -6,11 +6,11 @@ Added real-time communication between the monitor process and TUI interface, ena
 
 ## Changes Made
 
-### 1. ProcessTracker (`rustycli-core/src/process/tracker.rs`)
+### 1. ProcessTracker (`devcli-core/src/process/tracker.rs`)
 
 Added notification system:
 
-- `status_notification_path()` - Returns path to `~/.rustycli/pids/.status_changed`
+- `status_notification_path()` - Returns path to `~/.devcli/pids/.status_changed`
 - `notify_status_change()` - Updates notification file's modification time
 - `get_last_status_change()` - Reads notification file's modification time
 
@@ -20,13 +20,13 @@ Integrated notifications into existing methods:
 - `remove_process()` - Notifies when process stops
 - `cleanup_dead()` - Notifies when dead processes are cleaned up
 
-### 2. Monitor (`rustycli-core/src/commands/monitor.rs`)
+### 2. Monitor (`devcli-core/src/commands/monitor.rs`)
 
 - No code changes needed!
 - Automatically benefits from ProcessTracker notifications
 - Continues to run its 3-second cleanup cycle
 
-### 3. TUI App (`rustycli-core/src/tui/app.rs`)
+### 3. TUI App (`devcli-core/src/tui/app.rs`)
 
 Implemented hybrid polling strategy:
 
@@ -39,14 +39,14 @@ Added status update detection:
 - `check_status_update()` - Checks if status changed and triggers redraw
 - `update_all_app_statuses()` - Updates all app statuses when notified
 
-### 4. TUI State (`rustycli-core/src/tui/state.rs`)
+### 4. TUI State (`devcli-core/src/tui/state.rs`)
 
 Added status tracking:
 
 - `status_updated` flag - Signals when status changed
 - Automatically cleared after triggering redraw
 
-### 5. Dependencies (`rustycli-core/Cargo.toml`)
+### 5. Dependencies (`devcli-core/Cargo.toml`)
 
 Added:
 
@@ -59,7 +59,7 @@ Process Event → ProcessTracker → Touch .status_changed → TUI Detects (250m
 ```
 
 1. **Event occurs**: Process starts, stops, or crashes
-2. **Notification**: ProcessTracker touches `~/.rustycli/pids/.status_changed`
+2. **Notification**: ProcessTracker touches `~/.devcli/pids/.status_changed`
 3. **Detection**: TUI checks file modification time every 250ms
 4. **Update**: TUI updates all app statuses and redraws UI
 
@@ -113,11 +113,11 @@ User: 😊
 
 ## Files Modified
 
-- `rustycli-core/src/process/tracker.rs` - Added notification methods
-- `rustycli-core/src/commands/monitor.rs` - Updated comments
-- `rustycli-core/src/tui/app.rs` - Implemented hybrid polling
-- `rustycli-core/src/tui/state.rs` - Added status_updated flag
-- `rustycli-core/Cargo.toml` - Added filetime dependency
+- `devcli-core/src/process/tracker.rs` - Added notification methods
+- `devcli-core/src/commands/monitor.rs` - Updated comments
+- `devcli-core/src/tui/app.rs` - Implemented hybrid polling
+- `devcli-core/src/tui/state.rs` - Added status_updated flag
+- `devcli-core/Cargo.toml` - Added filetime dependency
 
 ## Documentation Added
 

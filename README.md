@@ -1,10 +1,10 @@
-# RustyCLI
+# devcli
 
 A powerful command-line interface for managing spawned processes with config-based management, dependency resolution, and advanced process tracking.
 
 ## Overview
 
-RustyCLI is a modular process management tool that allows you to:
+devcli is a modular process management tool that allows you to:
 - Manage processes through a centralized configuration file
 - Define and resolve process dependencies automatically
 - Run processes in local or Docker environments
@@ -36,26 +36,26 @@ cargo --version
 Clone this repository and build the project:
 
 ```bash
-cd rusty_cli
+cd devcli
 cargo build --release
 ```
 
-The binary will be available at `target/release/rustycli`.
+The binary will be available at `target/release/devcli`.
 
 Optionally, install it globally:
 
 ```bash
-cargo install --path rustycli
+cargo install --path devcli
 ```
 
 ## Getting Started
 
 ### 1. Initialize Configuration
 
-Create a configuration file in `~/.rustycli/config.json`:
+Create a configuration file in `~/.devcli/config.json`:
 
 ```bash
-rustycli config init
+devcli config init
 ```
 
 This creates a template configuration that you can edit.
@@ -65,7 +65,7 @@ This creates a template configuration that you can edit.
 Edit your config file:
 
 ```bash
-rustycli config edit
+devcli config edit
 ```
 
 Example configuration structure:
@@ -106,7 +106,7 @@ Example configuration structure:
 Check your configuration is valid:
 
 ```bash
-rustycli config validate
+devcli config validate
 ```
 
 ### 4. Set Preferences
@@ -114,7 +114,7 @@ rustycli config validate
 Set your default environment (local or docker):
 
 ```bash
-rustycli pref set default-env local
+devcli pref set default-env local
 ```
 
 ## Usage
@@ -124,19 +124,19 @@ rustycli pref set default-env local
 Start a process using its default command:
 
 ```bash
-rustycli start api
+devcli start api
 ```
 
 Start with a specific environment:
 
 ```bash
-rustycli start api --env docker
+devcli start api --env docker
 ```
 
 If app names are ambiguous across projects, specify the project:
 
 ```bash
-rustycli start api --project my-project
+devcli start api --project my-project
 ```
 
 ### Running Specific Commands
@@ -144,14 +144,14 @@ rustycli start api --project my-project
 Run a specific command variant:
 
 ```bash
-rustycli run api build
-rustycli run api test
+devcli run api build
+devcli run api test
 ```
 
 With environment override:
 
 ```bash
-rustycli run api build --env docker
+devcli run api build --env docker
 ```
 
 ### Checking Status
@@ -159,19 +159,19 @@ rustycli run api build --env docker
 View all running processes grouped by project:
 
 ```bash
-rustycli status
+devcli status
 ```
 
 Filter by project:
 
 ```bash
-rustycli status --project my-project
+devcli status --project my-project
 ```
 
 Show a specific app with its dependencies:
 
 ```bash
-rustycli status api --deps
+devcli status api --deps
 ```
 
 Example output:
@@ -190,19 +190,19 @@ PROJECT: other-project
 List all projects and apps:
 
 ```bash
-rustycli config list
+devcli config list
 ```
 
 List apps only:
 
 ```bash
-rustycli config list --apps-only
+devcli config list --apps-only
 ```
 
 Show details of a specific app:
 
 ```bash
-rustycli config show api
+devcli config show api
 ```
 
 ### Preferences Management
@@ -210,26 +210,26 @@ rustycli config show api
 Show current preferences:
 
 ```bash
-rustycli pref show
+devcli pref show
 ```
 
 Set default environment:
 
 ```bash
-rustycli pref set default-env docker
+devcli pref set default-env docker
 ```
 
 Reset preferences to defaults:
 
 ```bash
-rustycli pref reset
+devcli pref reset
 ```
 
 ## Features
 
 ### Config-Based Management
 
-All processes are defined in `~/.rustycli/config.json`:
+All processes are defined in `~/.devcli/config.json`:
 - Centralized configuration for all projects and apps
 - Support for multiple environments (local, docker)
 - Default commands per environment
@@ -248,7 +248,7 @@ Define dependencies between apps:
 }
 ```
 
-RustyCLI will:
+devcli will:
 - Check dependencies are running before starting an app
 - Detect circular dependencies
 - Provide clear error messages for missing dependencies
@@ -269,7 +269,7 @@ Status command groups processes by project for better organization. Processes wi
 
 All process logs are automatically saved to:
 ```
-~/.rustycli/logs/<app-name>_<timestamp>.log
+~/.devcli/logs/<app-name>_<timestamp>.log
 ```
 
 Logs include timestamps and are preserved for review.
@@ -278,7 +278,7 @@ Logs include timestamps and are preserved for review.
 
 Process information is stored in:
 ```
-~/.rustycli/pids/<app-name>.json
+~/.devcli/pids/<app-name>.json
 ```
 
 This includes:
@@ -292,15 +292,15 @@ This includes:
 
 ## Architecture
 
-RustyCLI uses a modular workspace structure:
+devcli uses a modular workspace structure:
 
 ### Workspace Structure
 
 ```
-rusty_cli/
-├── rustycli/           # Binary crate (CLI entry point)
+devcli/
+├── devcli/           # Binary crate (CLI entry point)
 │   └── src/main.rs     # Command routing and argument parsing
-└── rustycli-core/      # Library crate (core functionality)
+└── devcli-core/      # Library crate (core functionality)
     └── src/
         ├── config/     # Configuration management
         ├── process/    # Process spawning and tracking

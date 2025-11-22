@@ -2,7 +2,7 @@
 
 ## Overview
 
-This design document outlines the systematic approach for refactoring large Rust source files in the rustycli project. The refactoring will be performed incrementally, one module at a time, with validation at each step to ensure no functionality is lost.
+This design document outlines the systematic approach for refactoring large Rust source files in the devcli project. The refactoring will be performed incrementally, one module at a time, with validation at each step to ensure no functionality is lost.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ The following files require refactoring due to size and complexity:
 #### Module Hierarchy
 
 ```
-rustycli-core/src/
+devcli-core/src/
 ├── detection/
 │   ├── mod.rs                    # Public interface + DetectedApp struct
 │   ├── app_types.rs             # App type detection (nodejs, python, etc.)

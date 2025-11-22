@@ -28,7 +28,7 @@ Implemented environment-specific approaches:
 
 ## Changes Made
 
-### 1. Command Utility (`rustycli-core/src/utils/command.rs`)
+### 1. Command Utility (`devcli-core/src/utils/command.rs`)
 
 - Added `inject_docker_env_file()` function for Docker environment
   - Injects `--env-file` flag into docker run/create commands
@@ -38,18 +38,18 @@ Implemented environment-specific approaches:
   - Sorts variables alphabetically for consistent output
 - Added comprehensive unit tests (12 tests total)
 
-### 2. Start Command (`rustycli-core/src/commands/start/executor.rs`)
+### 2. Start Command (`devcli-core/src/commands/start/executor.rs`)
 
 - Docker: Injects `--env-file .env` if .env file exists
 - OrbStack: Loads .env and prefixes command with variables
 - Command display shows the full modified command
 
-### 3. Run Command (`rustycli-core/src/commands/run.rs`)
+### 3. Run Command (`devcli-core/src/commands/run.rs`)
 
 - Docker: Injects `--env-file .env` if .env file exists
 - OrbStack: Loads .env and prefixes command with variables
 
-### 4. Restart Command (`rustycli-core/src/commands/restart.rs`)
+### 4. Restart Command (`devcli-core/src/commands/restart.rs`)
 
 - Docker: Injects `--env-file .env` if .env file exists
 - OrbStack: Reloads .env and prefixes command with variables
@@ -117,7 +117,7 @@ NODE_ENV=production PORT=3000 docker run --platform linux/amd64 myimage
 All tests pass:
 
 ```bash
-cargo test --package rustycli-core utils::command::tests
+cargo test --package devcli-core utils::command::tests
 ```
 
 Results:
@@ -144,10 +144,10 @@ PORT=3000
 
 ```bash
 # Docker - uses --env-file flag
-rustycli start myapp --env docker
+devcli start myapp --env docker
 
 # OrbStack - uses shell-style prefix
-rustycli start myapp --env orbstack
+devcli start myapp --env orbstack
 ```
 
 3. The CLI automatically:

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the design for an interactive Terminal User Interface (TUI) for RustyCLI. The TUI will provide a visual, keyboard-navigable interface for managing applications, viewing their status, executing commands, and inspecting logs with enhanced formatting.
+This document outlines the design for an interactive Terminal User Interface (TUI) for devcli. The TUI will provide a visual, keyboard-navigable interface for managing applications, viewing their status, executing commands, and inspecting logs with enhanced formatting.
 
 The design leverages the `ratatui` library (formerly tui-rs), which is the most mature and actively maintained TUI framework in the Rust ecosystem. For log beautification, we'll use `serde_json` for JSON formatting and `syntect` for syntax highlighting.
 
@@ -21,7 +21,7 @@ The design leverages the `ratatui` library (formerly tui-rs), which is the most 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        CLI Entry Point                       │
-│                     (rustycli ui command)                    │
+│                     (devcli ui command)                    │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -446,7 +446,7 @@ impl Theme {
 Reuses existing `ConfigManager` from core library to load projects and apps.
 
 ```rust
-// From rustycli-core/src/config/manager.rs
+// From devcli-core/src/config/manager.rs
 pub struct ConfigManager {
     pub fn load_config() -> Result<Config>;
     pub fn get_app(&self, project: &str, app: &str) -> Result<&App>;
@@ -458,7 +458,7 @@ pub struct ConfigManager {
 Reuses existing `ProcessTracker` to check app status.
 
 ```rust
-// From rustycli-core/src/process/tracker.rs
+// From devcli-core/src/process/tracker.rs
 pub struct ProcessTracker {
     pub fn list_processes() -> Result<Vec<ProcessInfo>>;
     pub fn is_running(&self, pid: u32) -> bool;

@@ -1,6 +1,6 @@
 # Rust Concepts Explained
 
-This document explains key Rust concepts used in the RustyCLI project. Use it as a reference when reading the code.
+This document explains key Rust concepts used in the devcli project. Use it as a reference when reading the code.
 
 ## Ownership and Borrowing
 
@@ -311,7 +311,7 @@ All at compile time, with no garbage collector!
 3. **Check Documentation** - `cargo doc --open` opens local docs
 4. **The Book** - https://doc.rust-lang.org/book/ is the best resource
 
-## Common Patterns in RustyCLI
+## Common Patterns in devcli
 
 ### Creating a Result
 ```rust

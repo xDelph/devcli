@@ -6,14 +6,14 @@ Added support for configuring the Docker platform architecture via preferences. 
 
 ## Changes Made
 
-### 1. Preferences Model (`rustycli-core/src/config/models.rs`)
+### 1. Preferences Model (`devcli-core/src/config/models.rs`)
 
 - Added `docker_platform: String` field to the `Preferences` struct
 - Default value: `"linux/amd64"`
 - Added `default_docker_platform()` helper function
 - Updated `Default` implementation for `Preferences`
 
-### 2. Preferences Command (`rustycli-core/src/commands/preferences.rs`)
+### 2. Preferences Command (`devcli-core/src/commands/preferences.rs`)
 
 - Added support for `docker-platform` preference key
 - Validation: ensures platform format is `os/arch` (e.g., `linux/amd64`, `linux/arm64`)
@@ -21,7 +21,7 @@ Added support for configuring the Docker platform architecture via preferences. 
 - Updated `pref reset` to include docker-platform in output
 - Updated error messages to include `docker-platform` in valid keys list
 
-### 3. Command Utility (`rustycli-core/src/utils/command.rs`)
+### 3. Command Utility (`devcli-core/src/utils/command.rs`)
 
 - Created new utility module for command processing
 - Implemented `inject_docker_platform()` function that:
@@ -31,19 +31,19 @@ Added support for configuring the Docker platform architecture via preferences. 
   - Only affects docker/orbstack environments
 - Added comprehensive unit tests
 
-### 4. Start Command (`rustycli-core/src/commands/start/executor.rs`)
+### 4. Start Command (`devcli-core/src/commands/start/executor.rs`)
 
 - Modified `start_single_app_process()` to inject platform flag for docker/orbstack environments
 - Platform flag is injected before spawning the process
 - Updated command display to show the modified command with platform flag
 
-### 5. Run Command (`rustycli-core/src/commands/run.rs`)
+### 5. Run Command (`devcli-core/src/commands/run.rs`)
 
 - Modified `run_command()` to inject platform flag for docker/orbstack environments
 - Platform flag is injected before spawning the process
 - Updated command display and process info to use the modified command
 
-### 6. Restart Command (`rustycli-core/src/commands/restart.rs`)
+### 6. Restart Command (`devcli-core/src/commands/restart.rs`)
 
 - Modified `restart_command()` to inject platform flag for docker/orbstack environments
 - Platform flag is injected before spawning the process
@@ -51,8 +51,8 @@ Added support for configuring the Docker platform architecture via preferences. 
 
 ### 7. Test Updates
 
-- Updated `rustycli-core/src/config/config_tests.rs` to include `docker_platform` field
-- Updated `rustycli-core/tests/integration_tests.rs` to include `docker_platform` field
+- Updated `devcli-core/src/config/config_tests.rs` to include `docker_platform` field
+- Updated `devcli-core/tests/integration_tests.rs` to include `docker_platform` field
 - All existing tests pass
 - New unit tests for platform injection pass
 
@@ -61,7 +61,7 @@ Added support for configuring the Docker platform architecture via preferences. 
 ### View Current Platform Setting
 
 ```bash
-rustycli pref show
+devcli pref show
 ```
 
 Output:
@@ -77,7 +77,7 @@ Current preferences:
 ### Change Platform Setting
 
 ```bash
-rustycli pref set docker-platform linux/arm64
+devcli pref set docker-platform linux/arm64
 ```
 
 Output:
@@ -97,7 +97,7 @@ Output:
 ### Reset to Defaults
 
 ```bash
-rustycli pref reset
+devcli pref reset
 ```
 
 ## How It Works
@@ -135,13 +135,13 @@ The platform flag is NOT injected if:
 All tests pass:
 
 ```bash
-cargo test --package rustycli-core
+cargo test --package devcli-core
 ```
 
 Specific platform injection tests:
 
 ```bash
-cargo test --package rustycli-core utils::command::tests
+cargo test --package devcli-core utils::command::tests
 ```
 
 Results:

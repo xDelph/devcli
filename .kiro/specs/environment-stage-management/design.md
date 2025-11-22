@@ -2,7 +2,7 @@
 
 ## Overview
 
-This feature extends the RustyCLI system to support multiple deployment stages (dev, qa, preprod, prod) across different runtime environments (local, docker, orbstack, k8s). The design maintains backward compatibility with existing configurations while adding stage-aware environment file loading.
+This feature extends the devcli system to support multiple deployment stages (dev, qa, preprod, prod) across different runtime environments (local, docker, orbstack, k8s). The design maintains backward compatibility with existing configurations while adding stage-aware environment file loading.
 
 ### Key Design Principles
 
@@ -50,7 +50,7 @@ graph TD
 
 ### 1. Configuration Model Changes
 
-**File**: `rustycli-core/src/config/models.rs`
+**File**: `devcli-core/src/config/models.rs`
 
 Add optional `stage` field to the `App` struct:
 
@@ -122,7 +122,7 @@ impl Stage {
 
 ### 2. Environment File Detection
 
-**File**: `rustycli-core/src/detection/environments/orbstack.rs` (and similar for docker)
+**File**: `devcli-core/src/detection/environments/orbstack.rs` (and similar for docker)
 
 Extend `find_env_file` to support stage-specific files:
 
@@ -212,7 +212,7 @@ pub fn load_env_vars_for_runtime(
 
 ### 3. Command Execution Pipeline
 
-**File**: `rustycli-core/src/commands/start/resolver.rs`
+**File**: `devcli-core/src/commands/start/resolver.rs`
 
 Add stage field to `StartCommandArgs`:
 
@@ -230,7 +230,7 @@ pub struct StartCommandArgs {
 }
 ```
 
-**File**: `rustycli-core/src/commands/start/executor.rs`
+**File**: `devcli-core/src/commands/start/executor.rs`
 
 Modify `start_single_app_process` to accept and use stage:
 
@@ -300,16 +300,16 @@ match environment.as_str() {
 
 ### 4. Config Command Extensions
 
-**File**: `rustycli-core/src/commands/config/edit.rs`
+**File**: `devcli-core/src/commands/config/edit.rs`
 
 Add new function for stage management:
 
 ```rust
 /// Set the deployment stage for an app
 ///
-/// Example: `rustycli config set-stage api dev`
-/// Example: `rustycli config set-stage api --project qm qa`
-/// Example: `rustycli config set-stage api none` (removes stage)
+/// Example: `devcli config set-stage api dev`
+/// Example: `devcli config set-stage api --project qm qa`
+/// Example: `devcli config set-stage api none` (removes stage)
 ///
 /// Sets the deployment stage for an app, which determines which .env file to use.
 ///
@@ -380,7 +380,7 @@ pub async fn config_set_stage(
 }
 ```
 
-**File**: `rustycli-core/src/commands/config/list.rs`
+**File**: `devcli-core/src/commands/config/list.rs`
 
 Extend app listing to show stage information:
 
@@ -410,7 +410,7 @@ for env in ["local", "docker", "orbstack", "k8s"] {
 
 ### 5. Auto-Add Command Enhancement
 
-**File**: `rustycli-core/src/commands/auto_add/interactive.rs`
+**File**: `devcli-core/src/commands/auto_add/interactive.rs`
 
 Add stage detection and prompting:
 
@@ -472,7 +472,7 @@ let app = App {
 
 ### 6. TUI Integration
 
-**File**: `rustycli-core/src/tui/views/main_view/renderer.rs`
+**File**: `devcli-core/src/tui/views/main_view/renderer.rs`
 
 Update the app list rendering to show stage:
 
@@ -493,7 +493,7 @@ let app_line = format!(
 );
 ```
 
-**File**: `rustycli-core/src/process/tracker.rs`
+**File**: `devcli-core/src/process/tracker.rs`
 
 Add stage field to `ProcessInfo`:
 
@@ -703,11 +703,11 @@ cp .env .env.prod
 vim .env.dev .env.qa .env.prod
 
 # 3. Set default stage for app
-rustycli config set-stage my-app dev
+devcli config set-stage my-app dev
 
 # 4. Test with different stages
-rustycli start my-app --stage qa
-rustycli start my-app --stage prod
+devcli start my-app --stage qa
+devcli start my-app --stage prod
 ```
 
 ## Performance Considerations

@@ -26,7 +26,7 @@ When a Dockerfile exists in a subdirectory (e.g., `docker/Dockerfile`), the .env
 
 ## Changes Made
 
-### 1. Empty Value Handling (`rustycli-core/src/detection/environments/orbstack.rs`)
+### 1. Empty Value Handling (`devcli-core/src/detection/environments/orbstack.rs`)
 
 **Updated `parse_env_file()` function:**
 
@@ -46,7 +46,7 @@ let value = if value.is_empty() {
 - `TOKEN=""` → `TOKEN=XXX`
 - `PORT=3000` → `PORT=3000` (unchanged)
 
-### 2. .env File Priority (`rustycli-core/src/detection/environments/orbstack.rs`)
+### 2. .env File Priority (`devcli-core/src/detection/environments/orbstack.rs`)
 
 **Added `find_env_file()` function:**
 
@@ -65,9 +65,9 @@ let value = if value.is_empty() {
 
 **Updated all command files to use the new priority system:**
 
-- `rustycli-core/src/commands/start/executor.rs`
-- `rustycli-core/src/commands/run.rs`
-- `rustycli-core/src/commands/restart.rs`
+- `devcli-core/src/commands/start/executor.rs`
+- `devcli-core/src/commands/run.rs`
+- `devcli-core/src/commands/restart.rs`
 
 **Docker environment:**
 
@@ -162,13 +162,13 @@ fn test_parse_env_file_empty_values() {
 ### Test Results
 
 ```bash
-cargo test --package rustycli-core parse_env_file
+cargo test --package devcli-core parse_env_file
 ```
 
 ✅ 2 tests pass (parse_env_file, parse_env_file_empty_values)
 
 ```bash
-cargo test --package rustycli-core utils::command::tests
+cargo test --package devcli-core utils::command::tests
 ```
 
 ✅ 12 tests pass (all command utility tests)
@@ -190,7 +190,7 @@ API_KEY=
 2. Run your app:
 
 ```bash
-rustycli start myapp --env orbstack
+devcli start myapp --env orbstack
 ```
 
 3. Empty values are automatically replaced with `XXX`:
@@ -214,9 +214,9 @@ my-app/
 2. Run your app:
 
 ```bash
-rustycli start myapp --env docker
+devcli start myapp --env docker
 # or
-rustycli start myapp --env orbstack
+devcli start myapp --env orbstack
 ```
 
 3. The CLI automatically uses `docker/.env` instead of root `.env`

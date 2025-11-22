@@ -1,4 +1,4 @@
-# RustyCLI Code Learning Guide
+# devcli Code Learning Guide
 
 This guide explains the key Rust concepts used in the new config system to help you learn the language.
 

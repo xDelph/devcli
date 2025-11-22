@@ -26,7 +26,7 @@ The monitor process and TUI now communicate in real-time, providing **instant st
 
 1. **File-Based Notification System**
 
-   - Notification file: `~/.rustycli/pids/.status_changed`
+   - Notification file: `~/.devcli/pids/.status_changed`
    - Lightweight, portable, efficient
    - No external dependencies or IPC complexity
 
@@ -77,7 +77,7 @@ User starts app → Status updates instantly! (250ms) ⚡
 ## 📁 Files Modified
 
 ```
-rustycli-core/
+devcli-core/
 ├── src/
 │   ├── process/
 │   │   └── tracker.rs          ← Added notification methods
@@ -189,8 +189,8 @@ The monitor and TUI now communicate in **real-time**, providing users with **ins
 
 ### Key Files
 
-- `~/.rustycli/pids/.status_changed` - Notification file
-- `~/.rustycli/pids/<app>.json` - Process tracking files
+- `~/.devcli/pids/.status_changed` - Notification file
+- `~/.devcli/pids/<app>.json` - Process tracking files
 
 ### Key Timings
 
@@ -211,7 +211,7 @@ cargo run --release -- start <app>
 cargo run --release -- stop <app>
 
 # Check notification file
-stat ~/.rustycli/pids/.status_changed
+stat ~/.devcli/pids/.status_changed
 ```
 
 ---

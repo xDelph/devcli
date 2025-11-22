@@ -76,4 +76,4 @@ let prefs = PreferencesBuilder::new()
 - When models change, update builder once instead of all tests
 - Tests are more readable and maintainable
 
-See `rustycli-core/TESTING.md` for full documentation.
+See `devcli-core/TESTING.md` for full documentation.

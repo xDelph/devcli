@@ -1,4 +1,4 @@
-# RustyCLI - Quick Start Guide
+# devcli - Quick Start Guide
 
 ## Installation
 
@@ -9,38 +9,38 @@ rustup-init
 source ~/.cargo/env
 ```
 
-### Build RustyCLI
+### Build devcli
 ```bash
-cd /Users/thomas.delalonde/Projects/perso/rusty_cli
+cd /Users/thomas.delalonde/Projects/perso/devcli
 cargo build --release
 ```
 
-The binary will be at: `./target/release/rustycli`
+The binary will be at: `./target/release/devcli`
 
 ## Basic Usage
 
 ### Start a Process (Attached Mode)
 Attached mode displays logs in real-time:
 ```bash
-./target/release/rustycli start my-app --cmd "node server.js"
+./target/release/devcli start my-app --cmd "node server.js"
 ```
 
 ### Start a Process (Detached Mode)
 Detached mode runs in background:
 ```bash
-./target/release/rustycli start my-app --cmd "node server.js" --detach
+./target/release/devcli start my-app --cmd "node server.js" --detach
 ```
 
 ### With Custom Directory
 ```bash
-./target/release/rustycli start my-api \
+./target/release/devcli start my-api \
   --cmd "python app.py" \
   --dir /path/to/project
 ```
 
 ### With Environment Variables
 ```bash
-./target/release/rustycli start my-service \
+./target/release/devcli start my-service \
   --cmd "node server.js" \
   --env PORT=3000 \
   --env NODE_ENV=production \
@@ -50,29 +50,29 @@ Detached mode runs in background:
 ### Check Process Status
 All processes:
 ```bash
-./target/release/rustycli status
+./target/release/devcli status
 ```
 
 Specific process:
 ```bash
-./target/release/rustycli status my-app
+./target/release/devcli status my-app
 ```
 
 ## File Locations
 
 ### Log Files
 ```
-~/.rustycli/logs/<app-name>_<timestamp>.log
+~/.devcli/logs/<app-name>_<timestamp>.log
 ```
 
 Example:
 ```bash
-tail -f ~/.rustycli/logs/my-app_20251024_120000.log
+tail -f ~/.devcli/logs/my-app_20251024_120000.log
 ```
 
 ### PID Files
 ```
-~/.rustycli/pids/<app-name>.json
+~/.devcli/pids/<app-name>.json
 ```
 
 ## Common Workflows
@@ -80,7 +80,7 @@ tail -f ~/.rustycli/logs/my-app_20251024_120000.log
 ### Development Server
 ```bash
 # Start in attached mode to see logs
-./target/release/rustycli start dev \
+./target/release/devcli start dev \
   --cmd "npm run dev" \
   --dir ./my-project
 ```
@@ -88,42 +88,42 @@ tail -f ~/.rustycli/logs/my-app_20251024_120000.log
 ### Background Service
 ```bash
 # Start detached
-./target/release/rustycli start api \
+./target/release/devcli start api \
   --cmd "python api.py" \
   --dir ./backend \
   --env FLASK_ENV=production \
   --detach
 
 # Check if running
-./target/release/rustycli status api
+./target/release/devcli status api
 
 # View logs
-tail -f ~/.rustycli/logs/api_*.log
+tail -f ~/.devcli/logs/api_*.log
 ```
 
 ### Multiple Services
 ```bash
 # Start multiple services
-./target/release/rustycli start frontend --cmd "npm start" --dir ./frontend --detach
-./target/release/rustycli start backend --cmd "npm start" --dir ./backend --detach
-./target/release/rustycli start worker --cmd "npm start" --dir ./worker --detach
+./target/release/devcli start frontend --cmd "npm start" --dir ./frontend --detach
+./target/release/devcli start backend --cmd "npm start" --dir ./backend --detach
+./target/release/devcli start worker --cmd "npm start" --dir ./worker --detach
 
 # Check all
-./target/release/rustycli status
+./target/release/devcli status
 ```
 
 ## Tips
 
 ### Install Globally
 ```bash
-cargo install --path rustycli
-rustycli --help
+cargo install --path devcli
+devcli --help
 ```
 
 ### Alias for Convenience
 Add to your `~/.zshrc`:
 ```bash
-alias rcli="/Users/thomas.delalonde/Projects/perso/rusty_cli/target/release/rustycli"
+alias rcli="/Users/thomas.delalonde/Projects/perso/devcli/target/release/devcli"
 ```
 
 Then use:
@@ -146,7 +146,7 @@ npm run dev
 Then:
 ```bash
 chmod +x scripts/start-dev.sh
-./target/release/rustycli start dev --cmd "./scripts/start-dev.sh" --detach
+./target/release/devcli start dev --cmd "./scripts/start-dev.sh" --detach
 ```
 
 ## Troubleshooting
@@ -154,7 +154,7 @@ chmod +x scripts/start-dev.sh
 ### Process Won't Start
 ```bash
 # Check if app name is already in use
-./target/release/rustycli status my-app
+./target/release/devcli status my-app
 
 # Try a different name or wait for old process to finish
 ```
@@ -162,17 +162,17 @@ chmod +x scripts/start-dev.sh
 ### Can't Find Logs
 ```bash
 # List all log files
-ls -lh ~/.rustycli/logs/
+ls -lh ~/.devcli/logs/
 
 # Find specific app logs
-ls ~/.rustycli/logs/my-app_*
+ls ~/.devcli/logs/my-app_*
 ```
 
 ### Process Shows as Dead
 ```bash
 # Status command auto-cleans dead processes
 # Just run status again, it will be removed
-./target/release/rustycli status
+./target/release/devcli status
 ```
 
 ## Next Steps
@@ -184,8 +184,8 @@ ls ~/.rustycli/logs/my-app_*
 ## Help
 
 ```bash
-./target/release/rustycli --help
-./target/release/rustycli start --help
-./target/release/rustycli status --help
+./target/release/devcli --help
+./target/release/devcli start --help
+./target/release/devcli status --help
 ```
 

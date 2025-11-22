@@ -13,16 +13,16 @@
         ┌───────────────────┐     ┌───────────────────┐
         │   CLI Commands    │     │    TUI Interface  │
         │                   │     │                   │
-        │  rustycli start   │     │  Press 's' to     │
-        │  rustycli stop    │     │  start/stop       │
-        │  rustycli restart │     │                   │
+        │  devcli start   │     │  Press 's' to     │
+        │  devcli stop    │     │  start/stop       │
+        │  devcli restart │     │                   │
         └─────────┬─────────┘     └─────────┬─────────┘
                   │                         │
                   │                         │
                   ▼                         ▼
         ┌─────────────────────────────────────────────┐
         │         ProcessTracker                      │
-        │  ~/.rustycli/pids/                          │
+        │  ~/.devcli/pids/                          │
         │                                             │
         │  • app1.json (PID, start time, etc.)       │
         │  • app2.json                                │
@@ -118,13 +118,13 @@ Process       Monitor         ProcessTracker    TUI Polling
 ```rust
 // When status changes (any process start/stop/crash)
 notify_status_change() {
-    touch ~/.rustycli/pids/.status_changed
+    touch ~/.devcli/pids/.status_changed
     // Updates file modification time
 }
 
 // TUI checks every 250ms
 get_last_status_change() {
-    stat ~/.rustycli/pids/.status_changed
+    stat ~/.devcli/pids/.status_changed
     return mtime
 }
 ```

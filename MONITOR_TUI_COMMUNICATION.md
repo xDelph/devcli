@@ -10,7 +10,7 @@ The monitor process and TUI now communicate in real-time to provide instant stat
 
 The system uses a lightweight file-based notification mechanism:
 
-1. **Notification File**: `~/.rustycli/pids/.status_changed`
+1. **Notification File**: `~/.devcli/pids/.status_changed`
 
    - A simple marker file that gets "touched" whenever process status changes
    - The file's modification timestamp is used as the signal
@@ -31,7 +31,7 @@ The system uses a lightweight file-based notification mechanism:
 
 ### ProcessTracker Changes
 
-Added three new methods to `rustycli-core/src/process/tracker.rs`:
+Added three new methods to `devcli-core/src/process/tracker.rs`:
 
 ```rust
 // Get path to the notification file
@@ -52,7 +52,7 @@ These methods are automatically called by:
 
 ### TUI Changes
 
-Modified `rustycli-core/src/tui/app.rs`:
+Modified `devcli-core/src/tui/app.rs`:
 
 1. **Hybrid Polling Strategy**:
 
@@ -105,13 +105,13 @@ To test the real-time communication:
 1. Start the TUI:
 
    ```bash
-   rustycli ui
+   devcli ui
    ```
 
 2. In another terminal, start an app:
 
    ```bash
-   rustycli start <app-name>
+   devcli start <app-name>
    ```
 
 3. Observe the TUI updates within 250ms (instead of up to 2 seconds)
@@ -119,7 +119,7 @@ To test the real-time communication:
 4. Stop the app:
 
    ```bash
-   rustycli stop <app-name>
+   devcli stop <app-name>
    ```
 
 5. Again, observe the instant update in the TUI

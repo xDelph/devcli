@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This specification defines the requirements for refactoring large Rust source files (500+ lines) in the rustycli project to improve maintainability, testability, and code organization. The refactoring will split monolithic files into focused, single-responsibility modules while preserving all existing functionality.
+This specification defines the requirements for refactoring large Rust source files (500+ lines) in the devcli project to improve maintainability, testability, and code organization. The refactoring will split monolithic files into focused, single-responsibility modules while preserving all existing functionality.
 
 ## Glossary
 

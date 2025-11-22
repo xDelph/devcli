@@ -1,5 +1,5 @@
 [workspace]
-members = ["rustycli", "rustycli-core"]
+members = ["devcli", "devcli-core"]
 resolver = "2"
 
 [workspace.package]

@@ -1,8 +1,8 @@
-# RustyCLI - Implementation Summary
+# devcli - Implementation Summary
 
 ## ✅ Project Status: MVP Complete
 
-The RustyCLI foundation has been successfully implemented with all core features working correctly.
+The devcli foundation has been successfully implemented with all core features working correctly.
 
 ## What Was Built
 
@@ -12,8 +12,8 @@ Complete instructions for installing Rust on macOS using Homebrew are provided i
 ### 2. Modular Workspace Architecture
 
 **Cargo Workspace Structure:**
-- `rustycli` - Binary crate (CLI entry point)
-- `rustycli-core` - Library crate (reusable business logic)
+- `devcli` - Binary crate (CLI entry point)
+- `devcli-core` - Library crate (reusable business logic)
 
 This enables:
 - Code reuse across future interfaces (TUI, web, etc.)
@@ -39,14 +39,14 @@ This enables:
 - Full process independence
 
 #### Process Tracking
-- PID persistence in `~/.rustycli/pids/<app-name>.json`
+- PID persistence in `~/.devcli/pids/<app-name>.json`
 - Stores metadata: PID, command, directory, start time, env vars
 - Automatic detection of running/stopped processes
 - Auto-cleanup of dead process entries
 - Prevents duplicate process names
 
 #### Log Management
-- All logs saved to `~/.rustycli/logs/<app-name>_<timestamp>.log`
+- All logs saved to `~/.devcli/logs/<app-name>_<timestamp>.log`
 - Timestamped log entries: `[YYYY-MM-DD HH:MM:SS.mmm] message`
 - Dual output in attached mode (file + stdout)
 - File-only logging in detached mode
@@ -64,8 +64,8 @@ This enables:
 
 **Commands Implemented:**
 ```bash
-rustycli start <app-name> --cmd <command> [OPTIONS]
-rustycli status [app-name]
+devcli start <app-name> --cmd <command> [OPTIONS]
+devcli status [app-name]
 ```
 
 **Options:**
@@ -167,7 +167,7 @@ rustycli status [app-name]
 ## Directory Structure
 
 ```
-rusty_cli/
+devcli/
 ├── Cargo.toml                  # Workspace configuration
 ├── README.md                   # User documentation
 ├── DEVELOPMENT.md              # Developer guide
@@ -177,12 +177,12 @@ rusty_cli/
 ├── .gitignore                  # Git ignore rules
 ├── .cursorignore               # Cursor ignore rules
 │
-├── rustycli/                   # Binary crate
+├── devcli/                   # Binary crate
 │   ├── Cargo.toml
 │   └── src/
 │       └── main.rs             # CLI entry point
 │
-└── rustycli-core/              # Library crate
+└── devcli-core/              # Library crate
     ├── Cargo.toml
     └── src/
         ├── lib.rs              # Public API
@@ -203,7 +203,7 @@ rusty_cli/
 
 Created automatically on first use:
 ```
-~/.rustycli/
+~/.devcli/
 ├── pids/                       # Process tracking files
 │   └── <app-name>.json
 └── logs/                       # Log files
@@ -270,9 +270,9 @@ All dependencies are well-maintained and widely used:
 ## Future Development Path
 
 ### Phase 2: Process Control
-- `rustycli stop <app-name>` - Stop running process
-- `rustycli restart <app-name>` - Restart process
-- `rustycli logs <app-name>` - View logs
+- `devcli stop <app-name>` - Stop running process
+- `devcli restart <app-name>` - Restart process
+- `devcli logs <app-name>` - View logs
 - Signal handling (SIGTERM, SIGKILL)
 
 ### Phase 3: Configuration
@@ -299,35 +299,35 @@ All dependencies are well-maintained and widely used:
 
 1. **Build the project:**
    ```bash
-   cd /Users/thomas.delalonde/Projects/perso/rusty_cli
+   cd /Users/thomas.delalonde/Projects/perso/devcli
    cargo build --release
    ```
 
 2. **Test it:**
    ```bash
-   ./target/release/rustycli start test-app --cmd "echo Hello"
-   ./target/release/rustycli status
+   ./target/release/devcli start test-app --cmd "echo Hello"
+   ./target/release/devcli status
    ```
 
 3. **Install globally (optional):**
    ```bash
-   cargo install --path rustycli
-   rustycli --help
+   cargo install --path devcli
+   devcli --help
    ```
 
 ### Example Usage
 
 ```bash
-./target/release/rustycli start my-api \
+./target/release/devcli start my-api \
   --cmd "node server.js" \
   --dir ./my-project \
   --env PORT=3000 \
   --env NODE_ENV=production \
   --detach
 
-./target/release/rustycli status my-api
+./target/release/devcli status my-api
 
-./target/release/rustycli start dev-server \
+./target/release/devcli start dev-server \
   --cmd "python -m http.server 8000" \
   --dir /tmp
 ```
@@ -349,7 +349,7 @@ All dependencies are well-maintained and widely used:
 
 ## Conclusion
 
-The RustyCLI foundation is solid, well-architected, and ready for the next phase of development. The codebase demonstrates senior-level Rust practices while remaining accessible for learning. All core functionality works correctly, and the project is well-documented for future development.
+The devcli foundation is solid, well-architected, and ready for the next phase of development. The codebase demonstrates senior-level Rust practices while remaining accessible for learning. All core functionality works correctly, and the project is well-documented for future development.
 
 **The project successfully balances:**
 - Production-ready code quality

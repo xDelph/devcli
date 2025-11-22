@@ -1,0 +1,17 @@
+[package]
+name = "devcli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "devcli"
+path = "src/main.rs"
+
+[dependencies]
+devcli-core = { path = "../devcli-core" }
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+

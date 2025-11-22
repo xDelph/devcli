@@ -1,4 +1,4 @@
-# RustyCLI - Project Rules & Guidelines
+# devcli - Project Rules & Guidelines
 
 ## Code Quality Standards
 
@@ -17,8 +17,8 @@
 - Implementation details remain private
 
 #### 2. Library-Driven Design
-- Core logic lives in `rustycli-core` library crate
-- Binary crate (`rustycli`) is a thin wrapper for CLI interaction
+- Core logic lives in `devcli-core` library crate
+- Binary crate (`devcli`) is a thin wrapper for CLI interaction
 - Enables future reuse (TUI, web interface, etc.)
 - Testable components in isolation
 
@@ -37,7 +37,7 @@
 ### Code Organization
 
 ```
-rustycli-core/src/
+devcli-core/src/
 ├── lib.rs              # Public API exports
 ├── process/
 │   ├── mod.rs          # Process module exports
@@ -139,12 +139,12 @@ anyhow::bail!("Process '{}' is already running with PID {}", name, pid);
 
 #### PID Tracking
 - JSON format for extensibility
-- Store in `~/.rustycli/pids/`
+- Store in `~/.devcli/pids/`
 - One file per process
 - Auto-cleanup dead processes
 
 #### Log Management
-- All logs in `~/.rustycli/logs/`
+- All logs in `~/.devcli/logs/`
 - Timestamped filenames
 - One file per process start
 - Timestamp each log entry
@@ -153,7 +153,7 @@ anyhow::bail!("Process '{}' is already running with PID {}", name, pid);
 
 When implementing future features:
 
-1. **Config Files**: Use TOML or YAML, store in `~/.rustycli/config.toml`
+1. **Config Files**: Use TOML or YAML, store in `~/.devcli/config.toml`
 2. **Stop/Restart**: Use `kill` syscall, graceful shutdown with timeout
 3. **Monitoring**: Consider `sysinfo` crate for resource usage
 4. **Dashboard**: Use `ratatui` for terminal UI

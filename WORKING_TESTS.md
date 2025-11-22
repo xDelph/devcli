@@ -3,30 +3,30 @@
 ## Quick Test Suite
 
 ```bash
-cd /Users/thomas.delalonde/Projects/perso/rusty_cli
+cd /Users/thomas.delalonde/Projects/perso/devcli
 
 # 1. Validate config
-./target/release/rustycli config validate
+./target/release/devcli config validate
 
 # 2. Start redis
-./target/release/rustycli start redis
+./target/release/devcli start redis
 
 # 3. Check status
-./target/release/rustycli status
+./target/release/devcli status
 
 # 4. Try to start again (should error)
-./target/release/rustycli start redis
+./target/release/devcli start redis
 # Expected: Error: Process 'redis' is already running with PID XXXXX
 
 # 5. Show redis details
-./target/release/rustycli config show redis
+./target/release/devcli config show redis
 
 # 6. Stop redis (for testing)
 # Kill the process first:
 pkill redis-server
 
 # 7. Start again
-./target/release/rustycli start redis
+./target/release/devcli start redis
 ```
 
 ## All Features Working
@@ -47,10 +47,10 @@ pkill redis-server
 
 ## Files Changed
 
-- `rustycli-core/src/utils/path.rs` - Fixed tilde expansion
-- `rustycli-core/src/commands/start.rs` - Added crash detection
-- `rustycli-core/src/commands/run.rs` - Added crash detection  
-- `~/.rustycli/config.json` - Fixed redis command (backup saved)
+- `devcli-core/src/utils/path.rs` - Fixed tilde expansion
+- `devcli-core/src/commands/start.rs` - Added crash detection
+- `devcli-core/src/commands/run.rs` - Added crash detection  
+- `~/.devcli/config.json` - Fixed redis command (backup saved)
 
 ## Ready to Use! 🚀
 

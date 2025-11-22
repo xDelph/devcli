@@ -1,6 +1,6 @@
 # Development Guidelines
 
-This document provides guidelines for contributing to and understanding the RustyCLI codebase.
+This document provides guidelines for contributing to and understanding the devcli codebase.
 
 ## Code Quality Standards
 
@@ -40,15 +40,15 @@ The codebase is designed to be:
 
 ### Workspace Structure
 
-RustyCLI uses a Cargo workspace with two crates:
+devcli uses a Cargo workspace with two crates:
 
-#### `rustycli` (Binary Crate)
+#### `devcli` (Binary Crate)
 - Entry point for the CLI application
 - Handles argument parsing with `clap`
 - Routes commands to appropriate handlers
 - Manages user-facing error messages
 
-#### `rustycli-core` (Library Crate)
+#### `devcli-core` (Library Crate)
 - Contains all business logic
 - Reusable across different interfaces
 - Well-tested and independent
@@ -75,7 +75,7 @@ Handles process lifecycle management:
 Manages log files:
 
 **`file_logger.rs`**
-- Creates log files in `~/.rustycli/logs/`
+- Creates log files in `~/.devcli/logs/`
 - Writes timestamped log entries
 - Provides async API for concurrent writes
 - Handles file I/O errors gracefully
@@ -119,7 +119,7 @@ cargo test
 Run tests for a specific crate:
 
 ```bash
-cargo test -p rustycli-core
+cargo test -p devcli-core
 ```
 
 ## Building and Running
@@ -129,7 +129,7 @@ Fast compilation, includes debug symbols:
 
 ```bash
 cargo build
-./target/debug/rustycli --help
+./target/debug/devcli --help
 ```
 
 ### Release Build
@@ -137,7 +137,7 @@ Optimized for performance:
 
 ```bash
 cargo build --release
-./target/release/rustycli --help
+./target/release/devcli --help
 ```
 
 ### Running Directly
@@ -251,11 +251,11 @@ let options = ProcessOptions {
 - Clean build artifacts: `cargo clean && cargo build`
 
 **Permission Errors**
-- Check that `~/.rustycli/` directories are writable
+- Check that `~/.devcli/` directories are writable
 - Run with appropriate permissions on macOS/Linux
 
 **Process Not Tracked**
-- Verify PID file exists: `ls ~/.rustycli/pids/`
+- Verify PID file exists: `ls ~/.devcli/pids/`
 - Check for JSON parsing errors in logs
 
 ## Future Development
