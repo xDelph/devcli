@@ -3,7 +3,8 @@
 mod config_editor;
 mod input_handler;
 mod navigation;
-mod renderer;
+mod popups;
+mod render;
 
 // Re-export main types
 pub use main_view_core::*;
@@ -40,20 +41,15 @@ mod main_view_core {
         pub(crate) config_focused_field: ConfigField,
         /// Selected command index in Config tab view mode
         pub(crate) selected_config_command_idx: usize,
-        /// Selected dependency index in dependencies popup
-        pub(crate) selected_dependency_idx: usize,
-        /// Selected project index when adding dependency
-        pub(crate) selected_add_dep_project_idx: usize,
-        /// Selected app index when adding dependency
-        pub(crate) selected_add_dep_app_idx: usize,
-        /// Selected env file index (stage) in env files editor
-        pub(crate) selected_env_file_idx: usize,
+        /// Manager for popup scroll states
+        pub(crate) popup_scroll_manager:
+            crate::tui::views::main_view::popups::scroll_manager::PopupScrollManager,
         /// Delete confirmation message
         pub(crate) delete_confirm_message: String,
         /// Delete confirmation action type
         pub(crate) delete_confirm_type: DeleteType,
     }
-    
+
     /// Type of deletion being confirmed
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DeleteType {
@@ -82,29 +78,18 @@ mod main_view_core {
     /// Form data for config editor
     #[derive(Debug, Clone, Default)]
     pub struct ConfigForm {
-        pub project_name: String,
-        pub app_name: String,
-        pub app_type: String,
-        pub path: String,
-        pub local_start_cmd: String,
-        pub docker_start_cmd: String,
-        pub edit_command_env: String,
-        pub edit_command_name: String,
-        pub edit_command_value: String,
-        pub env_file_stage: String,
-        pub env_file_context: String,
-        pub env_file_path: String,
-        pub cursor_project_name: usize,
-        pub cursor_app_name: usize,
-        pub cursor_app_type: usize,
-        pub cursor_path: usize,
-        pub cursor_local_start_cmd: usize,
-        pub cursor_docker_start_cmd: usize,
-        pub cursor_edit_command_name: usize,
-        pub cursor_edit_command_value: usize,
-        pub cursor_env_file_stage: usize,
-        pub cursor_env_file_context: usize,
-        pub cursor_env_file_path: usize,
+        pub project_name: crate::tui::widgets::TextEditor,
+        pub app_name: crate::tui::widgets::TextEditor,
+        pub app_type: crate::tui::widgets::TextEditor,
+        pub path: crate::tui::widgets::TextEditor,
+        pub local_start_cmd: crate::tui::widgets::TextEditor,
+        pub docker_start_cmd: crate::tui::widgets::TextEditor,
+        pub edit_command_env: String, // Dropdown, keeps as String
+        pub edit_command_name: crate::tui::widgets::TextEditor,
+        pub edit_command_value: crate::tui::widgets::TextEditor,
+        pub env_file_stage: crate::tui::widgets::TextEditor,
+        pub env_file_context: crate::tui::widgets::TextEditor,
+        pub env_file_path: crate::tui::widgets::TextEditor,
     }
 
     /// Config form fields
@@ -155,10 +140,8 @@ mod main_view_core {
                 config_form: ConfigForm::default(),
                 config_focused_field: ConfigField::ProjectName,
                 selected_config_command_idx: 0,
-                selected_dependency_idx: 0,
-                selected_add_dep_project_idx: 0,
-                selected_add_dep_app_idx: 0,
-                selected_env_file_idx: 0,
+                popup_scroll_manager:
+                    crate::tui::views::main_view::popups::scroll_manager::PopupScrollManager::new(),
                 delete_confirm_message: String::new(),
                 delete_confirm_type: DeleteType::App,
             }
@@ -168,6 +151,68 @@ mod main_view_core {
         pub fn render(&self, frame: &mut Frame, state: &AppState, theme: &Theme) {
             // Rendering is handled in the renderer module
             self.render_main(frame, state, theme);
+        }
+
+        /// Returns a sorted list of (ProjectName, Vec<AppName>) for dependency selection
+        /// Filters out the current app to prevent self-dependency
+        pub fn get_sorted_dependency_candidates(
+            &self,
+            config: &crate::config::models::Config,
+            current_project_name: Option<&str>,
+            current_app_name: Option<&str>,
+        ) -> Vec<(String, Vec<String>)> {
+            let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+
+            // Get all projects and sort them by name
+            let mut projects: Vec<_> = config.projects.iter().collect();
+            projects.sort_by_key(|(name, _)| *name);
+
+            for (proj_name, project) in projects {
+                // Get all apps in the project
+                let mut apps: Vec<_> = project
+                    .apps
+                    .keys()
+                    .filter(|app_name| {
+                        // Filter out the current app if it's in this project
+                        if let (Some(curr_proj), Some(curr_app)) =
+                            (current_project_name, current_app_name)
+                        {
+                            if proj_name == curr_proj && *app_name == curr_app {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .cloned()
+                    .collect();
+
+                // Sort apps by name
+                apps.sort();
+
+                if !apps.is_empty() {
+                    candidates.push((proj_name.clone(), apps));
+                }
+            }
+
+            candidates
+        }
+
+        /// Get app at flat index from dependency candidates
+        /// Returns (project_name, app_name) for the given flat index
+        pub fn get_app_at_flat_index(
+            &self,
+            candidates: &[(String, Vec<String>)],
+            flat_index: usize,
+        ) -> Option<(String, String)> {
+            let mut current_index = 0;
+            for (proj_name, apps) in candidates {
+                if flat_index < current_index + apps.len() {
+                    let app_index = flat_index - current_index;
+                    return Some((proj_name.clone(), apps[app_index].clone()));
+                }
+                current_index += apps.len();
+            }
+            None
         }
     }
 
