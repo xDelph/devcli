@@ -246,6 +246,9 @@ impl TuiApp {
             // Check if we need to create a log viewer
             self.check_log_viewer_creation()?;
 
+            // Refresh log viewer if active
+            self.refresh_log_viewer()?;
+
             // Check for command execution results
             self.check_command_results()?;
 
@@ -574,6 +577,26 @@ impl TuiApp {
             }
         }
 
+        Ok(())
+    }
+
+    /// Refreshes the log viewer if it's active
+    /// Called at the start of each event loop iteration
+    fn refresh_log_viewer(&mut self) -> Result<()> {
+        if let Some(viewer) = &mut self.log_viewer {
+            // Try to refresh the log file
+            match viewer.refresh() {
+                Ok(updated) => {
+                    if updated {
+                        // Content was updated, mark for redraw
+                        self.needs_redraw = true;
+                    }
+                }
+                Err(_) => {
+                    // Ignore errors during refresh (file might be temporarily unavailable)
+                }
+            }
+        }
         Ok(())
     }
 

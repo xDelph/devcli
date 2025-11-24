@@ -75,7 +75,7 @@ pub async fn spawn_process(
             .stdin(Stdio::null()) // Don't accept input
             .stdout(Stdio::piped()) // Capture standard output
             .stderr(Stdio::piped()); // Capture standard error
-        
+
         // Add environment variables (these will override inherited ones)
         for (key, value) in &options.env_vars {
             cmd.env(key, value);
@@ -139,12 +139,25 @@ pub async fn spawn_process(
             // BufReader buffers input for efficient line-by-line reading
             // .lines() returns an async iterator over lines
             let mut stdout_reader = BufReader::new(stdout).lines();
+            let mut stdout_alive = true;
+
             // Loop while there are lines to read
             // 'while let' continues while the pattern matches
             while let Ok(Some(line)) = stdout_reader.next_line().await {
                 // Show output in terminal if requested (with cyan colored app name)
-                if show_output {
-                    println!("[{}][stdout] {}", app_name.cyan().bold(), line);
+                if show_output && stdout_alive {
+                    use std::io::Write;
+                    // Use writeln! instead of println! to handle broken pipes gracefully
+                    // If writing fails (e.g. TUI closed), we stop trying to write to stdout
+                    // but CONTINUE writing to the log file
+                    if let Err(_) = writeln!(
+                        std::io::stdout(),
+                        "[{}][stdout] {}",
+                        app_name.cyan().bold(),
+                        line
+                    ) {
+                        stdout_alive = false;
+                    }
                 }
                 // Send to TUI popup if channel is provided
                 if let Some(ref tx) = output_tx_clone {
@@ -168,10 +181,21 @@ pub async fn spawn_process(
         // Same pattern as stdout above, but for error output
         let stderr_task = tokio::spawn(async move {
             let mut stderr_reader = BufReader::new(stderr).lines();
+            let mut stderr_alive = true;
+
             while let Ok(Some(line)) = stderr_reader.next_line().await {
-                if show_output {
+                if show_output && stderr_alive {
+                    use std::io::Write;
                     // eprintln! prints to stderr instead of stdout
-                    eprintln!("[{}][stderr] {}", app_name_clone.cyan().bold(), line);
+                    // Handle broken pipe gracefully
+                    if let Err(_) = writeln!(
+                        std::io::stderr(),
+                        "[{}][stderr] {}",
+                        app_name_clone.cyan().bold(),
+                        line
+                    ) {
+                        stderr_alive = false;
+                    }
                 }
                 // Send to TUI popup if channel is provided
                 if let Some(ref tx) = output_tx_clone {
@@ -191,18 +215,29 @@ pub async fn spawn_process(
                 Ok(status) => {
                     // Wait for output tasks to finish processing remaining output
                     let _ = tokio::join!(stdout_task, stderr_task);
-                    
+
                     if status.success() {
                         if show_output {
-                            println!("[{}] Process exited successfully", app_name_for_wait.cyan().bold());
+                            println!(
+                                "[{}] Process exited successfully",
+                                app_name_for_wait.cyan().bold()
+                            );
                         }
                     } else if show_output {
-                        eprintln!("[{}] Process exited with status: {}", app_name_for_wait.cyan().bold(), status);
+                        eprintln!(
+                            "[{}] Process exited with status: {}",
+                            app_name_for_wait.cyan().bold(),
+                            status
+                        );
                     }
                 }
                 Err(e) => {
                     if show_output {
-                        eprintln!("[{}] Error waiting for process: {}", app_name_for_wait.cyan().bold(), e);
+                        eprintln!(
+                            "[{}] Error waiting for process: {}",
+                            app_name_for_wait.cyan().bold(),
+                            e
+                        );
                     }
                 }
             }
@@ -225,7 +260,7 @@ pub async fn spawn_process(
         cmd.current_dir(&options.working_dir) // Set working directory
             .stdout(Stdio::piped()) // Capture stdout so we can read it
             .stderr(Stdio::piped()); // Capture stderr so we can read it
-        
+
         // Add environment variables (these will override inherited ones)
         for (key, value) in &options.env_vars {
             cmd.env(key, value);

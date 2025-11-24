@@ -15,7 +15,8 @@ pub struct FileLogger {
 impl FileLogger {
     // Create a new FileLogger for an app
     // This is async because file operations are async
-    pub async fn new(app_name: &str) -> Result<Self> {
+    // truncate: if true, clears the file; if false, appends to existing content
+    pub async fn new(app_name: &str, truncate: bool) -> Result<Self> {
         // Get user's home directory
         let home = dirs::home_dir().context("Could not determine home directory")?;
 
@@ -39,12 +40,24 @@ impl FileLogger {
 
         // Open (or create) the log file
         // OpenOptions is like configuration for how to open the file
-        let file = OpenOptions::new()
-            .create(true) // Create file if it doesn't exist
-            .append(true) // Append to end instead of overwriting
-            .open(&log_path) // Actually open the file
-            .await // Wait for the async operation to complete
-            .context("Failed to open log file")?;
+        let file = if truncate {
+            // Truncate mode: clear the file if it exists
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&log_path)
+                .await
+                .context("Failed to open log file")?
+        } else {
+            // Append mode: keep existing content
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .await
+                .context("Failed to open log file")?
+        };
 
         // Return the new FileLogger
         Ok(Self { file, log_path })

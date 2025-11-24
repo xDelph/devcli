@@ -46,6 +46,8 @@ pub struct LogViewerView {
     total_lines: usize,
     /// Whether to show the JSON beautifier panel
     show_json_panel: bool,
+    /// Last file size to detect changes
+    last_file_size: u64,
 }
 
 impl LogViewerView {
@@ -65,6 +67,9 @@ impl LogViewerView {
         // Initialize viewport state
         let viewport = ViewportState::new(total_lines);
 
+        // Get initial file size
+        let last_file_size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+
         Ok(Self {
             log_path,
             content,
@@ -73,6 +78,7 @@ impl LogViewerView {
             highlighter,
             total_lines,
             show_json_panel: false,
+            last_file_size,
         })
     }
 
@@ -214,10 +220,8 @@ impl LogViewerView {
                 let current_width = line.width();
                 if current_width < available_width {
                     let padding = available_width - current_width;
-                    let padding_span = Span::styled(
-                        " ".repeat(padding),
-                        Style::default().bg(bg_color)
-                    );
+                    let padding_span =
+                        Span::styled(" ".repeat(padding), Style::default().bg(bg_color));
                     line.spans.push(padding_span);
                 }
             }
@@ -472,5 +476,42 @@ impl LogViewerView {
     /// Returns the path to the log file
     pub fn log_path(&self) -> &PathBuf {
         &self.log_path
+    }
+
+    /// Refreshes the log file content if it has changed
+    /// Returns true if the content was updated
+    pub fn refresh(&mut self) -> Result<bool> {
+        // Check if file size has changed
+        let current_size = std::fs::metadata(&self.log_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        if current_size == self.last_file_size {
+            // No changes
+            return Ok(false);
+        }
+
+        // Remember if we were at the bottom before refresh
+        let was_at_bottom = self.viewport.cursor_line + 1 >= self.total_lines;
+
+        // Reload the file
+        let new_content = FileLoader::load(
+            &self.log_path,
+            &self.highlighter.syntax_set,
+            &self.highlighter.theme,
+        )?;
+        let new_total_lines = new_content.len();
+
+        // Update content
+        self.content = new_content;
+        self.total_lines = new_total_lines;
+        self.last_file_size = current_size;
+
+        // If we were at the bottom, stay at the bottom (auto-scroll)
+        if was_at_bottom && new_total_lines > 0 {
+            self.viewport.cursor_line = new_total_lines.saturating_sub(1);
+        }
+
+        Ok(true)
     }
 }
