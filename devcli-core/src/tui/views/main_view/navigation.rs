@@ -5,7 +5,7 @@ use crate::tui::state::{AppState, AppStateData};
 
 impl MainView {
     /// Counts the total number of commands for an app across all environments
-    pub(super) fn count_total_commands(app: &AppStateData) -> usize {
+    pub(crate) fn count_total_commands(app: &AppStateData) -> usize {
         app.commands.values().map(|cmds| cmds.len()).sum()
     }
 
@@ -25,24 +25,37 @@ impl MainView {
     ) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
         use crate::config::models::Environment;
         let mut current_idx = 0;
-        
+
         // Iterate through environments in standard order
         for env in Environment::all() {
             let env_str = env.as_str();
             if let Some(commands) = app.commands.get(env_str) {
                 if command_idx < current_idx + commands.len() {
                     let cmd_idx = command_idx - current_idx;
-                    return Some((env_str, &commands[cmd_idx]));
+                    let cmd = &commands[cmd_idx];
+                    crate::debug!(
+                        "[Navigation] Found command at idx {}: env={}, name={}",
+                        command_idx,
+                        env_str,
+                        cmd.name
+                    );
+                    return Some((env_str, cmd));
                 }
                 current_idx += commands.len();
             }
         }
-        
+
+        crate::debug!("[Navigation] Command not found at idx {}", command_idx);
         None
     }
 
     /// Calculates the scroll offset to keep the selected item visible
-    pub(super) fn calculate_scroll_offset(&self, selected_idx: usize, visible_height: usize, total_lines: usize) -> usize {
+    pub(super) fn calculate_scroll_offset(
+        &self,
+        selected_idx: usize,
+        visible_height: usize,
+        total_lines: usize,
+    ) -> usize {
         if total_lines <= visible_height {
             return 0;
         }
@@ -59,13 +72,13 @@ impl MainView {
     /// Calculates which line the selected app is on in the rendered list
     pub(super) fn calculate_selected_app_line(&self, state: &AppState) -> usize {
         let mut line = 0;
-        
+
         for (proj_idx, project) in state.projects.iter().enumerate() {
             if proj_idx == state.selected_project_idx && !project.expanded {
                 return line;
             }
             line += 1;
-            
+
             if project.expanded {
                 for (app_idx, _app) in project.apps.iter().enumerate() {
                     if proj_idx == state.selected_project_idx && app_idx == state.selected_app_idx {
@@ -74,29 +87,29 @@ impl MainView {
                     line += 1;
                 }
             }
-            
+
             if proj_idx < state.projects.len() - 1 {
                 line += 1;
             }
         }
-        
+
         0
     }
 
     /// Calculates which line the selected command is on in the config panel
     pub(super) fn calculate_selected_config_command_line(&self, state: &AppState) -> usize {
         let mut line = 0;
-        
+
         // Header and app info section
         line += 1; // Header line
         line += 1; // Empty line
         line += 3; // Project, Type, Path
         line += 1; // Empty line
         line += 1; // "Commands:" header
-        
+
         if let Some(app) = state.selected_app() {
             let mut global_cmd_idx = 0;
-            
+
             // Count LOCAL commands
             if let Some(commands) = app.commands.get("local") {
                 line += 1; // "LOCAL:" header
@@ -107,7 +120,7 @@ impl MainView {
                 global_cmd_idx += commands.len();
                 line += 1; // Empty line after section
             }
-            
+
             // Count DOCKER commands
             if let Some(commands) = app.commands.get("docker") {
                 line += 1; // "DOCKER:" header
@@ -118,7 +131,7 @@ impl MainView {
                 global_cmd_idx += commands.len();
                 line += 1; // Empty line after section
             }
-            
+
             // Count ORBSTACK commands
             if let Some(commands) = app.commands.get("orbstack") {
                 line += 1; // "ORBSTACK:" header
@@ -129,7 +142,7 @@ impl MainView {
                 global_cmd_idx += commands.len();
                 line += 1; // Empty line after section
             }
-            
+
             // Count K8S commands
             if let Some(commands) = app.commands.get("k8s") {
                 line += 1; // "K8S:" header
@@ -139,14 +152,14 @@ impl MainView {
                 line += commands.len();
             }
         }
-        
+
         line
     }
 
     /// Formats a duration into a human-readable string (e.g., "2h 15m 32s")
     pub(crate) fn format_duration(duration: &chrono::Duration) -> String {
         let total_seconds = duration.num_seconds();
-        
+
         if total_seconds < 60 {
             format!("{}s", total_seconds)
         } else if total_seconds < 3600 {

@@ -62,7 +62,7 @@ pub enum PopupState {
 
 impl CommandPopup {
     /// Creates a new command popup in the confirmation state
-    /// 
+    ///
     /// # Arguments
     /// * `command_name` - Display name of the command (e.g., "start")
     /// * `command_text` - Actual command to execute (e.g., "npm start")
@@ -95,7 +95,7 @@ impl CommandPopup {
     }
 
     /// Creates a new command popup with environment selection enabled
-    /// 
+    ///
     /// # Arguments
     /// * `command_name` - Display name of the command (e.g., "start")
     /// * `command_text` - Actual command to execute (e.g., "npm start")
@@ -114,8 +114,11 @@ impl CommandPopup {
             .iter()
             .map(|e| e.as_str().to_string())
             .collect();
-        let selected_env_index = available_envs.iter().position(|e| e == &default_env).unwrap_or(0);
-        
+        let selected_env_index = available_envs
+            .iter()
+            .position(|e| e == &default_env)
+            .unwrap_or(0);
+
         Self {
             command_name,
             command_text,
@@ -178,11 +181,14 @@ impl CommandPopup {
     pub fn scroll_up(&mut self) {
         // If auto-scroll is on, we need to set scroll_offset to current bottom position first
         if self.auto_scroll {
-            let max_scroll = self.output_lines.len().saturating_sub(self.last_visible_lines.get());
+            let max_scroll = self
+                .output_lines
+                .len()
+                .saturating_sub(self.last_visible_lines.get());
             self.scroll_offset = max_scroll;
             self.auto_scroll = false;
         }
-        
+
         // Scroll up by 1 line
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
@@ -193,18 +199,21 @@ impl CommandPopup {
         if self.output_lines.is_empty() {
             return;
         }
-        
+
         // Disable auto-scroll when user manually scrolls
         self.auto_scroll = false;
-        
+
         // Calculate max scroll based on last known visible lines
-        let max_scroll = self.output_lines.len().saturating_sub(self.last_visible_lines.get());
-        
+        let max_scroll = self
+            .output_lines
+            .len()
+            .saturating_sub(self.last_visible_lines.get());
+
         // Scroll down by 1 line
         if self.scroll_offset < max_scroll {
             self.scroll_offset += 1;
         }
-        
+
         // If we reached the bottom, re-enable auto-scroll
         if self.scroll_offset >= max_scroll {
             self.auto_scroll = true;
@@ -256,7 +265,7 @@ impl CommandPopup {
     /// This creates a subtle dimming effect by using a semi-transparent appearance
     fn render_overlay(&self, frame: &mut Frame, area: Rect, _theme: &Theme) {
         use ratatui::style::Color;
-        
+
         // Create a subtle dimmed background using a pattern
         // Since terminals don't support true transparency, we use:
         // 1. A dark background color
@@ -264,11 +273,10 @@ impl CommandPopup {
         let overlay_style = Style::default()
             .bg(Color::Rgb(30, 30, 35)) // Very dark blue-gray
             .add_modifier(Modifier::DIM);
-        
+
         // Create a block that covers the entire area
-        let overlay_block = Block::default()
-            .style(overlay_style);
-        
+        let overlay_block = Block::default().style(overlay_style);
+
         frame.render_widget(overlay_block, area);
     }
 
@@ -276,32 +284,56 @@ impl CommandPopup {
     /// Creates a centered modal dialog with content based on current state
     pub fn render(&self, frame: &mut Frame, theme: &Theme) {
         let size = frame.area();
-        
+
         // Render a dimmed overlay over the entire screen for better focus
         self.render_overlay(frame, size, theme);
-        
+
         // Determine if this is a stop operation (no logs expected)
         // Restart shows logs like start
         let is_stop = self.command_name == "stop";
-        
+        let has_logs = !self.output_lines.is_empty();
+
         // Create popup area - smaller for stop, larger for start/restart with logs
         let popup_area = match &self.state {
-            PopupState::Error(_) => Self::centered_rect(70, 40, size), // Medium for errors
+            PopupState::Error(_) if has_logs => Self::centered_rect(90, 80, size), // Large for errors with logs
+            PopupState::Success(_) if has_logs => Self::centered_rect(90, 80, size), // Large for success with logs
+            PopupState::Error(_) => Self::centered_rect(70, 40, size), // Medium for simple errors
             PopupState::Executing if is_stop => Self::centered_rect(50, 30, size), // Small for stop
             PopupState::Executing => Self::centered_rect(90, 80, size), // Large for start/restart with logs
-            _ => Self::centered_rect(50, 30, size), // Compact for other states
+            _ => Self::centered_rect(50, 30, size),                     // Compact for other states
         };
-        
+
         // Clear the area behind the popup for proper modal effect
         frame.render_widget(Clear, popup_area);
-        
+
         // Render content based on current state
         match &self.state {
             PopupState::Confirm => self.render_confirm(frame, popup_area, theme),
-            PopupState::Executing if is_stop => self.render_executing_simple(frame, popup_area, theme),
+            PopupState::Executing if is_stop => {
+                self.render_executing_simple(frame, popup_area, theme)
+            }
             PopupState::Executing => self.render_executing(frame, popup_area, theme),
-            PopupState::Success(msg) => self.render_success(frame, popup_area, theme, msg),
-            PopupState::Error(msg) => self.render_error(frame, popup_area, theme, msg),
+            PopupState::Success(msg) => {
+                if has_logs {
+                    self.render_log_view(
+                        frame,
+                        popup_area,
+                        theme,
+                        "Success",
+                        theme.success,
+                        Some(msg),
+                    )
+                } else {
+                    self.render_success(frame, popup_area, theme, msg)
+                }
+            }
+            PopupState::Error(msg) => {
+                if has_logs {
+                    self.render_log_view(frame, popup_area, theme, "Error", theme.error, Some(msg))
+                } else {
+                    self.render_error(frame, popup_area, theme, msg)
+                }
+            }
         }
     }
 
@@ -333,20 +365,23 @@ impl CommandPopup {
 
         // Environment line - show selection UI if enabled
         if self.allow_env_selection {
-            let mut env_spans = vec![
-                Span::styled("Env:      ", Style::default().fg(theme.text_dim)),
-            ];
-            
+            let mut env_spans = vec![Span::styled(
+                "Env:      ",
+                Style::default().fg(theme.text_dim),
+            )];
+
             // Show all environments with the selected one highlighted
             for (i, env) in self.available_envs.iter().enumerate() {
                 if i > 0 {
                     env_spans.push(Span::styled(" | ", Style::default().fg(theme.text_dim)));
                 }
-                
+
                 if i == self.selected_env_index {
                     env_spans.push(Span::styled(
                         format!("[{}]", env),
-                        Style::default().fg(theme.primary).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.primary)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 } else {
                     env_spans.push(Span::styled(
@@ -355,7 +390,7 @@ impl CommandPopup {
                     ));
                 }
             }
-            
+
             lines.push(Line::from(env_spans));
         } else {
             lines.push(Line::from(vec![
@@ -363,38 +398,64 @@ impl CommandPopup {
                 Span::styled(&self.environment, Style::default().fg(theme.text)),
             ]));
         }
-        
+
         lines.push(Line::from(""));
         lines.push(Line::from(""));
-        
+
         // Controls - show arrow keys if env selection is enabled
         if self.allow_env_selection {
             lines.push(Line::from(vec![
-                Span::styled("[←→] ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[←→] ",
+                    Style::default()
+                        .fg(theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Select Env  ", Style::default().fg(theme.text)),
-                Span::styled("[Enter] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Enter] ",
+                    Style::default()
+                        .fg(theme.success)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Execute  ", Style::default().fg(theme.text)),
-                Span::styled("[Esc] ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Esc] ",
+                    Style::default()
+                        .fg(theme.error)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Cancel", Style::default().fg(theme.text)),
             ]));
         } else {
             lines.push(Line::from(vec![
-                Span::styled("[Enter] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Enter] ",
+                    Style::default()
+                        .fg(theme.success)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Execute  ", Style::default().fg(theme.text)),
-                Span::styled("[Esc] ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Esc] ",
+                    Style::default()
+                        .fg(theme.error)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Cancel", Style::default().fg(theme.text)),
             ]));
         }
-        
+
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
+            .style(Style::default().bg(theme.bg))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.primary))
-                    .title("Confirm")
+                    .title("Confirm"),
             );
-        
+
         frame.render_widget(paragraph, area);
     }
 
@@ -403,11 +464,21 @@ impl CommandPopup {
     fn render_executing_simple(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let status_message = if !self.output_lines.is_empty() {
             // Show the last status line if we have any
-            self.output_lines.last().unwrap_or(&"Processing...".to_string()).clone()
+            self.output_lines
+                .last()
+                .unwrap_or(&"Processing...".to_string())
+                .clone()
         } else {
-            format!("{}...", if self.command_name == "stop" { "Stopping" } else { "Restarting" })
+            format!(
+                "{}...",
+                if self.command_name == "stop" {
+                    "Stopping"
+                } else {
+                    "Restarting"
+                }
+            )
         };
-        
+
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -424,49 +495,69 @@ impl CommandPopup {
             Line::from(""),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[Esc] ", Style::default().fg(theme.text_dim).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Esc] ",
+                    Style::default()
+                        .fg(theme.text_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Close", Style::default().fg(theme.text_dim)),
             ]),
         ];
-        
+
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
+            .style(Style::default().bg(theme.bg))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.warning))
-                    .title(format!(" {} ", self.command_name.to_uppercase()))
+                    .title(format!(" {} ", self.command_name.to_uppercase())),
             );
-        
+
         frame.render_widget(paragraph, area);
     }
 
     /// Renders the executing state
     /// Shows logs streaming from the process
     fn render_executing(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        self.render_log_view(frame, area, theme, "Logs", theme.warning, None)
+    }
+
+    /// Generic log viewer renderer
+    fn render_log_view(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &Theme,
+        title_suffix: &str,
+        border_color: ratatui::style::Color,
+        status_msg: Option<&str>,
+    ) {
         use ratatui::widgets::Scrollbar;
         use ratatui::widgets::ScrollbarOrientation;
         use ratatui::widgets::ScrollbarState;
-        
+
         // Create main block
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.warning))
-            .title(format!(" {} - Logs ", self.app_name));
-        
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(theme.bg))
+            .title(format!(" {} - {} ", self.app_name, title_suffix));
+
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
-        
+
         // Split into header, content, footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(0),     // Content (scrollable)
-                Constraint::Length(3),  // Footer
+                Constraint::Length(3), // Header
+                Constraint::Min(0),    // Content (scrollable)
+                Constraint::Length(3), // Footer
             ])
             .split(inner_area);
-        
+
         // Render header (always visible)
         let mut header_spans = vec![
             Span::styled("App: ", Style::default().fg(theme.text_dim)),
@@ -474,11 +565,14 @@ impl CommandPopup {
             Span::styled("  Command: ", Style::default().fg(theme.text_dim)),
             Span::styled(&self.command_name, Style::default().fg(theme.text)),
         ];
-        
+
         // Add status if available
         if let Some(status) = &self.app_status {
-            header_spans.push(Span::styled("  Status: ", Style::default().fg(theme.text_dim)));
-            
+            header_spans.push(Span::styled(
+                "  Status: ",
+                Style::default().fg(theme.text_dim),
+            ));
+
             // Color the status based on whether it's running or stopped
             let status_color = if status.to_lowercase().contains("running") {
                 theme.success
@@ -487,36 +581,48 @@ impl CommandPopup {
             };
             header_spans.push(Span::styled(status, Style::default().fg(status_color)));
         }
-        
-        let header_lines = vec![
-            Line::from(""),
-            Line::from(header_spans),
-        ];
-        let header = Paragraph::new(header_lines)
-            .alignment(Alignment::Left);
+
+        // Add specific status message if provided (e.g. Error message)
+        if let Some(msg) = status_msg {
+            header_spans.push(Span::styled(
+                "  Result: ",
+                Style::default().fg(theme.text_dim),
+            ));
+            header_spans.push(Span::styled(
+                msg,
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
+        let header_lines = vec![Line::from(""), Line::from(header_spans)];
+        let header = Paragraph::new(header_lines).alignment(Alignment::Left);
         frame.render_widget(header, chunks[0]);
-        
+
         // Calculate scroll position for content
         let available_height = chunks[1].height as usize;
-        
+
         // Update last_visible_lines for scroll calculations
         self.last_visible_lines.set(available_height);
-        
+
         let scroll_pos = if self.auto_scroll && !self.output_lines.is_empty() {
             self.output_lines.len().saturating_sub(available_height)
         } else {
-            self.scroll_offset.min(self.output_lines.len().saturating_sub(available_height))
+            self.scroll_offset
+                .min(self.output_lines.len().saturating_sub(available_height))
         };
-        
+
         // Render content (scrollable logs)
         let mut content_lines = Vec::new();
         if !self.output_lines.is_empty() {
-            let visible_lines: Vec<_> = self.output_lines
+            let visible_lines: Vec<_> = self
+                .output_lines
                 .iter()
                 .skip(scroll_pos)
                 .take(available_height)
                 .collect();
-            
+
             for output_line in visible_lines {
                 let spans = Self::parse_ansi_codes(output_line);
                 content_lines.push(Line::from(spans));
@@ -527,73 +633,83 @@ impl CommandPopup {
                 Style::default().fg(theme.text_dim),
             )));
         }
-        
-        let content = Paragraph::new(content_lines)
-            .alignment(Alignment::Left);
+
+        let content = Paragraph::new(content_lines).alignment(Alignment::Left);
         frame.render_widget(content, chunks[1]);
-        
+
         // Render scrollbar if needed
         if self.output_lines.len() > available_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓"));
-            
+
             // ScrollbarState needs the total content size and viewport size
             let max_scroll = self.output_lines.len().saturating_sub(available_height);
-            let mut scrollbar_state = ScrollbarState::new(max_scroll.max(1))
-                .position(scroll_pos.min(max_scroll));
-            
-            frame.render_stateful_widget(
-                scrollbar,
-                chunks[1],
-                &mut scrollbar_state,
-            );
+            let mut scrollbar_state =
+                ScrollbarState::new(max_scroll.max(1)).position(scroll_pos.min(max_scroll));
+
+            frame.render_stateful_widget(scrollbar, chunks[1], &mut scrollbar_state);
         }
-        
+
         // Render footer (always visible)
         let scroll_indicator = if self.output_lines.len() > available_height {
-            format!(" [{}/{}] ", 
-                (scroll_pos + available_height).min(self.output_lines.len()), 
-                self.output_lines.len())
+            format!(
+                " [{}/{}] ",
+                (scroll_pos + available_height).min(self.output_lines.len()),
+                self.output_lines.len()
+            )
         } else {
             String::new()
         };
-        
+
         let footer_lines = vec![
             Line::from(""),
             Line::from(vec![
-                Span::styled("[↑↓/jk] ", Style::default().fg(theme.text_dim).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[↑↓/jk] ",
+                    Style::default()
+                        .fg(theme.text_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Scroll  ", Style::default().fg(theme.text_dim)),
-                Span::styled("[Home/End] ", Style::default().fg(theme.text_dim).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Home/End] ",
+                    Style::default()
+                        .fg(theme.text_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Top/Bottom  ", Style::default().fg(theme.text_dim)),
-                Span::styled("[Esc] ", Style::default().fg(theme.text_dim).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Esc/Enter] ",
+                    Style::default()
+                        .fg(theme.text_dim)
+                        .add_modifier(Modifier::BOLD),
+                ), // Allow Enter to close too
                 Span::styled("Close", Style::default().fg(theme.text_dim)),
                 Span::styled(scroll_indicator, Style::default().fg(theme.text_dim)),
             ]),
         ];
-        let footer = Paragraph::new(footer_lines)
-            .alignment(Alignment::Left);
+        let footer = Paragraph::new(footer_lines).alignment(Alignment::Left);
         frame.render_widget(footer, chunks[2]);
     }
-    
+
     /// Parses ANSI escape codes and converts them to styled spans
     fn parse_ansi_codes(text: &str) -> Vec<Span<'static>> {
-        
         let mut spans = Vec::new();
         let mut current_text = String::new();
         let mut current_style = Style::default();
         let mut chars = text.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '\x1b' {
                 if chars.peek() == Some(&'[') {
                     chars.next(); // consume '['
-                    
+
                     if !current_text.is_empty() {
                         spans.push(Span::styled(current_text.clone(), current_style));
                         current_text.clear();
                     }
-                    
+
                     let mut code_str = String::new();
                     while let Some(&next_ch) = chars.peek() {
                         chars.next();
@@ -611,27 +727,24 @@ impl CommandPopup {
                 current_text.push(ch);
             }
         }
-        
+
         if !current_text.is_empty() {
             spans.push(Span::styled(current_text, current_style));
         }
-        
+
         if spans.is_empty() {
             spans.push(Span::raw(text.to_string()));
         }
-        
+
         spans
     }
-    
+
     /// Applies SGR codes to a style
     fn apply_sgr_code(code_str: &str, mut style: Style) -> Style {
         use ratatui::style::Color;
-        
-        let codes: Vec<u8> = code_str
-            .split(';')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        
+
+        let codes: Vec<u8> = code_str.split(';').filter_map(|s| s.parse().ok()).collect();
+
         for code in codes {
             match code {
                 0 => style = Style::default(),
@@ -660,7 +773,7 @@ impl CommandPopup {
                 _ => {}
             }
         }
-        
+
         style
     }
 
@@ -685,27 +798,30 @@ impl CommandPopup {
                 Span::styled(&self.app_name, Style::default().fg(theme.text)),
             ]),
             Line::from(""),
-            Line::from(Span::styled(
-                message,
-                Style::default().fg(theme.text),
-            )),
+            Line::from(Span::styled(message, Style::default().fg(theme.text))),
             Line::from(""),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[Enter/Esc] ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Enter/Esc] ",
+                    Style::default()
+                        .fg(theme.success)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Close", Style::default().fg(theme.text)),
             ]),
         ];
-        
+
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
+            .style(Style::default().bg(ratatui::style::Color::Black))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.success))
-                    .title("Success")
+                    .title("Success"),
             );
-        
+
         frame.render_widget(paragraph, area);
     }
 
@@ -731,7 +847,7 @@ impl CommandPopup {
             ]),
             Line::from(""),
         ];
-        
+
         // Show error message (may be multi-line)
         for msg_line in message.lines() {
             lines.push(Line::from(Span::styled(
@@ -739,31 +855,37 @@ impl CommandPopup {
                 Style::default().fg(theme.error),
             )));
         }
-        
+
         lines.push(Line::from(""));
         lines.push(Line::from(""));
-        
+
         lines.push(Line::from(vec![
-            Span::styled("[Enter/Esc] ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Enter/Esc] ",
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Close", Style::default().fg(theme.text)),
         ]));
-        
+
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
+            .style(Style::default().bg(ratatui::style::Color::Black))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.error))
-                    .title("Error")
+                    .title("Error"),
             );
-        
+
         frame.render_widget(paragraph, area);
     }
 
     /// Helper function to create a centered rectangle
     /// Used for positioning the popup in the middle of the screen
-    /// 
+    ///
     /// # Arguments
     /// * `percent_x` - Width as percentage of screen (0-100)
     /// * `percent_y` - Height as percentage of screen (0-100)
@@ -804,7 +926,7 @@ mod tests {
             "my-project".to_string(),
             "local".to_string(),
         );
-        
+
         assert_eq!(popup.state(), &PopupState::Confirm);
         assert_eq!(popup.command_name, "start");
         assert_eq!(popup.command_text, "npm start");
@@ -822,18 +944,18 @@ mod tests {
             "my-project".to_string(),
             "local".to_string(),
         );
-        
+
         // Initial state is Confirm
         assert_eq!(popup.state(), &PopupState::Confirm);
-        
+
         // Transition to Executing
         popup.set_executing();
         assert_eq!(popup.state(), &PopupState::Executing);
-        
+
         // Transition to Success
         popup.set_success("App started successfully".to_string());
         assert!(matches!(popup.state(), PopupState::Success(_)));
-        
+
         // Reset and transition to Error
         popup.state = PopupState::Confirm;
         popup.set_error("Failed to start app".to_string());
@@ -849,12 +971,12 @@ mod tests {
             "my-project".to_string(),
             "local".to_string(),
         );
-        
+
         // Add more than 1000 lines
         for i in 0..1050 {
             popup.add_output_line(format!("Line {}", i));
         }
-        
+
         // Should only keep the last 1000 lines
         assert_eq!(popup.output_lines.len(), 1000);
         assert_eq!(popup.output_lines[0], "Line 50");
