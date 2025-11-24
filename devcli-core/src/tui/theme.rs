@@ -71,7 +71,7 @@ impl Theme {
             // Visual hierarchy: Helps users focus on important information
             text_dim: Color::Gray,
             // Black background for popups and overlays
-            bg: Color::Black,
+            bg: Color::Rgb(0, 0, 0),
         }
     }
 

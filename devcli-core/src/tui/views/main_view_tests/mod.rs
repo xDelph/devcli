@@ -1,5 +1,3 @@
-// Test modules for main_view
-
 #[cfg(test)]
 mod input_handling_tests;
 

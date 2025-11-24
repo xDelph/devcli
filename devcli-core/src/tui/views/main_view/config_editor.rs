@@ -11,41 +11,45 @@ use std::collections::HashMap;
 
 impl MainView {
     /// Loads an app into the config form for editing
-    pub(super) fn load_app_into_form(&mut self, project: &str, app_name: &str, app: &AppStateData) {
-        self.config_form.project_name = project.to_string();
-        self.config_form.app_name = app_name.to_string();
-        self.config_form.app_type = app.app_type.clone();
-        self.config_form.path = app.path.clone().unwrap_or_default();
+    pub(crate) fn load_app_into_form(&mut self, project: &str, app_name: &str, app: &AppStateData) {
+        use crate::tui::widgets::TextEditor;
+        self.config_form.project_name = TextEditor::with_content(project.to_string());
+        self.config_form.app_name = TextEditor::with_content(app_name.to_string());
+        self.config_form.app_type = TextEditor::with_content(app.app_type.clone());
+        self.config_form.path = TextEditor::with_content(app.path.clone().unwrap_or_default());
 
         // Load commands if available
         if let Some(local) = app.commands.get("local") {
             if let Some(start_cmd) = local.first() {
-                self.config_form.local_start_cmd = start_cmd.command.clone();
+                self.config_form.local_start_cmd =
+                    TextEditor::with_content(start_cmd.command.clone());
+            } else {
+                self.config_form.local_start_cmd = TextEditor::default();
             }
+        } else {
+            self.config_form.local_start_cmd = TextEditor::default();
         }
+
         if let Some(docker) = app.commands.get("docker") {
             if let Some(start_cmd) = docker.first() {
-                self.config_form.docker_start_cmd = start_cmd.command.clone();
+                self.config_form.docker_start_cmd =
+                    TextEditor::with_content(start_cmd.command.clone());
+            } else {
+                self.config_form.docker_start_cmd = TextEditor::default();
             }
+        } else {
+            self.config_form.docker_start_cmd = TextEditor::default();
         }
-        
-        // Set cursors to end of each field
-        self.config_form.cursor_project_name = self.config_form.project_name.len();
-        self.config_form.cursor_app_name = self.config_form.app_name.len();
-        self.config_form.cursor_app_type = self.config_form.app_type.len();
-        self.config_form.cursor_path = self.config_form.path.len();
-        self.config_form.cursor_local_start_cmd = self.config_form.local_start_cmd.len();
-        self.config_form.cursor_docker_start_cmd = self.config_form.docker_start_cmd.len();
     }
 
     /// Loads a specific command into the form for editing
-    pub(super) fn load_command_into_form(&mut self, project: &str, app_name: &str) -> Result<()> {
+    pub(crate) fn load_command_into_form(&mut self, project: &str, app_name: &str) -> Result<()> {
         let config = load_config()?;
-        
+
         if let Some(proj) = config.projects.get(project) {
             if let Some(app) = proj.apps.get(app_name) {
                 let mut global_idx = 0;
-                
+
                 // Check local commands
                 if let Some(local) = &app.commands.local {
                     let mut sorted: Vec<_> = local.iter().collect();
@@ -58,7 +62,7 @@ impl MainView {
                     }
                     global_idx += sorted.len();
                 }
-                
+
                 // Check docker commands
                 if let Some(docker) = &app.commands.docker {
                     let mut sorted: Vec<_> = docker.iter().collect();
@@ -71,7 +75,7 @@ impl MainView {
                     }
                     global_idx += sorted.len();
                 }
-                
+
                 // Check orbstack commands
                 if let Some(orbstack) = &app.commands.orbstack {
                     let mut sorted: Vec<_> = orbstack.iter().collect();
@@ -84,7 +88,7 @@ impl MainView {
                     }
                     global_idx += sorted.len();
                 }
-                
+
                 // Check k8s commands
                 if let Some(k8s) = &app.commands.k8s {
                     let mut sorted: Vec<_> = k8s.iter().collect();
@@ -98,32 +102,32 @@ impl MainView {
                 }
             }
         }
-        
+
         Ok(())
     }
 
     fn load_command_into_form_helper(&mut self, env: &str, name: &str, cmd: &str) {
         use super::ConfigField;
         use super::ConfigMode;
-        
+        use crate::tui::widgets::TextEditor;
+
         self.config_form.edit_command_env = env.to_string();
-        self.config_form.edit_command_name = name.to_string();
-        self.config_form.edit_command_value = cmd.to_string();
-        self.config_form.cursor_edit_command_name = name.len();
-        self.config_form.cursor_edit_command_value = cmd.len();
+        self.config_form.edit_command_name = TextEditor::with_content(name.to_string());
+        self.config_form.edit_command_value = TextEditor::with_content(cmd.to_string());
         self.config_focused_field = ConfigField::EditCommandName;
         self.config_mode = ConfigMode::EditCommand;
     }
 
     /// Saves the config form
-    pub(super) fn save_config_form(&mut self) -> Result<()> {
+    pub(crate) fn save_config_form(&mut self) -> Result<()> {
         use super::ConfigMode;
-        
+
         // Validate required fields
-        if self.config_form.project_name.is_empty()
-            || self.config_form.app_name.is_empty()
-            || self.config_form.app_type.is_empty()
-            || self.config_form.path.is_empty()
+        // Validate required fields
+        if self.config_form.project_name.content().is_empty()
+            || self.config_form.app_name.content().is_empty()
+            || self.config_form.app_type.content().is_empty()
+            || self.config_form.path.content().is_empty()
         {
             return Ok(()); // Silently ignore invalid forms
         }
@@ -133,12 +137,14 @@ impl MainView {
 
         let project = config
             .projects
-            .entry(self.config_form.project_name.clone())
+            .entry(self.config_form.project_name.content().to_string())
             .or_insert_with(|| Project {
                 apps: HashMap::new(),
             });
 
-        project.apps.insert(self.config_form.app_name.clone(), app);
+        project
+            .apps
+            .insert(self.config_form.app_name.content().to_string(), app);
         save_config(&config)?;
         self.config_mode = ConfigMode::View;
 
@@ -146,37 +152,40 @@ impl MainView {
     }
 
     /// Reloads the state from the config file
-    pub(super) fn reload_state_from_config(&self, state: &mut std::sync::MutexGuard<AppState>) -> Result<()> {
+    pub(crate) fn reload_state_from_config(
+        &self,
+        state: &mut std::sync::MutexGuard<AppState>,
+    ) -> Result<()> {
         let config = load_config()?;
         let tracker = ProcessTracker::new()?;
         let new_state = AppState::from_config(&config, &tracker)?;
-        
+
         let selected_project_idx = state.selected_project_idx;
         let selected_app_idx = state.selected_app_idx;
-        
+
         **state = new_state;
-        
+
         if selected_project_idx < state.projects.len() {
             state.selected_project_idx = selected_project_idx;
             if selected_app_idx < state.projects[selected_project_idx].apps.len() {
                 state.selected_app_idx = selected_app_idx;
             }
         }
-        
+
         Ok(())
     }
 
     /// Saves a new command to an existing app
-    pub(super) fn save_new_command(&mut self, project: &str, app_name: &str) -> Result<()> {
+    pub(crate) fn save_new_command(&mut self, project: &str, app_name: &str) -> Result<()> {
         use super::ConfigMode;
-        
+
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
             if let Some(app) = proj.apps.get_mut(app_name) {
-                let command_name = self.config_form.edit_command_name.clone();
-                let command_value = self.config_form.edit_command_value.clone();
-                
+                let command_name = self.config_form.edit_command_name.content().to_string();
+                let command_value = self.config_form.edit_command_value.content().to_string();
+
                 match self.config_form.edit_command_env.as_str() {
                     "local" => {
                         let local = app.commands.local.get_or_insert_with(HashMap::new);
@@ -222,9 +231,9 @@ impl MainView {
     }
 
     /// Saves a command edit
-    pub(super) fn save_command_edit(&mut self, project: &str, app_name: &str) -> Result<()> {
+    pub(crate) fn save_command_edit(&mut self, project: &str, app_name: &str) -> Result<()> {
         use super::ConfigMode;
-        
+
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
@@ -233,32 +242,32 @@ impl MainView {
                     "local" => {
                         if let Some(local) = &mut app.commands.local {
                             local.insert(
-                                self.config_form.edit_command_name.clone(),
-                                self.config_form.edit_command_value.clone(),
+                                self.config_form.edit_command_name.content().to_string(),
+                                self.config_form.edit_command_value.content().to_string(),
                             );
                         }
                     }
                     "docker" => {
                         if let Some(docker) = &mut app.commands.docker {
                             docker.insert(
-                                self.config_form.edit_command_name.clone(),
-                                self.config_form.edit_command_value.clone(),
+                                self.config_form.edit_command_name.content().to_string(),
+                                self.config_form.edit_command_value.content().to_string(),
                             );
                         }
                     }
                     "orbstack" => {
                         if let Some(orbstack) = &mut app.commands.orbstack {
                             orbstack.insert(
-                                self.config_form.edit_command_name.clone(),
-                                self.config_form.edit_command_value.clone(),
+                                self.config_form.edit_command_name.content().to_string(),
+                                self.config_form.edit_command_value.content().to_string(),
                             );
                         }
                     }
                     "k8s" => {
                         if let Some(k8s) = &mut app.commands.k8s {
                             k8s.insert(
-                                self.config_form.edit_command_name.clone(),
-                                self.config_form.edit_command_value.clone(),
+                                self.config_form.edit_command_name.content().to_string(),
+                                self.config_form.edit_command_value.content().to_string(),
                             );
                         }
                     }
@@ -276,21 +285,24 @@ impl MainView {
     /// Creates an App from the form data
     fn create_app_from_form(&self) -> App {
         let mut local_cmds = HashMap::new();
-        if !self.config_form.local_start_cmd.is_empty() {
-            local_cmds.insert("start".to_string(), self.config_form.local_start_cmd.clone());
+        if !self.config_form.local_start_cmd.content().is_empty() {
+            local_cmds.insert(
+                "start".to_string(),
+                self.config_form.local_start_cmd.content().to_string(),
+            );
         }
 
         let mut docker_cmds = HashMap::new();
-        if !self.config_form.docker_start_cmd.is_empty() {
+        if !self.config_form.docker_start_cmd.content().is_empty() {
             docker_cmds.insert(
                 "start".to_string(),
-                self.config_form.docker_start_cmd.clone(),
+                self.config_form.docker_start_cmd.content().to_string(),
             );
         }
 
         App {
-            app_type: self.config_form.app_type.clone(),
-            path: self.config_form.path.clone(),
+            app_type: self.config_form.app_type.content().to_string(),
+            path: self.config_form.path.content().to_string(),
             commands: Commands {
                 local: if local_cmds.is_empty() {
                     None
@@ -307,12 +319,12 @@ impl MainView {
             },
             dependencies: Vec::new(),
             defaults: Defaults {
-                local: if !self.config_form.local_start_cmd.is_empty() {
+                local: if !self.config_form.local_start_cmd.content().is_empty() {
                     Some("start".to_string())
                 } else {
                     None
                 },
-                docker: if !self.config_form.docker_start_cmd.is_empty() {
+                docker: if !self.config_form.docker_start_cmd.content().is_empty() {
                     Some("start".to_string())
                 } else {
                     None
@@ -327,7 +339,7 @@ impl MainView {
     }
 
     /// Deletes an app from the config
-    pub(super) fn delete_app(&self, project: &str, app: &str) -> Result<()> {
+    pub(crate) fn delete_app(&self, project: &str, app: &str) -> Result<()> {
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
@@ -343,13 +355,13 @@ impl MainView {
     }
 
     /// Sets the selected command as default for its environment
-    pub(super) fn set_command_as_default(&self, project: &str, app_name: &str) -> Result<()> {
+    pub(crate) fn set_command_as_default(&self, project: &str, app_name: &str) -> Result<()> {
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
             if let Some(app) = proj.apps.get_mut(app_name) {
                 let mut global_idx = 0;
-                
+
                 // Check local commands
                 if let Some(local) = &app.commands.local {
                     let mut sorted: Vec<_> = local.keys().cloned().collect();
@@ -362,7 +374,7 @@ impl MainView {
                     }
                     global_idx += sorted.len();
                 }
-                
+
                 // Check docker commands
                 if let Some(docker) = &app.commands.docker {
                     let mut sorted: Vec<_> = docker.keys().cloned().collect();
@@ -375,7 +387,7 @@ impl MainView {
                     }
                     global_idx += sorted.len();
                 }
-                
+
                 // Check k8s commands
                 if let Some(k8s) = &app.commands.k8s {
                     let mut sorted: Vec<_> = k8s.keys().cloned().collect();
@@ -394,7 +406,12 @@ impl MainView {
     }
 
     /// Removes a dependency from an app
-    pub(super) fn remove_dependency(&mut self, project: &str, app_name: &str, dep_idx: usize) -> Result<()> {
+    pub(crate) fn remove_dependency(
+        &mut self,
+        project: &str,
+        app_name: &str,
+        dep_idx: usize,
+    ) -> Result<()> {
         let mut config = load_config()?;
 
         let mut new_len = 0;
@@ -409,51 +426,57 @@ impl MainView {
 
         save_config(&config)?;
 
-        if self.selected_dependency_idx >= new_len && self.selected_dependency_idx > 0 {
-            self.selected_dependency_idx -= 1;
+        if self.popup_scroll_manager.selected_dependency_idx >= new_len
+            && self.popup_scroll_manager.selected_dependency_idx > 0
+        {
+            self.popup_scroll_manager.selected_dependency_idx -= 1;
         }
 
         Ok(())
     }
 
     /// Adds a dependency to an app
-    pub(super) fn add_dependency(&mut self, project: &str, app_name: &str) -> Result<()> {
+    pub(crate) fn add_dependency(
+        &mut self,
+        project: &str,
+        app_name: &str,
+        dep_project: &str,
+        dep_app: &str,
+    ) -> Result<()> {
         use super::ConfigMode;
-        
+
         let mut config = load_config()?;
 
-        let projects: Vec<_> = config.projects.keys().cloned().collect();
-        if let Some(dep_project) = projects.get(self.selected_add_dep_project_idx) {
-            if let Some(dep_proj) = config.projects.get(dep_project) {
-                let apps: Vec<_> = dep_proj.apps.keys().cloned().collect();
-                if let Some(dep_app) = apps.get(self.selected_add_dep_app_idx) {
-                    if let Some(proj) = config.projects.get_mut(project) {
-                        if let Some(app) = proj.apps.get_mut(app_name) {
-                            let dep = crate::config::models::Dependency {
-                                project: dep_project.clone(),
-                                app: dep_app.clone(),
-                            };
-                            
-                            if !app.dependencies.iter().any(|d| d.project == dep.project && d.app == dep.app) {
-                                app.dependencies.push(dep);
-                                save_config(&config)?;
-                            }
-                        }
-                    }
-                    
-                    self.config_mode = ConfigMode::EditDependencies;
+        if let Some(proj) = config.projects.get_mut(project) {
+            if let Some(app) = proj.apps.get_mut(app_name) {
+                let dep = crate::config::models::Dependency {
+                    project: dep_project.to_string(),
+                    app: dep_app.to_string(),
+                };
+
+                if !app
+                    .dependencies
+                    .iter()
+                    .any(|d| d.project == dep.project && d.app == dep.app)
+                {
+                    app.dependencies.push(dep);
+                    save_config(&config)?;
                 }
             }
         }
 
+        self.config_mode = ConfigMode::EditDependencies;
         Ok(())
     }
 
     /// Gets the currently selected command in config view (environment, CommandInfo)
-    pub(super) fn get_selected_config_command<'a>(&self, app: &'a AppStateData) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
+    pub(crate) fn get_selected_config_command<'a>(
+        &self,
+        app: &'a AppStateData,
+    ) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
         use crate::config::models::Environment;
         let mut current_idx = 0;
-        
+
         // Iterate through environments in standard order
         for env in Environment::all() {
             let env_str = env.as_str();
@@ -465,14 +488,20 @@ impl MainView {
                 current_idx += commands.len();
             }
         }
-        
+
         None
     }
-    
+
     /// Deletes a command from an app
-    pub(super) fn delete_command(&mut self, project: &str, app_name: &str, env: &str, command_name: &str) -> Result<()> {
+    pub(crate) fn delete_command(
+        &mut self,
+        project: &str,
+        app_name: &str,
+        env: &str,
+        command_name: &str,
+    ) -> Result<()> {
         let mut config = load_config()?;
-        
+
         if let Some(proj) = config.projects.get_mut(project) {
             if let Some(app) = proj.apps.get_mut(app_name) {
                 match env {
@@ -510,11 +539,101 @@ impl MainView {
                     }
                     _ => {}
                 }
-                
+
                 save_config(&config)?;
             }
         }
-        
+
+        Ok(())
+    }
+    /// Saves a new or edited environment file configuration
+    pub(crate) fn save_env_file(&mut self, app_name: &str) -> Result<()> {
+        use super::ConfigMode;
+        use crate::commands::env::add_env_file;
+
+        let stage = self.config_form.env_file_stage.content().trim();
+        let context = self.config_form.env_file_context.content().trim();
+        let file_path = self.config_form.env_file_path.content().trim();
+
+        if stage.is_empty() || context.is_empty() || file_path.is_empty() {
+            return Err(anyhow::anyhow!("All fields are required"));
+        }
+
+        add_env_file(app_name, stage, context, file_path)?;
+
+        self.config_mode = ConfigMode::EditEnvFiles;
+        Ok(())
+    }
+
+    /// Loads the selected env file entry into the form for editing
+    pub(crate) fn load_selected_env_file(
+        &mut self,
+        state: &mut std::sync::MutexGuard<AppState>,
+    ) -> Result<()> {
+        use super::{ConfigField, ConfigMode};
+
+        if let Some(app) = state.selected_app() {
+            if let Some(env_files) = &app.env_files {
+                // Build flat list of entries
+                let mut entries: Vec<(String, String, String)> = Vec::new();
+                for (stage, contexts) in env_files {
+                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+
+                    for (context, file_path) in sorted_contexts {
+                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                    }
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+                if let Some((stage, context, file_path)) =
+                    entries.get(self.popup_scroll_manager.selected_env_file_idx)
+                {
+                    use crate::tui::widgets::TextEditor;
+                    self.config_form.env_file_stage = TextEditor::with_content(stage.clone());
+                    self.config_form.env_file_context = TextEditor::with_content(context.clone());
+                    self.config_form.env_file_path = TextEditor::with_content(file_path.clone());
+                    self.config_focused_field = ConfigField::EnvFileStage;
+                    self.config_mode = ConfigMode::EditEnvFile;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepares deletion of the selected environment file entry
+    pub(crate) fn confirm_delete_env_file(
+        &mut self,
+        state: &mut std::sync::MutexGuard<AppState>,
+    ) -> Result<()> {
+        use super::{ConfigMode, DeleteType};
+
+        if let Some(app) = state.selected_app() {
+            if let Some(env_files) = &app.env_files {
+                // Build flat list of entries
+                let mut entries: Vec<(String, String, String)> = Vec::new();
+                for (stage, contexts) in env_files {
+                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+
+                    for (context, file_path) in sorted_contexts {
+                        entries.push((stage.clone(), context.clone(), file_path.clone()));
+                    }
+                }
+                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+                if let Some((stage, context, file_path)) =
+                    entries.get(self.popup_scroll_manager.selected_env_file_idx)
+                {
+                    self.delete_confirm_message = format!(
+                        "Delete env file?\n\nStage: {}\nContext: {}\nFile: {}",
+                        stage, context, file_path
+                    );
+                    self.delete_confirm_type = DeleteType::EnvFile;
+                    self.config_mode = ConfigMode::ConfirmDelete;
+                }
+            }
+        }
         Ok(())
     }
 }
