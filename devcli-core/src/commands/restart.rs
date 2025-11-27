@@ -23,18 +23,31 @@ pub struct RestartCommandArgs {
 pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let silent = args.silent;
 
+    // Step 0: Load config and resolve app to get project name
+    // We need the project name to find the PID file
+    let config = crate::config::load_config()?;
+    let resolved_app =
+        crate::config::resolve_app(&config, &args.app_name, args.project.as_deref())?;
+    let project_name = resolved_app.project.clone();
+
     // Step 1: Get the process tracker and clean up dead processes
     let tracker = ProcessTracker::new()?;
     tracker.cleanup_dead()?;
 
     // Step 2: Check if the process is currently running
-    let existing_process = if let Some(process) = tracker.get_process(&args.app_name)? {
+    let existing_process = if let Some(process) =
+        tracker.get_process(&project_name, &args.app_name, args.env.as_deref())?
+    {
         // Check if process is still actually running
         if tracker.is_running(process.pid) {
             Some(process)
         } else {
             // Process died but we have PID file - clean it up
-            tracker.remove_process(&args.app_name)?;
+            tracker.remove_process(
+                &project_name,
+                &args.app_name,
+                process.environment.as_deref(),
+            )?;
             if !silent {
                 println!(
                     "Process '{}' was not running (cleaning up stale PID file)",
@@ -68,7 +81,8 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     });
 
     // Use --project flag if provided, otherwise use existing process's project
-    let project = process.project.clone().or(args.project.clone());
+    // Note: we already resolved the project above, but we keep this logic for consistency with args
+    let project = Some(project_name.clone());
 
     if !silent {
         println!("Restarting process '{}'...", args.app_name);
@@ -88,8 +102,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     // Step 6: Determine if we should use start or run command
     // If command_variant exists and is not the default, use run command
     // Otherwise, use start command
-    let config = crate::config::load_config()?;
-    let resolved_app = crate::config::resolve_app(&config, &args.app_name, project.as_deref())?;
+    // We already have resolved_app from Step 0
 
     let use_run_command = if let Some(ref variant) = process.command_variant {
         // Check if this variant is the default for this environment

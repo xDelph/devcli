@@ -254,7 +254,12 @@ async fn stop_single_process(
                     }
 
                     // Remove PID file
-                    tracker.remove_process(&process.app_name)?;
+                    let project = process.project.as_deref().unwrap_or("unknown");
+                    tracker.remove_process(
+                        project,
+                        &process.app_name,
+                        process.environment.as_deref(),
+                    )?;
                     return Ok(());
                 }
             }
@@ -314,7 +319,8 @@ async fn stop_single_process(
         }
 
         // Remove PID file
-        tracker.remove_process(&process.app_name)?;
+        let project = process.project.as_deref().unwrap_or("unknown");
+        tracker.remove_process(project, &process.app_name, process.environment.as_deref())?;
     }
 
     #[cfg(not(unix))]

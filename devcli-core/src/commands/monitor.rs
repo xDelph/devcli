@@ -20,7 +20,7 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
         // This is useful for manual cleanup without starting the full daemon
         let tracker = ProcessTracker::new()?;
         let cleaned = tracker.cleanup_dead()?;
-        
+
         if cleaned.is_empty() {
             println!("No dead processes found");
         } else {
@@ -29,7 +29,7 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
                 println!("  - {}", app_name);
             }
         }
-        
+
         Ok(())
     }
 }
@@ -39,7 +39,7 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
 // Exits automatically when no processes remain
 async fn run_daemon_loop() -> Result<()> {
     let tracker = ProcessTracker::new()?;
-    
+
     // Register the monitor itself as a tracked process
     // This allows other parts of the system to check if the monitor is running
     // We use a special name: ".monitor"
@@ -47,9 +47,7 @@ async fn run_daemon_loop() -> Result<()> {
         app_name: ".monitor".to_string(),
         pid: std::process::id(),
         command: "devcli monitor --daemon".to_string(),
-        working_dir: std::env::current_dir()?
-            .to_string_lossy()
-            .to_string(),
+        working_dir: std::env::current_dir()?.to_string_lossy().to_string(),
         start_time: Utc::now(),
         env_vars: HashMap::new(),
         project: None,
@@ -58,35 +56,34 @@ async fn run_daemon_loop() -> Result<()> {
         command_variant: None,
         stage: None, // Monitor process doesn't have a stage
     };
-    
+
     tracker.register_process(monitor_info)?;
-    
+
     // Main monitoring loop
     loop {
         // Clean up dead processes
         // This removes PID files for processes that are no longer running
         // cleanup_dead() will automatically notify watchers if any processes were cleaned
         let _cleaned = tracker.cleanup_dead()?;
-        
+
         // Check if there are any processes left (excluding the monitor itself)
         let processes = tracker.list_processes()?;
         let non_monitor_processes: Vec<_> = processes
             .iter()
             .filter(|p| p.app_name != ".monitor")
             .collect();
-        
+
         if non_monitor_processes.is_empty() {
             // No processes left to monitor - exit gracefully
             // Remove our own PID file before exiting
-            tracker.remove_process(".monitor")?;
+            tracker.remove_process("unknown", ".monitor", None)?;
             break;
         }
-        
+
         // Sleep for 3 seconds before next check
         // This interval balances responsiveness with resource usage
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     }
-    
+
     Ok(())
 }
-

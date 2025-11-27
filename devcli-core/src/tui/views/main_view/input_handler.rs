@@ -360,7 +360,9 @@ impl NavigationHandler for MainView {
                     }
                 } else if self.active_tab == MainTab::Logs {
                     if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) = self.log_manager.list_logs_for_app(&app.name) {
+                        if let Ok(log_files) =
+                            self.log_manager.list_logs_for_app(&app.project, &app.name)
+                        {
                             self.selected_log_idx =
                                 (self.selected_log_idx + 10).min(log_files.len().saturating_sub(1));
                         }
@@ -425,7 +427,9 @@ impl NavigationHandler for MainView {
                     }
                 } else if self.active_tab == MainTab::Logs {
                     if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) = self.log_manager.list_logs_for_app(&app.name) {
+                        if let Ok(log_files) =
+                            self.log_manager.list_logs_for_app(&app.project, &app.name)
+                        {
                             if self.selected_log_idx < log_files.len().saturating_sub(1) {
                                 self.selected_log_idx += 1;
                             }
@@ -493,7 +497,9 @@ impl NavigationHandler for MainView {
                 }
                 MainTab::Logs => {
                     if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) = self.log_manager.list_logs_for_app(&app.name) {
+                        if let Ok(log_files) =
+                            self.log_manager.list_logs_for_app(&app.project, &app.name)
+                        {
                             if let Some(log_file) = log_files.get(self.selected_log_idx) {
                                 state.current_view = crate::tui::state::ViewType::LogViewer {
                                     log_path: log_file.path.clone(),

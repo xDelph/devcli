@@ -146,7 +146,9 @@ async fn start_single_app_process(
     }
 
     // Step 2: Create a log file for this process
-    let log_writer = Arc::new(Mutex::new(FileLogger::new(&app_name, true).await?));
+    let log_writer = Arc::new(Mutex::new(
+        FileLogger::new(&resolved_app.project, &app_name, &environment, true).await?,
+    ));
 
     // Get the log file path for display
     let log_path = {
@@ -340,7 +342,11 @@ async fn start_single_app_process(
         }
 
         // Wait for spawner to exit (which happens when app exits or is killed)
-        let _ = spawner_child.wait();
+        // We spawn a task to wait for it so we don't block the main thread
+        // This ensures the process is properly reaped (avoiding zombies)
+        tokio::spawn(async move {
+            let _ = spawner_child.wait().await;
+        });
     }
 
     // Step 8: Success! Return the app name for reporting
@@ -417,13 +423,15 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
     tracker.cleanup_dead()?;
 
     // Step 8: Check if this dependency is already running
-    if let Some(existing) = tracker.get_process(app_name)? {
+    if let Some(existing) =
+        tracker.get_process(&resolved_app.project, app_name, Some(&environment))?
+    {
         if tracker.is_running(existing.pid) {
             // Already running - no need to start again
             return Ok(());
         } else {
             // Stale PID file - clean it up
-            tracker.remove_process(app_name)?;
+            tracker.remove_process(&resolved_app.project, app_name, Some(&environment))?;
         }
     }
 

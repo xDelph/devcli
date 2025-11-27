@@ -51,11 +51,11 @@ impl AppState {
             // Iterate through each app in the project
             for (app_name, app_config) in &project_config.apps {
                 // Determine if the app is running by checking the process tracker
-                let status = Self::determine_status(app_name, process_tracker);
-                
+                let status = Self::determine_status(project_name, app_name, process_tracker);
+
                 // Get the active stage from the running process (if any)
                 let active_stage = process_tracker
-                    .get_process(app_name)
+                    .get_process(project_name, app_name, None)
                     .ok()
                     .flatten()
                     .and_then(|info| info.stage);
@@ -114,9 +114,13 @@ impl AppState {
     }
 
     /// Determines the running status of an app by checking the process tracker
-    fn determine_status(app_name: &str, process_tracker: &ProcessTracker) -> AppStatus {
+    fn determine_status(
+        project_name: &str,
+        app_name: &str,
+        process_tracker: &ProcessTracker,
+    ) -> AppStatus {
         // Check if there's a running process for this app
-        match process_tracker.get_process(app_name) {
+        match process_tracker.get_process(project_name, app_name, None) {
             Ok(Some(process_info)) => {
                 // Verify the process is actually still running
                 if process_tracker.is_running(process_info.pid) {
@@ -293,7 +297,8 @@ pub struct AppStateData {
     /// Environment files configuration
     /// Maps stage -> context -> file path
     /// Example: { "qa": { "local": ".env.qa", "docker": ".env.qa" } }
-    pub env_files: Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    pub env_files:
+        Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
 }
 
 /// Information about a command

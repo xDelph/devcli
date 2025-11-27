@@ -66,7 +66,7 @@ impl MainView {
         ]));
         lines.push(Line::from(""));
 
-        match self.log_manager.list_logs_for_app(&app.name) {
+        match self.log_manager.list_logs_for_app(&app.project, &app.name) {
             Ok(log_files) => {
                 if log_files.is_empty() {
                     lines.push(Line::from(Span::styled(

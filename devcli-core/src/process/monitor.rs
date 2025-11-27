@@ -4,8 +4,8 @@
 
 use crate::process::ProcessTracker;
 use crate::Result;
-use std::process::Command;
 use std::path::PathBuf;
+use std::process::Command;
 
 // Check if the monitor process is currently running
 // Returns true if a monitor process is active, false otherwise
@@ -14,10 +14,10 @@ pub fn is_monitor_running() -> bool {
         Ok(t) => t,
         Err(_) => return false,
     };
-    
+
     // Try to get the monitor's PID file
     // Monitor uses a special name: ".monitor"
-    if let Ok(Some(process)) = tracker.get_process(".monitor") {
+    if let Ok(Some(process)) = tracker.get_process("unknown", ".monitor", None) {
         // Check if the PID is actually running
         tracker.is_running(process.pid)
     } else {
@@ -37,13 +37,13 @@ pub fn spawn_monitor_if_needed(devcli_binary_path: &PathBuf) -> Result<()> {
         // Monitor is already active, nothing to do
         return Ok(());
     }
-    
+
     // Spawn the monitor process
     // We use the current devcli binary to run "monitor --daemon"
     let mut cmd = Command::new(devcli_binary_path);
     cmd.arg("monitor");
     cmd.arg("--daemon");
-    
+
     // Configure the monitor to run completely detached
     // - stdin: null (no input)
     // - stdout: null (no output)
@@ -52,7 +52,7 @@ pub fn spawn_monitor_if_needed(devcli_binary_path: &PathBuf) -> Result<()> {
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
-    
+
     // Platform-specific: Make it a session leader (like spawn_process does)
     // This detaches it from the current terminal
     #[cfg(unix)]
@@ -68,13 +68,13 @@ pub fn spawn_monitor_if_needed(devcli_binary_path: &PathBuf) -> Result<()> {
             });
         }
     }
-    
+
     // Spawn the process and don't wait for it
     let _child = cmd.spawn()?;
-    
+
     // Note: We don't wait for the child or store its handle
     // It's fully detached and will manage itself
-    
+
     Ok(())
 }
 
@@ -87,4 +87,3 @@ pub fn get_devcli_binary_path() -> Result<PathBuf> {
     let exe_path = std::env::current_exe()?;
     Ok(exe_path)
 }
-

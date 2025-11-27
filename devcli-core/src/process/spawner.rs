@@ -150,12 +150,14 @@ pub async fn spawn_process(
                     // Use writeln! instead of println! to handle broken pipes gracefully
                     // If writing fails (e.g. TUI closed), we stop trying to write to stdout
                     // but CONTINUE writing to the log file
-                    if let Err(_) = writeln!(
+                    if writeln!(
                         std::io::stdout(),
                         "[{}][stdout] {}",
                         app_name.cyan().bold(),
                         line
-                    ) {
+                    )
+                    .is_err()
+                    {
                         stdout_alive = false;
                     }
                 }
@@ -188,12 +190,14 @@ pub async fn spawn_process(
                     use std::io::Write;
                     // eprintln! prints to stderr instead of stdout
                     // Handle broken pipe gracefully
-                    if let Err(_) = writeln!(
+                    if writeln!(
                         std::io::stderr(),
                         "[{}][stderr] {}",
                         app_name_clone.cyan().bold(),
                         line
-                    ) {
+                    )
+                    .is_err()
+                    {
                         stderr_alive = false;
                     }
                 }

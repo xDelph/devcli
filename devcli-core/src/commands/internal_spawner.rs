@@ -173,7 +173,11 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     // If we remove it here again, it might fail or be redundant.
     // But if the app exits naturally (crashes), we MUST remove it.
     // So we should try to remove it.
-    let _ = tracker.remove_process(&payload.app_name);
+    let _ = tracker.remove_process(
+        payload.project.as_deref().unwrap_or("unknown"),
+        &payload.app_name,
+        payload.environment.as_deref(),
+    );
 
     Ok(())
 }

@@ -16,7 +16,12 @@ impl FileLogger {
     // Create a new FileLogger for an app
     // This is async because file operations are async
     // truncate: if true, clears the file; if false, appends to existing content
-    pub async fn new(app_name: &str, truncate: bool) -> Result<Self> {
+    pub async fn new(
+        project_name: &str,
+        app_name: &str,
+        context: &str,
+        truncate: bool,
+    ) -> Result<Self> {
         // Get user's home directory
         let home = dirs::home_dir().context("Could not determine home directory")?;
 
@@ -32,9 +37,9 @@ impl FileLogger {
         // Get current date (no time) to have one log file per day
         // Format: 20251024
         let date = Utc::now().format("%Y%m%d");
-        // Create filename: my-app_20251024.log
-        // Multiple starts of same app on same day will append to this file
-        let filename = format!("{}_{}.log", app_name, date);
+        // Create filename: projectName_appName_context_todayDate.log
+        // Example: myproject_myapp_start_20251024.log
+        let filename = format!("{}_{}_{}_{}.log", project_name, app_name, context, date);
         // Full path to the log file
         let log_path = log_dir.join(filename);
 

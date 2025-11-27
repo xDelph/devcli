@@ -62,18 +62,35 @@ impl ProcessTracker {
     // Private helper method to get the full path to a PID file
     // &self means this method needs a ProcessTracker instance
     // &str is a string slice (borrowed reference to a string)
-    fn pid_file_path(&self, app_name: &str) -> PathBuf {
-        // format! creates a string like "my-app.json"
-        // .join() appends it to the base directory
-        self.base_dir.join(format!("{}.json", app_name))
+    fn pid_file_path(&self, project: &str, app_name: &str, environment: Option<&str>) -> PathBuf {
+        if app_name == ".monitor" {
+            return self.base_dir.join("monitor.json");
+        }
+
+        if let Some(env) = environment {
+            self.base_dir
+                .join(format!("{}.{}.{}.json", project, app_name, env))
+        } else {
+            // Fallback for when we don't know the environment or for legacy files
+            // This might not find the file if it has an environment suffix
+            self.base_dir.join(format!("{}.{}.json", project, app_name))
+        }
     }
 
     // Save a process to a PID file
     // Result<()> means returns Result<T> where T is the empty tuple ()
     // () in Rust is like 'void' in other languages - means no return value
     pub fn register_process(&self, info: ProcessInfo) -> Result<()> {
+        // Get the project name, defaulting to "unknown" if not present
+        // This shouldn't happen in normal usage as project is always set
+        let project = info.project.as_deref().unwrap_or("unknown");
+
+        // Use app_config_name if available (the clean name from config), otherwise app_name
+        // app_name might contain variants in legacy code, but we want the clean name
+        let app_name = info.app_config_name.as_deref().unwrap_or(&info.app_name);
+
         // Get the full path where we'll save this process's info
-        let path = self.pid_file_path(&info.app_name);
+        let path = self.pid_file_path(project, app_name, info.environment.as_deref());
 
         // Convert the ProcessInfo struct to pretty-printed JSON string
         // serde_json does the heavy lifting of serialization
@@ -94,25 +111,85 @@ impl ProcessTracker {
     // Retrieve process info from a PID file
     // Returns Option because the process might not exist
     // Option<ProcessInfo> means either Some(ProcessInfo) or None
-    pub fn get_process(&self, app_name: &str) -> Result<Option<ProcessInfo>> {
-        let path = self.pid_file_path(app_name);
-
-        // Check if the PID file exists
-        if !path.exists() {
-            // If not, return Ok(None) - this isn't an error, just no data
+    pub fn get_process(
+        &self,
+        project: &str,
+        app_name: &str,
+        environment: Option<&str>,
+    ) -> Result<Option<ProcessInfo>> {
+        // If environment is specified, check that specific file
+        if let Some(env) = environment {
+            let path = self.pid_file_path(project, app_name, Some(env));
+            if path.exists() {
+                let content = fs::read_to_string(&path).context("Failed to read PID file")?;
+                let info: ProcessInfo =
+                    serde_json::from_str(&content).context("Failed to parse PID file")?;
+                // Verify app name matches (to avoid matching "redis.local" when looking for "redis")
+                let loaded_app_name = info.app_config_name.as_deref().unwrap_or(&info.app_name);
+                if loaded_app_name == app_name {
+                    return Ok(Some(info));
+                }
+            }
+            // Also check without env suffix for backward compatibility or if env is not in filename
+            let path_no_env = self.pid_file_path(project, app_name, None);
+            if path_no_env.exists() {
+                let content =
+                    fs::read_to_string(&path_no_env).context("Failed to read PID file")?;
+                let info: ProcessInfo =
+                    serde_json::from_str(&content).context("Failed to parse PID file")?;
+                // Verify app name matches
+                let loaded_app_name = info.app_config_name.as_deref().unwrap_or(&info.app_name);
+                if loaded_app_name == app_name {
+                    // Verify it matches the requested environment if it has one
+                    if info.environment.as_deref() == Some(env) {
+                        return Ok(Some(info));
+                    }
+                }
+            }
             return Ok(None);
         }
 
-        // Read the file contents as a string
-        let content = fs::read_to_string(&path).context("Failed to read PID file")?;
+        // If no environment specified, we need to find ANY process for this app
+        // Check the default path (no env suffix)
+        let path = self.pid_file_path(project, app_name, None);
+        if path.exists() {
+            let content = fs::read_to_string(&path).context("Failed to read PID file")?;
+            let info: ProcessInfo =
+                serde_json::from_str(&content).context("Failed to parse PID file")?;
 
-        // Parse the JSON string back into a ProcessInfo struct
-        // The type annotation tells serde what structure to parse into
-        let info: ProcessInfo =
-            serde_json::from_str(&content).context("Failed to parse PID file")?;
+            // Verify app name matches
+            let loaded_app_name = info.app_config_name.as_deref().unwrap_or(&info.app_name);
+            if loaded_app_name == app_name {
+                return Ok(Some(info));
+            }
+        }
 
-        // Return the process info wrapped in Some
-        Ok(Some(info))
+        // Scan the directory for any file starting with "project.app."
+        // This is slower but necessary if we don't know the environment
+        let prefix = format!("{}.{}.", project, app_name);
+        let entries = fs::read_dir(&self.base_dir).context("Failed to read PID directory")?;
+
+        for entry in entries {
+            let entry = entry.context("Failed to read directory entry")?;
+            let path = entry.path();
+            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                if filename.starts_with(&prefix) && filename.ends_with(".json") {
+                    // Found a candidate
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(info) = serde_json::from_str::<ProcessInfo>(&content) {
+                            // Verify app name matches
+                            let loaded_app_name =
+                                info.app_config_name.as_deref().unwrap_or(&info.app_name);
+                            if loaded_app_name == app_name {
+                                return Ok(Some(info));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     // List all tracked processes by reading all PID files
@@ -185,15 +262,45 @@ impl ProcessTracker {
     }
 
     // Remove a PID file (delete the tracking for a process)
-    pub fn remove_process(&self, app_name: &str) -> Result<()> {
-        let path = self.pid_file_path(app_name);
-
-        // Only try to delete if the file exists
-        // This prevents errors when trying to remove a non-existent file
+    pub fn remove_process(
+        &self,
+        project: &str,
+        app_name: &str,
+        environment: Option<&str>,
+    ) -> Result<()> {
+        // Try with environment first
+        let path = self.pid_file_path(project, app_name, environment);
         if path.exists() {
             fs::remove_file(&path).context("Failed to remove PID file")?;
-            // Notify watchers that a process was removed
             self.notify_status_change()?;
+            return Ok(());
+        }
+
+        // If not found and environment was None, try to find any matching file
+        if environment.is_none() {
+            // Fallback: check the no-env path explicitly
+            let path_no_env = self.pid_file_path(project, app_name, None);
+            if path_no_env.exists() {
+                fs::remove_file(&path_no_env).context("Failed to remove PID file")?;
+                self.notify_status_change()?;
+                return Ok(());
+            }
+
+            // Also scan for any file starting with "project.app."
+            let prefix = format!("{}.{}.", project, app_name);
+            let entries = fs::read_dir(&self.base_dir).context("Failed to read PID directory")?;
+
+            for entry in entries {
+                let entry = entry.context("Failed to read directory entry")?;
+                let path = entry.path();
+                if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                    if filename.starts_with(&prefix) && filename.ends_with(".json") {
+                        fs::remove_file(&path).context("Failed to remove PID file")?;
+                        self.notify_status_change()?;
+                        return Ok(());
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -211,8 +318,15 @@ impl ProcessTracker {
         for process in processes {
             // If the process is NOT running anymore...
             if !self.is_running(process.pid) {
+                // Get project and app name for removal
+                let project = process.project.as_deref().unwrap_or("unknown");
+                let app_name = process
+                    .app_config_name
+                    .as_deref()
+                    .unwrap_or(&process.app_name);
+
                 // Remove its PID file
-                self.remove_process(&process.app_name)?;
+                self.remove_process(project, app_name, process.environment.as_deref())?;
                 // Add its name to the cleaned list
                 cleaned.push(process.app_name);
             }
@@ -237,7 +351,7 @@ impl ProcessTracker {
     // Updates the modification time of a notification file
     pub fn notify_status_change(&self) -> Result<()> {
         let path = self.status_notification_path();
-        
+
         // Touch the file to update its modification time
         // This is a lightweight way to signal changes across processes
         if path.exists() {
@@ -249,7 +363,7 @@ impl ProcessTracker {
             // Create the file if it doesn't exist
             fs::write(&path, "").context("Failed to create status notification file")?;
         }
-        
+
         Ok(())
     }
 
@@ -257,14 +371,16 @@ impl ProcessTracker {
     // Returns None if the file doesn't exist
     pub fn get_last_status_change(&self) -> Result<Option<std::time::SystemTime>> {
         let path = self.status_notification_path();
-        
+
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let metadata = fs::metadata(&path).context("Failed to read status notification file")?;
-        let modified = metadata.modified().context("Failed to get modification time")?;
-        
+        let modified = metadata
+            .modified()
+            .context("Failed to get modification time")?;
+
         Ok(Some(modified))
     }
 }

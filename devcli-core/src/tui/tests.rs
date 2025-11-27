@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 #[test]
 fn test_theme_default_colors() {
     let theme = Theme::default();
-    
+
     // Verify key colors are set correctly
     assert_eq!(theme.running, ratatui::style::Color::LightGreen);
     assert_eq!(theme.stopped, ratatui::style::Color::DarkGray);
@@ -53,7 +53,7 @@ fn test_view_type_equality() {
         app: "app1".to_string(),
     };
     assert_eq!(cmd1, cmd2);
-    
+
     // Different apps should not be equal
     let cmd3 = ViewType::CommandList {
         project: "test".to_string(),
@@ -72,7 +72,7 @@ fn test_app_status_uptime_formatting() {
         start_time,
     };
     assert!(status.is_running());
-    
+
     // Verify we can extract the uptime
     if let AppStatus::Running { uptime: u, .. } = status {
         assert_eq!(u.num_seconds(), 3665);
@@ -105,7 +105,11 @@ fn test_log_manager_format_relative_date() {
     // Test "Today" formatting
     let today = now;
     let formatted = LogManager::format_relative_date(&today);
-    assert!(formatted.starts_with("Today"), "Expected 'Today', got: {}", formatted);
+    assert!(
+        formatted.starts_with("Today"),
+        "Expected 'Today', got: {}",
+        formatted
+    );
     assert!(formatted.contains(":"), "Expected time format with colon");
     // Test "Yesterday"
     let yesterday = now - Duration::days(1);
@@ -121,16 +125,34 @@ fn test_log_manager_format_relative_date() {
     let ten_days = now - Duration::days(10);
     let formatted = LogManager::format_relative_date(&ten_days);
     // Should be in "Mon DD" format, not "X days ago"
-    assert!(!formatted.contains("days ago"), "Expected date format, got: {}", formatted);
-    assert!(!formatted.contains("Today"), "Expected date format, got: {}", formatted);
-    assert!(!formatted.contains("Yesterday"), "Expected date format, got: {}", formatted);
+    assert!(
+        !formatted.contains("days ago"),
+        "Expected date format, got: {}",
+        formatted
+    );
+    assert!(
+        !formatted.contains("Today"),
+        "Expected date format, got: {}",
+        formatted
+    );
+    assert!(
+        !formatted.contains("Yesterday"),
+        "Expected date format, got: {}",
+        formatted
+    );
     // Verify it contains a month abbreviation (Jan, Feb, etc.)
-    let has_month = formatted.contains("Jan") || formatted.contains("Feb") || 
-                    formatted.contains("Mar") || formatted.contains("Apr") ||
-                    formatted.contains("May") || formatted.contains("Jun") ||
-                    formatted.contains("Jul") || formatted.contains("Aug") ||
-                    formatted.contains("Sep") || formatted.contains("Oct") ||
-                    formatted.contains("Nov") || formatted.contains("Dec");
+    let has_month = formatted.contains("Jan")
+        || formatted.contains("Feb")
+        || formatted.contains("Mar")
+        || formatted.contains("Apr")
+        || formatted.contains("May")
+        || formatted.contains("Jun")
+        || formatted.contains("Jul")
+        || formatted.contains("Aug")
+        || formatted.contains("Sep")
+        || formatted.contains("Oct")
+        || formatted.contains("Nov")
+        || formatted.contains("Dec");
     assert!(has_month, "Expected month abbreviation in: {}", formatted);
 }
 
@@ -148,11 +170,15 @@ fn test_log_manager_list_logs_empty_directory() {
     // Test listing logs when directory doesn't exist
     let log_manager = LogManager::new().expect("Failed to create LogManager");
     // Use a non-existent app name to ensure no logs are found
-    let result = log_manager.list_logs_for_app("nonexistent-app-12345");
+    let result = log_manager.list_logs_for_app("test-project", "nonexistent-app-12345");
     // Should return Ok with empty vector, not an error
     assert!(result.is_ok(), "Should handle missing directory gracefully");
     let logs = result.unwrap();
-    assert_eq!(logs.len(), 0, "Should return empty vector for non-existent app");
+    assert_eq!(
+        logs.len(),
+        0,
+        "Should return empty vector for non-existent app"
+    );
 }
 
 #[test]

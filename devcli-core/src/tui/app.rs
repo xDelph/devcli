@@ -754,7 +754,9 @@ impl TuiApp {
                 if let Some(app) = state.selected_app() {
                     // Try to get environment from running process, fallback to "local"
                     let env = if let Ok(tracker) = crate::process::ProcessTracker::new() {
-                        if let Ok(Some(process)) = tracker.get_process(&app.name) {
+                        if let Ok(Some(process)) =
+                            tracker.get_process(&app.project, &app.name, None)
+                        {
                             process.environment.unwrap_or_else(|| "local".to_string())
                         } else {
                             "local".to_string()
@@ -1207,6 +1209,13 @@ impl TuiApp {
                 CommandResult::Success(_msg) => {
                     crate::debug!("Received Success");
 
+                    // Refresh log list to show newly created log files
+                    // This checks if the logs directory has been modified
+                    if self.main_view.refresh_log_list() {
+                        crate::debug!("Logs directory changed, triggering UI refresh");
+                        self.needs_redraw = true;
+                    }
+
                     // Keep the popup open showing logs
                     // User can close with ESC when ready
                     self.needs_redraw = true;
@@ -1297,7 +1306,7 @@ impl TuiApp {
                 for app in &mut project.apps {
                     let old_status = app.status.clone();
                     // Check if the app is currently running
-                    app.status = Self::check_app_status(&app.name, process_tracker);
+                    app.status = Self::check_app_status(&project.name, &app.name, process_tracker);
 
                     // Track if any status changed
                     if old_status != app.status {
@@ -1316,13 +1325,14 @@ impl TuiApp {
     /// Checks the current status of an app by querying the process tracker
     /// Returns the updated AppStatus (Running with details or Stopped)
     fn check_app_status(
+        project_name: &str,
         app_name: &str,
         process_tracker: &ProcessTracker,
     ) -> crate::tui::state::AppStatus {
         use crate::tui::state::AppStatus;
 
         // Try to get process info from the tracker
-        match process_tracker.get_process(app_name) {
+        match process_tracker.get_process(project_name, app_name, None) {
             Ok(Some(process_info)) => {
                 // Verify the process is actually still running
                 if process_tracker.is_running(process_info.pid) {

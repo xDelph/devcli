@@ -89,16 +89,24 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let process_name = format!("{}:{}", args.app_name, args.command_variant);
 
     // Check if THIS SPECIFIC command is already running for this app
-    if let Some(existing) = tracker.get_process(&process_name)? {
-        if tracker.is_running(existing.pid) {
+    if let Ok(Some(process)) = tracker.get_process(
+        &resolved_app.project,
+        &resolved_app.app_name,
+        Some(&environment),
+    ) {
+        if tracker.is_running(process.pid) {
             anyhow::bail!(
                 "Process '{}' is already running with PID {}",
                 process_name,
-                existing.pid
+                process.pid
             );
         } else {
             // Clean up stale PID file
-            tracker.remove_process(&process_name)?;
+            tracker.remove_process(
+                &resolved_app.project,
+                &resolved_app.app_name,
+                Some(&environment),
+            )?;
         }
     }
 
@@ -132,7 +140,9 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     // Create log file using the full process name (includes variant)
-    let log_writer = Arc::new(Mutex::new(FileLogger::new(&process_name, true).await?));
+    let log_writer = Arc::new(Mutex::new(
+        FileLogger::new(&resolved_app.project, &args.app_name, &environment, true).await?,
+    ));
 
     let log_path = {
         let writer = log_writer.lock().await;
@@ -263,7 +273,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         env_vars: HashMap::new(),
         project: Some(resolved_app.project.clone()),
         app_config_name: Some(resolved_app.app_name.clone()),
-        environment: Some(environment),
+        environment: Some(environment.clone()),
         command_variant: Some(args.command_variant), // Store the variant!
         stage: None,                                 // Stage tracking will be added in future task
     };
@@ -300,7 +310,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                     if !tracker.is_running(spawned.pid) {
                         println!("\n\nProcess exited.");
                         // Clean up the process from tracker
-                        tracker.remove_process(&process_name)?;
+                     tracker.remove_process(&resolved_app.project, &resolved_app.app_name, Some(&environment))?;
                         break;
                     }
                 }
