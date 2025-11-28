@@ -2,7 +2,6 @@ use super::super::{MainTab, MainView};
 use crate::tui::theme::Theme;
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
     widgets::{Block, Borders, Tabs},
     Frame,
 };
@@ -23,15 +22,11 @@ impl MainView {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.border)),
+                    .border_style(theme.style_border_default()),
             )
             .select(selected_idx)
-            .style(Style::default().fg(theme.text))
-            .highlight_style(
-                Style::default()
-                    .fg(theme.primary)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .style(theme.style_text())
+            .highlight_style(theme.style_text_primary_bold());
 
         frame.render_widget(tabs, area);
     }

@@ -67,7 +67,7 @@ impl HelpOverlay {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.primary))
+                    .border_style(theme.style_text_primary())
                     .title(" Keyboard Shortcuts - Press ? or Esc to close ")
             );
         
@@ -202,9 +202,9 @@ impl HelpOverlay {
         
         lines.push(Line::from(vec![
             Span::styled("  ● ", Style::default().fg(theme.running)),
-            Span::styled("Running  ", Style::default().fg(theme.text)),
+            Span::styled("Running  ", theme.style_text()),
             Span::styled("  ○ ", Style::default().fg(theme.stopped)),
-            Span::styled("Stopped", Style::default().fg(theme.text)),
+            Span::styled("Stopped", theme.style_text()),
         ]));
         
         lines.push(Line::from(""));
@@ -228,7 +228,7 @@ impl HelpOverlay {
                     .fg(theme.success)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(description, Style::default().fg(theme.text)),
+            Span::styled(description, theme.style_text()),
         ]));
     }
 

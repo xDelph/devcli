@@ -24,12 +24,12 @@ impl MainView {
         } else {
             vec![Line::from(Span::styled(
                 "No app selected",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             ))]
         };
 
         let border_style = if self.focus == PanelFocus::DetailPanel {
-            Style::default().fg(theme.primary)
+            theme.style_text_primary()
         } else {
             Style::default().fg(theme.border)
         };
@@ -71,12 +71,12 @@ impl MainView {
                 if log_files.is_empty() {
                     lines.push(Line::from(Span::styled(
                         "No log files found for this app.",
-                        Style::default().fg(theme.text_dim),
+                        theme.style_text_dim(),
                     )));
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
                         "Log files will appear here after you start the app.",
-                        Style::default().fg(theme.text_dim),
+                        theme.style_text_dim(),
                     )));
                 } else {
                     for (idx, log_file) in log_files.iter().enumerate() {
@@ -95,11 +95,11 @@ impl MainView {
                                     .add_modifier(Modifier::BOLD),
                             )
                         } else {
-                            ("  ", Style::default().fg(theme.text))
+                            ("  ", theme.style_text())
                         };
 
                         lines.push(Line::from(vec![
-                            Span::styled(prefix, Style::default().fg(theme.primary)),
+                            Span::styled(prefix, theme.style_text_primary()),
                             Span::styled(format!(" {} ({})", date_str, size_str), text_style),
                         ]));
                     }

@@ -67,8 +67,8 @@ impl MainView {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(Style::default().fg(theme.primary))
-                .style(Style::default().bg(theme.bg)),
+                .border_style(theme.style_text_primary())
+                .style(theme.style_bg_default()),
         );
 
         frame.render_widget(config_panel, area);

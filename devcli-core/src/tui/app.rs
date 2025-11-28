@@ -47,7 +47,6 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
@@ -1440,26 +1439,18 @@ impl TuiApp {
         let error_lines = vec![
             Line::from(""),
             Line::from(vec![
-                Span::styled(
-                    " ✗ Error: ",
-                    Style::default()
-                        .fg(self.theme.error)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(error, Style::default().fg(self.theme.text)),
-                Span::styled(
-                    "  [Press any key to dismiss]",
-                    Style::default().fg(self.theme.text_dim),
-                ),
+                Span::styled(" ✗ Error: ", self.theme.style_error_bold()),
+                Span::styled(error, self.theme.style_text()),
+                Span::styled("  [Press any key to dismiss]", self.theme.style_text_dim()),
             ]),
         ];
 
         let error_widget = Paragraph::new(error_lines)
-            .style(Style::default().bg(self.theme.error).fg(self.theme.text))
+            .style(self.theme.style_error_block())
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .border_style(Style::default().fg(self.theme.error)),
+                    .border_style(self.theme.style_border_error()),
             );
 
         frame.render_widget(error_widget, status_area);
@@ -1495,7 +1486,7 @@ impl TuiApp {
             let size = frame.area();
             let placeholder = Paragraph::new("Log Viewer - No file loaded")
                 .alignment(Alignment::Center)
-                .style(Style::default().bg(Color::Rgb(30, 30, 35))) // GREY BACKGROUND HERE!
+                .style(self.theme.style_bg_overlay())
                 .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
             frame.render_widget(placeholder, size);
         }

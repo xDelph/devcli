@@ -23,12 +23,12 @@ impl MainView {
         } else {
             vec![Line::from(Span::styled(
                 "No app selected",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             ))]
         };
 
         let border_style = if self.focus == PanelFocus::DetailPanel {
-            Style::default().fg(theme.primary)
+            theme.style_text_primary()
         } else {
             Style::default().fg(theme.border)
         };
@@ -67,32 +67,32 @@ impl MainView {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("Status:      ", Style::default().fg(theme.text_dim)),
+            Span::styled("Status:      ", theme.style_text_dim()),
             Span::styled("● ", Style::default().fg(status_color)),
             Span::styled(status_text, Style::default().fg(status_color)),
         ]));
 
         if let crate::tui::state::AppStatus::Running { pid, uptime, .. } = &app.status {
             lines.push(Line::from(vec![
-                Span::styled("PID:         ", Style::default().fg(theme.text_dim)),
-                Span::styled(pid.to_string(), Style::default().fg(theme.text)),
+                Span::styled("PID:         ", theme.style_text_dim()),
+                Span::styled(pid.to_string(), theme.style_text()),
             ]));
 
             let uptime_str = Self::format_duration(uptime);
             lines.push(Line::from(vec![
-                Span::styled("Uptime:      ", Style::default().fg(theme.text_dim)),
-                Span::styled(uptime_str, Style::default().fg(theme.text)),
+                Span::styled("Uptime:      ", theme.style_text_dim()),
+                Span::styled(uptime_str, theme.style_text()),
             ]));
         }
 
         lines.push(Line::from(vec![
-            Span::styled("Type:        ", Style::default().fg(theme.text_dim)),
-            Span::styled(app.app_type.clone(), Style::default().fg(theme.text)),
+            Span::styled("Type:        ", theme.style_text_dim()),
+            Span::styled(app.app_type.clone(), theme.style_text()),
         ]));
 
         lines.push(Line::from(vec![
-            Span::styled("Project:     ", Style::default().fg(theme.text_dim)),
-            Span::styled(app.project.clone(), Style::default().fg(theme.text)),
+            Span::styled("Project:     ", theme.style_text_dim()),
+            Span::styled(app.project.clone(), theme.style_text()),
         ]));
 
         // Show stage information
@@ -101,27 +101,27 @@ impl MainView {
         if app.status.is_running() {
             if let Some(ref active_stage) = app.active_stage {
                 lines.push(Line::from(vec![
-                    Span::styled("Stage:       ", Style::default().fg(theme.text_dim)),
+                    Span::styled("Stage:       ", theme.style_text_dim()),
                     Span::styled(
                         active_stage.to_uppercase(),
                         Style::default()
                             .fg(theme.secondary)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(" (active)", Style::default().fg(theme.text_dim)),
+                    Span::styled(" (active)", theme.style_text_dim()),
                 ]));
             }
         } else if let Some(ref stage) = app.stage {
             lines.push(Line::from(vec![
-                Span::styled("Stage:       ", Style::default().fg(theme.text_dim)),
-                Span::styled(stage.to_uppercase(), Style::default().fg(theme.secondary)),
+                Span::styled("Stage:       ", theme.style_text_dim()),
+                Span::styled(stage.to_uppercase(), theme.style_text_secondary()),
             ]));
         }
 
         if let Some(path) = &app.path {
             lines.push(Line::from(vec![
-                Span::styled("Path:        ", Style::default().fg(theme.text_dim)),
-                Span::styled(path.clone(), Style::default().fg(theme.text)),
+                Span::styled("Path:        ", theme.style_text_dim()),
+                Span::styled(path.clone(), theme.style_text()),
             ]));
         }
 
@@ -130,10 +130,10 @@ impl MainView {
             let total_stages = env_files.len();
             if total_stages > 0 {
                 lines.push(Line::from(vec![
-                    Span::styled("Env Files:   ", Style::default().fg(theme.text_dim)),
+                    Span::styled("Env Files:   ", theme.style_text_dim()),
                     Span::styled(
                         format!("{} stage(s) configured", total_stages),
-                        Style::default().fg(theme.secondary),
+                        theme.style_text_secondary(),
                     ),
                 ]));
             }
@@ -150,8 +150,8 @@ impl MainView {
 
             for dep in &app.dependencies {
                 lines.push(Line::from(vec![
-                    Span::styled("  • ", Style::default().fg(theme.text_dim)),
-                    Span::styled(dep.clone(), Style::default().fg(theme.text)),
+                    Span::styled("  • ", theme.style_text_dim()),
+                    Span::styled(dep.clone(), theme.style_text()),
                 ]));
             }
         }

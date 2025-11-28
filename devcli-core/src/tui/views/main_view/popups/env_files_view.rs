@@ -23,7 +23,7 @@ impl MainView {
         if let Some(app) = state.selected_app() {
             lines.push(Line::from(vec![
                 Span::styled("─ ", Style::default().fg(theme.border)),
-                Span::styled("● ", Style::default().fg(theme.primary)),
+                Span::styled("● ", theme.style_text_primary()),
                 Span::styled(
                     format!("{} - Environment Files", app.name),
                     Style::default()
@@ -50,12 +50,12 @@ impl MainView {
                 if entries.is_empty() {
                     lines.push(Line::from(Span::styled(
                         "No environment files configured.",
-                        Style::default().fg(theme.text_dim),
+                        theme.style_text_dim(),
                     )));
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
                         "Press 'a' to add an environment file.",
-                        Style::default().fg(theme.text_dim),
+                        theme.style_text_dim(),
                     )));
                 } else {
                     // Display grouped by stage, but track flat index for selection
@@ -83,16 +83,16 @@ impl MainView {
                             let is_selected =
                                 flat_idx == self.popup_scroll_manager.selected_env_file_idx;
                             let entry_style = if is_selected {
-                                Style::default().bg(theme.selected_bg).fg(theme.text)
+                                theme.style_bg_selected_text()
                             } else {
-                                Style::default().fg(theme.text)
+                                theme.style_text()
                             };
 
                             let prefix = if is_selected { "   > " } else { "     " };
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     prefix.to_string(),
-                                    Style::default().fg(theme.primary),
+                                    theme.style_text_primary(),
                                 ),
                                 Span::styled(
                                     format!("{}: ", context),
@@ -110,12 +110,12 @@ impl MainView {
             } else {
                 lines.push(Line::from(Span::styled(
                     "No environment files configured.",
-                    Style::default().fg(theme.text_dim),
+                    theme.style_text_dim(),
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "Press 'a' to add an environment file.",
-                    Style::default().fg(theme.text_dim),
+                    theme.style_text_dim(),
                 )));
             }
 
@@ -127,36 +127,36 @@ impl MainView {
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(vec![
-                Span::styled("  a", Style::default().fg(theme.primary)),
-                Span::styled(" - Add environment file", Style::default().fg(theme.text)),
+                Span::styled("  a", theme.style_text_primary()),
+                Span::styled(" - Add environment file", theme.style_text()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("  e", Style::default().fg(theme.primary)),
-                Span::styled(" - Edit selected entry", Style::default().fg(theme.text)),
+                Span::styled("  e", theme.style_text_primary()),
+                Span::styled(" - Edit selected entry", theme.style_text()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("  d", Style::default().fg(theme.primary)),
-                Span::styled(" - Delete selected entry", Style::default().fg(theme.text)),
+                Span::styled("  d", theme.style_text_primary()),
+                Span::styled(" - Delete selected entry", theme.style_text()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("  Esc", Style::default().fg(theme.primary)),
-                Span::styled(" - Back to config view", Style::default().fg(theme.text)),
+                Span::styled("  Esc", theme.style_text_primary()),
+                Span::styled(" - Back to config view", theme.style_text()),
             ]));
         } else {
             lines.push(Line::from(Span::styled(
                 "No app selected",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
         }
 
-        let border_style = Style::default().fg(theme.primary);
+        let border_style = theme.style_text_primary();
 
         let panel = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Environment Files")
                 .border_style(border_style)
-                .style(Style::default().bg(theme.bg)),
+                .style(theme.style_bg_default()),
         );
 
         frame.render_widget(panel, area);

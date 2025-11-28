@@ -3,7 +3,6 @@ use crate::tui::theme::Theme;
 use crate::tui::views::main_view::MainView;
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -24,9 +23,9 @@ impl MainView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.primary))
+            .border_style(theme.style_border_focused())
             .title("Add Dependency - Select Project and App")
-            .style(Style::default().bg(theme.bg));
+            .style(theme.style_bg_default());
         frame.render_widget(block, area);
 
         let inner = Rect {
@@ -49,9 +48,7 @@ impl MainView {
                     // Always show project header
                     lines.push(Line::from(Span::styled(
                         format!("▼ {}", proj_name),
-                        Style::default()
-                            .fg(theme.primary)
-                            .add_modifier(Modifier::BOLD),
+                        theme.style_text_primary_bold(),
                     )));
 
                     for app_name in apps {
@@ -60,14 +57,11 @@ impl MainView {
 
                         let (style, prefix_style) = if is_selected {
                             (
-                                Style::default().bg(theme.selected_bg).fg(theme.text),
-                                Style::default().bg(theme.selected_bg).fg(theme.primary),
+                                theme.style_bg_selected_text(),
+                                theme.style_bg_selected_primary(),
                             )
                         } else {
-                            (
-                                Style::default().fg(theme.text),
-                                Style::default().fg(theme.primary),
-                            )
+                            (theme.style_text(), theme.style_text_primary())
                         };
 
                         let prefix = if is_selected { " > " } else { "   " };
@@ -86,13 +80,13 @@ impl MainView {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "↑↓: Navigate  Enter: Select/Add  Esc: Back/Cancel",
-                    Style::default().fg(theme.text_dim),
+                    theme.style_text_dim(),
                 )));
             }
             Err(e) => {
                 lines.push(Line::from(Span::styled(
                     format!("Error loading config: {}", e),
-                    Style::default().fg(theme.error),
+                    theme.style_text_error(),
                 )));
             }
         }

@@ -23,9 +23,9 @@ impl MainView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.primary))
+            .border_style(theme.style_text_primary())
             .title("Edit Dependencies")
-            .style(Style::default().bg(theme.bg));
+            .style(theme.style_bg_default());
         frame.render_widget(block, area);
 
         let inner = Rect {
@@ -41,12 +41,12 @@ impl MainView {
             if app.dependencies.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "No dependencies configured.",
-                    Style::default().fg(theme.text_dim),
+                    theme.style_text_dim(),
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "Press 'a' to add a dependency.",
-                    Style::default().fg(theme.text_dim),
+                    theme.style_text_dim(),
                 )));
             } else {
                 for (idx, dep) in app.dependencies.iter().enumerate() {
@@ -57,12 +57,12 @@ impl MainView {
                             .fg(theme.text)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(theme.text)
+                        theme.style_text()
                     };
 
                     let prefix = if is_selected { " > " } else { "   " };
                     lines.push(Line::from(vec![
-                        Span::styled(prefix.to_string(), Style::default().fg(theme.primary)),
+                        Span::styled(prefix.to_string(), theme.style_text_primary()),
                         Span::styled(dep.clone(), style),
                     ]));
                 }
@@ -72,7 +72,7 @@ impl MainView {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "a: Add  d: Delete  Esc: Close",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
         }
 

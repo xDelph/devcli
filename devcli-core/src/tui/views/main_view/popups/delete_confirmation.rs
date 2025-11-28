@@ -40,7 +40,7 @@ impl MainView {
                 Span::styled("  ", Style::default()),
                 Span::styled(
                     line.to_string(),
-                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                    theme.style_text().add_modifier(Modifier::BOLD),
                 ),
             ]));
         }
@@ -48,36 +48,36 @@ impl MainView {
         lines.push(Line::from(""));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("  Press ", Style::default().fg(theme.text_dim)),
+            Span::styled("  Press ", theme.style_text_dim()),
             Span::styled(
                 "Y",
                 Style::default()
                     .fg(theme.primary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" to confirm, ", Style::default().fg(theme.text_dim)),
+            Span::styled(" to confirm, ", theme.style_text_dim()),
             Span::styled(
                 "N",
                 Style::default()
                     .fg(theme.primary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" or ", Style::default().fg(theme.text_dim)),
+            Span::styled(" or ", theme.style_text_dim()),
             Span::styled(
                 "Esc",
                 Style::default()
                     .fg(theme.primary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" to cancel", Style::default().fg(theme.text_dim)),
+            Span::styled(" to cancel", theme.style_text_dim()),
         ]));
 
         let popup = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.primary))
+                .border_style(theme.style_text_primary())
                 .title(" Confirm Delete ")
-                .style(Style::default().bg(theme.bg)),
+                .style(theme.style_bg_default()),
         );
 
         frame.render_widget(popup, popup_area);

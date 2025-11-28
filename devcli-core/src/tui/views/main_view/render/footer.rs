@@ -2,7 +2,6 @@ use super::super::{ConfigMode, MainTab, MainView};
 use crate::tui::theme::Theme;
 use ratatui::{
     layout::{Alignment, Rect},
-    style::Style,
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
@@ -49,12 +48,12 @@ impl MainView {
         };
 
         let footer = Paragraph::new(shortcuts)
-            .style(Style::default().fg(theme.text_dim))
+            .style(theme.style_text_dim())
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.border)),
+                    .border_style(theme.style_border_default()),
             );
 
         frame.render_widget(footer, area);

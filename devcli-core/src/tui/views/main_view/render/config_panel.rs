@@ -65,7 +65,7 @@ impl MainView {
         let content = self.build_config_view_content(state, theme);
 
         let border_style = if self.focus == PanelFocus::DetailPanel {
-            Style::default().fg(theme.primary)
+            theme.style_text_primary()
         } else {
             Style::default().fg(theme.border)
         };
@@ -94,7 +94,7 @@ impl MainView {
         if let Some(app) = state.selected_app() {
             lines.push(Line::from(vec![
                 Span::styled("─ ", Style::default().fg(theme.border)),
-                Span::styled("● ", Style::default().fg(theme.primary)),
+                Span::styled("● ", theme.style_text_primary()),
                 Span::styled(
                     format!("{} Configuration", app.name),
                     Style::default()
@@ -112,30 +112,30 @@ impl MainView {
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     "Project:     ".to_string(),
-                                    Style::default().fg(theme.text_dim),
+                                    theme.style_text_dim(),
                                 ),
-                                Span::styled(app.project.clone(), Style::default().fg(theme.text)),
+                                Span::styled(app.project.clone(), theme.style_text()),
                             ]));
 
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     "Type:        ".to_string(),
-                                    Style::default().fg(theme.text_dim),
+                                    theme.style_text_dim(),
                                 ),
                                 Span::styled(
                                     full_app.app_type.clone(),
-                                    Style::default().fg(theme.text),
+                                    theme.style_text(),
                                 ),
                             ]));
 
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     "Path:        ".to_string(),
-                                    Style::default().fg(theme.text_dim),
+                                    theme.style_text_dim(),
                                 ),
                                 Span::styled(
                                     full_app.path.clone(),
-                                    Style::default().fg(theme.text),
+                                    theme.style_text(),
                                 ),
                             ]));
 
@@ -199,7 +199,7 @@ impl MainView {
                                         Span::styled("  ".to_string(), Style::default()),
                                         Span::styled(
                                             format!("{}: ", stage),
-                                            Style::default().fg(theme.primary),
+                                            theme.style_text_primary(),
                                         ),
                                     ]));
 
@@ -211,15 +211,15 @@ impl MainView {
                                         lines.push(Line::from(vec![
                                             Span::styled(
                                                 "    • ".to_string(),
-                                                Style::default().fg(theme.text_dim),
+                                                theme.style_text_dim(),
                                             ),
                                             Span::styled(
                                                 format!("{}: ", context),
-                                                Style::default().fg(theme.secondary),
+                                                theme.style_text_secondary(),
                                             ),
                                             Span::styled(
                                                 file_path.clone(),
-                                                Style::default().fg(theme.text),
+                                                theme.style_text(),
                                             ),
                                         ]));
                                     }
@@ -238,11 +238,11 @@ impl MainView {
                                     lines.push(Line::from(vec![
                                         Span::styled(
                                             "  • ".to_string(),
-                                            Style::default().fg(theme.text_dim),
+                                            theme.style_text_dim(),
                                         ),
                                         Span::styled(
                                             format!("{}/{}", dep.project, dep.app),
-                                            Style::default().fg(theme.text),
+                                            theme.style_text(),
                                         ),
                                     ]));
                                 }
@@ -257,30 +257,30 @@ impl MainView {
                                     .add_modifier(Modifier::BOLD),
                             )));
                             lines.push(Line::from(vec![
-                                Span::styled("  a", Style::default().fg(theme.primary)),
-                                Span::styled(" - Add new command", Style::default().fg(theme.text)),
+                                Span::styled("  a", theme.style_text_primary()),
+                                Span::styled(" - Add new command", theme.style_text()),
                             ]));
                             lines.push(Line::from(vec![
-                                Span::styled("  e", Style::default().fg(theme.primary)),
+                                Span::styled("  e", theme.style_text_primary()),
                                 Span::styled(
                                     " - Edit selected command",
-                                    Style::default().fg(theme.text),
+                                    theme.style_text(),
                                 ),
                             ]));
                             lines.push(Line::from(vec![
-                                Span::styled("  f", Style::default().fg(theme.primary)),
+                                Span::styled("  f", theme.style_text_primary()),
                                 Span::styled(
                                     " - Edit environment files",
-                                    Style::default().fg(theme.text),
+                                    theme.style_text(),
                                 ),
                             ]));
                             lines.push(Line::from(vec![
-                                Span::styled("  E", Style::default().fg(theme.primary)),
-                                Span::styled(" - Edit this app", Style::default().fg(theme.text)),
+                                Span::styled("  E", theme.style_text_primary()),
+                                Span::styled(" - Edit this app", theme.style_text()),
                             ]));
                             lines.push(Line::from(vec![
-                                Span::styled("  d", Style::default().fg(theme.primary)),
-                                Span::styled(" - Delete this app", Style::default().fg(theme.text)),
+                                Span::styled("  d", theme.style_text_primary()),
+                                Span::styled(" - Delete this app", theme.style_text()),
                             ]));
                         }
                     }
@@ -306,12 +306,12 @@ impl MainView {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Select an app from the left panel to view its configuration.",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Or press 'a' to add a new app.",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
         }
 
@@ -349,7 +349,7 @@ impl MainView {
         if let Some(cmds) = commands {
             lines.push(Line::from(Span::styled(
                 format!("  {}:", env_name),
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
 
             let mut sorted_cmds: Vec<_> = cmds.iter().collect();
@@ -367,18 +367,18 @@ impl MainView {
                             .fg(theme.text)
                             .bg(theme.selected_bg)
                             .add_modifier(Modifier::BOLD),
-                        Style::default().fg(theme.text_dim).bg(theme.selected_bg),
+                        theme.style_text_dim().bg(theme.selected_bg),
                     )
                 } else {
                     (
                         "  ",
-                        Style::default().fg(theme.text),
-                        Style::default().fg(theme.text_dim),
+                        theme.style_text(),
+                        theme.style_text_dim(),
                     )
                 };
 
                 let mut spans = vec![
-                    Span::styled(prefix.to_string(), Style::default().fg(theme.primary)),
+                    Span::styled(prefix.to_string(), theme.style_text_primary()),
                     Span::styled(" ".to_string(), Style::default()),
                     Span::styled(
                         format!("{:<width$}", name, width = max_name_len),
@@ -417,7 +417,7 @@ impl MainView {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(Style::default().fg(theme.primary)),
+                .border_style(theme.style_text_primary()),
         );
 
         frame.render_widget(config_panel, area);
@@ -437,7 +437,7 @@ impl MainView {
                 .fg(theme.primary)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.text_dim)
+            theme.style_text_dim()
         };
         lines.push(Line::from(Span::styled(
             format!("  {}", label),
@@ -456,23 +456,23 @@ impl MainView {
                 if !before.is_empty() {
                     spans.push(Span::styled(
                         before,
-                        Style::default().fg(theme.text).bg(theme.selected_bg),
+                        theme.style_text().bg(theme.selected_bg),
                     ));
                 }
-                spans.push(Span::styled("█", Style::default().fg(theme.primary)));
+                spans.push(Span::styled("█", theme.style_text_primary()));
                 if !after.is_empty() {
                     spans.push(Span::styled(
                         after,
-                        Style::default().fg(theme.text).bg(theme.selected_bg),
+                        theme.style_text().bg(theme.selected_bg),
                     ));
                 }
             } else {
-                spans.push(Span::styled("█", Style::default().fg(theme.primary)));
+                spans.push(Span::styled("█", theme.style_text_primary()));
             }
         } else {
             spans.push(Span::styled(
                 value.to_string(),
-                Style::default().fg(theme.text),
+                theme.style_text(),
             ));
         }
         lines.push(Line::from(spans));
@@ -495,12 +495,12 @@ impl MainView {
                     .fg(theme.primary)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.text_dim)
+                theme.style_text_dim()
             };
             let value_style = if is_focused {
-                Style::default().fg(theme.text).bg(theme.selected_bg)
+                theme.style_text().bg(theme.selected_bg)
             } else {
-                Style::default().fg(theme.text)
+                theme.style_text()
             };
 
             let mut spans = vec![Span::styled("  ", Style::default())];
@@ -514,12 +514,12 @@ impl MainView {
                 if !before.is_empty() {
                     spans.push(Span::styled(before, value_style));
                 }
-                spans.push(Span::styled("█", Style::default().fg(theme.primary)));
+                spans.push(Span::styled("█", theme.style_text_primary()));
                 if !after.is_empty() {
                     spans.push(Span::styled(after, value_style));
                 }
             } else if is_focused && value.is_empty() {
-                spans.push(Span::styled("█", Style::default().fg(theme.primary)));
+                spans.push(Span::styled("█", theme.style_text_primary()));
             } else {
                 spans.push(Span::styled(
                     if value.is_empty() {

@@ -3,7 +3,6 @@ use crate::tui::state::{AppState, AppStateData};
 use crate::tui::theme::Theme;
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -27,11 +26,9 @@ impl MainView {
             let is_project_selected = proj_idx == state.selected_project_idx;
 
             let style = if is_project_selected {
-                Style::default()
-                    .fg(theme.primary)
-                    .add_modifier(Modifier::BOLD)
+                theme.style_text_primary_bold()
             } else {
-                Style::default().fg(theme.text)
+                theme.style_text()
             };
 
             lines.push(Line::from(Span::styled(project_line, style)));
@@ -56,9 +53,9 @@ impl MainView {
         }
 
         let border_style = if self.focus == PanelFocus::AppList {
-            Style::default().fg(theme.primary)
+            theme.style_border_focused()
         } else {
-            Style::default().fg(theme.border)
+            theme.style_border_default()
         };
 
         let visible_height = area.height.saturating_sub(2) as usize;
@@ -93,24 +90,17 @@ impl MainView {
         } else {
             "○"
         };
-        let status_color = if app.status.is_running() {
-            theme.running
-        } else {
-            theme.stopped
-        };
 
         let is_selected = proj_idx == selected_proj_idx && app_idx == selected_app_idx;
 
         let text_style = if is_selected {
             if self.focus == PanelFocus::AppList {
-                Style::default().bg(theme.selected_bg).fg(theme.text)
+                theme.style_bg_selected_text()
             } else {
-                Style::default()
-                    .fg(theme.primary)
-                    .add_modifier(Modifier::BOLD)
+                theme.style_text_primary_bold()
             }
         } else {
-            Style::default().fg(theme.text)
+            theme.style_text()
         };
 
         // Build stage indicator
@@ -134,19 +124,24 @@ impl MainView {
         // Style for stage indicator - use a distinct color
         let stage_style = if is_selected {
             if self.focus == PanelFocus::AppList {
-                Style::default().bg(theme.selected_bg).fg(theme.secondary)
+                theme.style_bg_selected_secondary()
             } else {
-                Style::default()
-                    .fg(theme.secondary)
-                    .add_modifier(Modifier::BOLD)
+                theme.style_text_secondary_bold()
             }
         } else {
-            Style::default().fg(theme.secondary)
+            theme.style_text_secondary()
         };
 
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(status_icon, Style::default().fg(status_color)),
+            Span::styled(
+                status_icon,
+                if app.status.is_running() {
+                    theme.style_text_running()
+                } else {
+                    theme.style_text_stopped()
+                },
+            ),
             Span::styled(format!(" {}", app.name), text_style),
             Span::styled(stage_indicator, stage_style),
         ])

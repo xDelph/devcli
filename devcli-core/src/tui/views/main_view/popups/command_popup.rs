@@ -34,13 +34,13 @@ impl MainView {
                 .fg(theme.primary)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.text_dim)
+            theme.style_text_dim()
         };
 
         let env_value_style = if is_env_focused && is_add_mode {
-            Style::default().fg(theme.text).bg(theme.selected_bg)
+            theme.style_text().bg(theme.selected_bg)
         } else {
-            Style::default().fg(theme.text)
+            theme.style_text()
         };
 
         let env_text = if is_add_mode {
@@ -83,8 +83,8 @@ impl MainView {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Edit Command")
-                .border_style(Style::default().fg(theme.primary))
-                .style(Style::default().bg(theme.bg)),
+                .border_style(theme.style_text_primary())
+                .style(theme.style_bg_default()),
         );
 
         frame.render_widget(config_panel, area);

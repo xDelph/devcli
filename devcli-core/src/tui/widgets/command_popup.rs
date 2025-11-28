@@ -264,15 +264,13 @@ impl CommandPopup {
     /// Renders a dimmed overlay over the entire screen
     /// This creates a subtle dimming effect by using a semi-transparent appearance
     fn render_overlay(&self, frame: &mut Frame, area: Rect, _theme: &Theme) {
-        use ratatui::style::Color;
+        
 
         // Create a subtle dimmed background using a pattern
         // Since terminals don't support true transparency, we use:
         // 1. A dark background color
         // 2. Dim modifier to make it less intense
-        let overlay_style = Style::default()
-            .bg(Color::Rgb(30, 30, 35)) // Very dark blue-gray
-            .add_modifier(Modifier::DIM);
+        let overlay_style = _theme.style_bg_overlay_dim();
 
         // Create a block that covers the entire area
         let overlay_block = Block::default().style(overlay_style);
@@ -344,58 +342,48 @@ impl CommandPopup {
             Line::from(""),
             Line::from(Span::styled(
                 "Execute Command?",
-                Style::default()
-                    .fg(theme.primary)
-                    .add_modifier(Modifier::BOLD),
+                theme.style_text_primary_bold(),
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Command:  ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+                Span::styled("Command:  ", theme.style_text_dim()),
+                Span::styled(&self.command_name, theme.style_text()),
             ]),
             Line::from(vec![
-                Span::styled("Script:   ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.command_text, Style::default().fg(theme.text)),
+                Span::styled("Script:   ", theme.style_text_dim()),
+                Span::styled(&self.command_text, theme.style_text()),
             ]),
             Line::from(vec![
-                Span::styled("App:      ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+                Span::styled("App:      ", theme.style_text_dim()),
+                Span::styled(&self.app_name, theme.style_text()),
             ]),
         ];
 
         // Environment line - show selection UI if enabled
         if self.allow_env_selection {
-            let mut env_spans = vec![Span::styled(
-                "Env:      ",
-                Style::default().fg(theme.text_dim),
-            )];
+            let mut env_spans = vec![Span::styled("Env:      ", theme.style_text_dim())];
 
             // Show all environments with the selected one highlighted
             for (i, env) in self.available_envs.iter().enumerate() {
                 if i > 0 {
-                    env_spans.push(Span::styled(" | ", Style::default().fg(theme.text_dim)));
+                    env_spans.push(Span::styled(" | ", theme.style_text_dim()));
                 }
 
                 if i == self.selected_env_index {
                     env_spans.push(Span::styled(
                         format!("[{}]", env),
-                        Style::default()
-                            .fg(theme.primary)
-                            .add_modifier(Modifier::BOLD),
+                        theme.style_text_primary_bold(),
                     ));
                 } else {
-                    env_spans.push(Span::styled(
-                        env.as_str(),
-                        Style::default().fg(theme.text_dim),
-                    ));
+                    env_spans.push(Span::styled(env.as_str(), theme.style_text_dim()));
                 }
             }
 
             lines.push(Line::from(env_spans));
         } else {
             lines.push(Line::from(vec![
-                Span::styled("Env:      ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.environment, Style::default().fg(theme.text)),
+                Span::styled("Env:      ", theme.style_text_dim()),
+                Span::styled(&self.environment, theme.style_text()),
             ]));
         }
 
@@ -405,54 +393,41 @@ impl CommandPopup {
         // Controls - show arrow keys if env selection is enabled
         if self.allow_env_selection {
             lines.push(Line::from(vec![
-                Span::styled(
-                    "[←→] ",
-                    Style::default()
-                        .fg(theme.primary)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("Select Env  ", Style::default().fg(theme.text)),
+                Span::styled("[←→] ", theme.style_text_primary_bold()),
+                Span::styled("Select Env  ", theme.style_text()),
                 Span::styled(
                     "[Enter] ",
-                    Style::default()
-                        .fg(theme.success)
-                        .add_modifier(Modifier::BOLD),
+                    theme.style_text_success().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Execute  ", Style::default().fg(theme.text)),
+                Span::styled("Execute  ", theme.style_text()),
                 Span::styled(
                     "[Esc] ",
-                    Style::default()
-                        .fg(theme.error)
-                        .add_modifier(Modifier::BOLD),
+                    theme.style_text_error().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Cancel", Style::default().fg(theme.text)),
+                Span::styled("Cancel", theme.style_text()),
             ]));
         } else {
             lines.push(Line::from(vec![
                 Span::styled(
                     "[Enter] ",
-                    Style::default()
-                        .fg(theme.success)
-                        .add_modifier(Modifier::BOLD),
+                    theme.style_text_success().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Execute  ", Style::default().fg(theme.text)),
+                Span::styled("Execute  ", theme.style_text()),
                 Span::styled(
                     "[Esc] ",
-                    Style::default()
-                        .fg(theme.error)
-                        .add_modifier(Modifier::BOLD),
+                    theme.style_text_error().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Cancel", Style::default().fg(theme.text)),
+                Span::styled("Cancel", theme.style_text()),
             ]));
         }
 
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .style(Style::default().bg(theme.bg))
+            .style(theme.style_bg_default())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.primary))
+                    .border_style(theme.style_border_focused())
                     .title("Confirm"),
             );
 
@@ -483,35 +458,31 @@ impl CommandPopup {
             Line::from(""),
             Line::from(Span::styled(
                 &status_message,
-                Style::default()
-                    .fg(theme.warning)
-                    .add_modifier(Modifier::BOLD),
+                theme.style_text_warning().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("App: ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+                Span::styled("App: ", theme.style_text_dim()),
+                Span::styled(&self.app_name, theme.style_text()),
             ]),
             Line::from(""),
             Line::from(""),
             Line::from(vec![
                 Span::styled(
                     "[Esc] ",
-                    Style::default()
-                        .fg(theme.text_dim)
-                        .add_modifier(Modifier::BOLD),
+                    theme.style_text_dim().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Close", Style::default().fg(theme.text_dim)),
+                Span::styled("Close", theme.style_text_dim()),
             ]),
         ];
 
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .style(Style::default().bg(theme.bg))
+            .style(theme.style_bg_default())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.warning))
+                    .border_style(theme.style_text_warning())
                     .title(format!(" {} ", self.command_name.to_uppercase())),
             );
 
@@ -542,7 +513,7 @@ impl CommandPopup {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(theme.bg))
+            .style(theme.style_bg_default())
             .title(format!(" {} - {} ", self.app_name, title_suffix));
 
         let inner_area = block.inner(area);
@@ -560,17 +531,17 @@ impl CommandPopup {
 
         // Render header (always visible)
         let mut header_spans = vec![
-            Span::styled("App: ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.app_name, Style::default().fg(theme.text)),
-            Span::styled("  Command: ", Style::default().fg(theme.text_dim)),
-            Span::styled(&self.command_name, Style::default().fg(theme.text)),
+            Span::styled("App: ", theme.style_text_dim()),
+            Span::styled(&self.app_name, theme.style_text()),
+            Span::styled("  Command: ", theme.style_text_dim()),
+            Span::styled(&self.command_name, theme.style_text()),
         ];
 
         // Add status if available
         if let Some(status) = &self.app_status {
             header_spans.push(Span::styled(
                 "  Status: ",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             ));
 
             // Color the status based on whether it's running or stopped
@@ -586,7 +557,7 @@ impl CommandPopup {
         if let Some(msg) = status_msg {
             header_spans.push(Span::styled(
                 "  Result: ",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             ));
             header_spans.push(Span::styled(
                 msg,
@@ -630,7 +601,7 @@ impl CommandPopup {
         } else {
             content_lines.push(Line::from(Span::styled(
                 "Waiting for output...",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
         }
 
@@ -671,22 +642,22 @@ impl CommandPopup {
                         .fg(theme.text_dim)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Scroll  ", Style::default().fg(theme.text_dim)),
+                Span::styled("Scroll  ", theme.style_text_dim()),
                 Span::styled(
                     "[Home/End] ",
                     Style::default()
                         .fg(theme.text_dim)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Top/Bottom  ", Style::default().fg(theme.text_dim)),
+                Span::styled("Top/Bottom  ", theme.style_text_dim()),
                 Span::styled(
                     "[Esc/Enter] ",
                     Style::default()
                         .fg(theme.text_dim)
                         .add_modifier(Modifier::BOLD),
                 ), // Allow Enter to close too
-                Span::styled("Close", Style::default().fg(theme.text_dim)),
-                Span::styled(scroll_indicator, Style::default().fg(theme.text_dim)),
+                Span::styled("Close", theme.style_text_dim()),
+                Span::styled(scroll_indicator, theme.style_text_dim()),
             ]),
         ];
         let footer = Paragraph::new(footer_lines).alignment(Alignment::Left);
@@ -790,15 +761,15 @@ impl CommandPopup {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Command: ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+                Span::styled("Command: ", theme.style_text_dim()),
+                Span::styled(&self.command_name, theme.style_text()),
             ]),
             Line::from(vec![
-                Span::styled("App:     ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+                Span::styled("App:     ", theme.style_text_dim()),
+                Span::styled(&self.app_name, theme.style_text()),
             ]),
             Line::from(""),
-            Line::from(Span::styled(message, Style::default().fg(theme.text))),
+            Line::from(Span::styled(message, theme.style_text())),
             Line::from(""),
             Line::from(""),
             Line::from(vec![
@@ -808,17 +779,17 @@ impl CommandPopup {
                         .fg(theme.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Close", Style::default().fg(theme.text)),
+                Span::styled("Close", theme.style_text()),
             ]),
         ];
 
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .style(Style::default().bg(ratatui::style::Color::Black))
+            .style(theme.style_bg_default())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.success))
+                    .border_style(theme.style_border_success())
                     .title("Success"),
             );
 
@@ -838,12 +809,12 @@ impl CommandPopup {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Command: ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.command_name, Style::default().fg(theme.text)),
+                Span::styled("Command: ", theme.style_text_dim()),
+                Span::styled(&self.command_name, theme.style_text()),
             ]),
             Line::from(vec![
-                Span::styled("App:     ", Style::default().fg(theme.text_dim)),
-                Span::styled(&self.app_name, Style::default().fg(theme.text)),
+                Span::styled("App:     ", theme.style_text_dim()),
+                Span::styled(&self.app_name, theme.style_text()),
             ]),
             Line::from(""),
         ];
@@ -852,7 +823,7 @@ impl CommandPopup {
         for msg_line in message.lines() {
             lines.push(Line::from(Span::styled(
                 msg_line,
-                Style::default().fg(theme.error),
+                theme.style_text_error(),
             )));
         }
 
@@ -866,17 +837,17 @@ impl CommandPopup {
                     .fg(theme.error)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("Close", Style::default().fg(theme.text)),
+            Span::styled("Close", theme.style_text()),
         ]));
 
         let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
-            .style(Style::default().bg(ratatui::style::Color::Black))
+            .style(theme.style_bg_default())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.error))
+                    .border_style(theme.style_border_error())
                     .title("Error"),
             );
 

@@ -23,12 +23,12 @@ impl MainView {
         } else {
             vec![Line::from(Span::styled(
                 "No app selected",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             ))]
         };
 
         let border_style = if self.focus == PanelFocus::DetailPanel {
-            Style::default().fg(theme.primary)
+            theme.style_text_primary()
         } else {
             Style::default().fg(theme.border)
         };
@@ -68,7 +68,7 @@ impl MainView {
         if app.commands.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No commands configured",
-                Style::default().fg(theme.text_dim),
+                theme.style_text_dim(),
             )));
             return lines;
         }
@@ -107,18 +107,18 @@ impl MainView {
                                 .fg(theme.text)
                                 .bg(theme.selected_bg)
                                 .add_modifier(Modifier::BOLD),
-                            Style::default().fg(theme.text_dim).bg(theme.selected_bg),
+                            theme.style_text_dim().bg(theme.selected_bg),
                         )
                     } else {
                         (
                             "  ",
-                            Style::default().fg(theme.text),
-                            Style::default().fg(theme.text_dim),
+                            theme.style_text(),
+                            theme.style_text_dim(),
                         )
                     };
 
                     lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(theme.primary)),
+                        Span::styled(prefix, theme.style_text_primary()),
                         Span::styled(
                             format!(" {:<width$}", cmd.name, width = max_name_len),
                             name_style,
