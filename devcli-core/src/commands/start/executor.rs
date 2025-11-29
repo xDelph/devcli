@@ -16,7 +16,7 @@ use crate::process::ProcessTracker;
 use crate::utils::path::expand_path;
 use crate::Result;
 use anyhow::Context;
-use std::collections::HashMap;
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -156,77 +156,19 @@ async fn start_single_app_process(
         writer.log_path().clone()
     };
 
-    // Step 3: Build environment variables - inherit parent environment and set Docker context
-    // Start with the current process's environment to inherit PATH, HOME, Docker config, etc.
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    // Step 3: Prepare command and environment variables
+    let prepared = crate::commands::prepare::prepare_command(
+        &command,
+        &environment,
+        &resolved_app,
+        effective_stage.as_deref(),
+        &working_dir,
+        &preferences,
+        show_output,
+    )?;
 
-    // Step 3a: Inject --platform flag for docker/orbstack commands
-    let preferences = load_preferences()?;
-    let mut final_command = match environment.as_str() {
-        "docker" | "orbstack" => {
-            crate::utils::command::inject_docker_platform(&command, &preferences.docker_platform)
-        }
-        _ => command.clone(),
-    };
-
-    // Override/add specific variables based on environment
-    match environment.as_str() {
-        "docker" => {
-            env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
-
-            // For Docker, use --env-file flag if .env exists
-            // Uses new env_files structure with fallback to legacy logic
-            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
-                &working_dir,
-                resolved_app.app.env_files.as_ref(),
-                effective_stage.as_deref(),
-                "docker",
-                resolved_app.app.dockerfile_path.as_deref(),
-            ) {
-                final_command =
-                    crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
-
-                // Log which env file is being used
-                if show_output {
-                    println!("  Using env file: {}", env_file_path);
-                }
-            }
-
-            // Inject dockerfile path for build commands
-            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
-                final_command =
-                    crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
-            }
-        }
-        "orbstack" => {
-            env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
-
-            // For OrbStack, use --env-file flag (same as Docker)
-            // Uses new env_files structure with fallback to legacy logic
-            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
-                &working_dir,
-                resolved_app.app.env_files.as_ref(),
-                effective_stage.as_deref(),
-                "orbstack",
-                resolved_app.app.dockerfile_path.as_deref(),
-            ) {
-                final_command =
-                    crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
-
-                // Log which env file is being used
-                if show_output {
-                    println!("  Using env file: {}", env_file_path);
-                }
-            }
-
-            // Inject dockerfile path for build commands
-            if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
-                final_command =
-                    crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
-            }
-        }
-        _ => {}
-    }
+    let final_command = prepared.final_command;
+    let env_vars = prepared.env_vars;
 
     // Step 4: Display info to the user about what we're doing (unless silent)
     if show_output {

@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::detection::environments::orbstack::{find_env_file, load_env_vars_for_runtime};
+    use crate::detection::environments::env_files::{find_env_file, load_env_vars_for_runtime};
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
@@ -119,7 +119,8 @@ mod tests {
         let result = find_env_file(app_path, Some("docker/Dockerfile"), Some("qa")).unwrap();
         assert_eq!(result, Some("docker/.env.qa".to_string()));
 
-        let env_vars = load_env_vars_for_runtime(app_path, Some("docker/Dockerfile"), Some("qa")).unwrap();
+        let env_vars =
+            load_env_vars_for_runtime(app_path, Some("docker/Dockerfile"), Some("qa")).unwrap();
         assert_eq!(env_vars.get("ENV"), Some(&"docker_qa".to_string()));
     }
 
@@ -232,10 +233,13 @@ mod tests {
         file.flush().unwrap();
 
         // Should find build/docker/.env.prod
-        let result = find_env_file(app_path, Some("build/docker/Dockerfile"), Some("prod")).unwrap();
+        let result =
+            find_env_file(app_path, Some("build/docker/Dockerfile"), Some("prod")).unwrap();
         assert_eq!(result, Some("build/docker/.env.prod".to_string()));
 
-        let env_vars = load_env_vars_for_runtime(app_path, Some("build/docker/Dockerfile"), Some("prod")).unwrap();
+        let env_vars =
+            load_env_vars_for_runtime(app_path, Some("build/docker/Dockerfile"), Some("prod"))
+                .unwrap();
         assert_eq!(env_vars.get("ENV"), Some(&"docker_prod".to_string()));
     }
 
@@ -266,7 +270,8 @@ mod tests {
         let result = find_env_file(app_path, Some("docker/Dockerfile"), None).unwrap();
         assert_eq!(result, Some("docker/.env".to_string()));
 
-        let env_vars = load_env_vars_for_runtime(app_path, Some("docker/Dockerfile"), None).unwrap();
+        let env_vars =
+            load_env_vars_for_runtime(app_path, Some("docker/Dockerfile"), None).unwrap();
         assert_eq!(env_vars.get("ENV"), Some(&"docker".to_string()));
     }
 }

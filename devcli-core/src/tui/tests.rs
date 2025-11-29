@@ -10,17 +10,17 @@ fn test_theme_default_colors() {
     let theme = Theme::default();
 
     // Verify key colors are set correctly
-    assert_eq!(theme.running, ratatui::style::Color::LightGreen);
-    assert_eq!(theme.stopped, ratatui::style::Color::DarkGray);
-    assert_eq!(theme.error, ratatui::style::Color::Red);
-    assert_eq!(theme.success, ratatui::style::Color::Green);
-    assert_eq!(theme.primary, ratatui::style::Color::Cyan);
+    assert_eq!(theme.running, ratatui::style::Color::Rgb(144, 238, 144));
+    assert_eq!(theme.stopped, ratatui::style::Color::Rgb(169, 169, 169));
+    assert_eq!(theme.error, ratatui::style::Color::Rgb(255, 0, 0));
+    assert_eq!(theme.success, ratatui::style::Color::Rgb(0, 255, 0));
+    assert_eq!(theme.primary, ratatui::style::Color::Rgb(0, 255, 255));
 }
 #[test]
 fn test_theme_from_terminal() {
     let theme = Theme::from_terminal();
     // Should return a valid theme (currently same as default)
-    assert_eq!(theme.running, ratatui::style::Color::LightGreen);
+    assert_eq!(theme.running, ratatui::style::Color::Rgb(144, 238, 144));
 }
 #[test]
 fn test_app_status_is_running() {

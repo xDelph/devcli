@@ -6,6 +6,7 @@ pub mod env;
 pub mod internal_spawner;
 pub mod monitor;
 pub mod preferences;
+pub mod prepare;
 pub mod restart;
 pub mod run;
 pub mod start;

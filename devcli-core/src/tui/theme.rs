@@ -272,15 +272,15 @@ mod tests {
     fn test_default_theme_creation() {
         let theme = Theme::default();
         // Verify key colors are set
-        assert_eq!(theme.running, Color::LightGreen);
-        assert_eq!(theme.stopped, Color::DarkGray);
-        assert_eq!(theme.error, Color::Red);
+        assert_eq!(theme.running, Color::Rgb(144, 238, 144));
+        assert_eq!(theme.stopped, Color::Rgb(169, 169, 169));
+        assert_eq!(theme.error, Color::Rgb(255, 0, 0));
     }
 
     #[test]
     fn test_from_terminal_returns_valid_theme() {
         let theme = Theme::from_terminal();
         // Should return a valid theme (currently same as default)
-        assert_eq!(theme.primary, Color::Cyan);
+        assert_eq!(theme.primary, Color::Rgb(0, 255, 255));
     }
 }
