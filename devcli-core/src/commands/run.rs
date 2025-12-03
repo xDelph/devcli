@@ -4,10 +4,7 @@
 // Example: devcli run api-private build:production
 // This runs the "build:production" command instead of the default
 
-use crate::config::{
-    dependencies::{check_dependencies_running, resolve_dependency_chain},
-    load_config, load_preferences, resolve_app,
-};
+use crate::config::{load_config, load_preferences, resolve_app};
 use crate::logging::FileLogger;
 use crate::process::{spawn_process, ProcessInfo, ProcessOptions, ProcessTracker};
 use crate::utils::path::expand_path;
@@ -57,7 +54,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                 "App '{}' does not have '{}' environment configured. Available: {}",
                 args.app_name,
                 environment,
-                get_available_environments(&resolved_app.app)
+                crate::utils::app::get_available_environments(&resolved_app.app)
             )
         }
     })?;
@@ -86,6 +83,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // DIFFERENCE FROM START: Process name includes the variant
     // This allows running multiple commands for the same app simultaneously
     // Example: "api-private:build" and "api-private:start" can both run
+    // The format is "appName:variantName"
     let process_name = format!("{}:{}", args.app_name, args.command_variant);
 
     // Check if THIS SPECIFIC command is already running for this app
@@ -110,23 +108,13 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         }
     }
 
-    // Dependency checking (same as start command)
+    // Dependency checking
+    // We reuse the shared `handle_dependencies` function from the start command
+    // This ensures consistent behavior: dependencies are checked and optionally auto-started
     if !args.skip_deps {
-        let dependencies = resolve_dependency_chain(&config, &resolved_app)?;
-
-        if !dependencies.is_empty() {
-            println!("Checking dependencies...");
-            let missing = check_dependencies_running(&tracker, &dependencies)?;
-
-            if !missing.is_empty() {
-                anyhow::bail!(
-                    "Missing dependencies: {}. Start them first or use --skip-deps",
-                    missing.join(", ")
-                );
-            }
-
-            println!("✓ All dependencies are running");
-        }
+        use crate::commands::start::handle_dependencies;
+        // Pass a slice of references to ResolvedApp, as expected by the generic handler
+        handle_dependencies(&[&resolved_app], &environment, !preferences.detached_mode).await?;
     }
 
     // Expand path and verify it exists
@@ -274,16 +262,4 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-// Helper function to show which environments are configured for an app
-// Used in error messages to help users understand what's available
-fn get_available_environments(app: &crate::config::models::App) -> String {
-    let envs = app.commands.available_envs();
-
-    if envs.is_empty() {
-        "none".to_string()
-    } else {
-        envs.join(", ")
-    }
 }

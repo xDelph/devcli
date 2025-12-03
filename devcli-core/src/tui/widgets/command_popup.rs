@@ -264,8 +264,6 @@ impl CommandPopup {
     /// Renders a dimmed overlay over the entire screen
     /// This creates a subtle dimming effect by using a semi-transparent appearance
     fn render_overlay(&self, frame: &mut Frame, area: Rect, _theme: &Theme) {
-        
-
         // Create a subtle dimmed background using a pattern
         // Since terminals don't support true transparency, we use:
         // 1. A dark background color
@@ -539,10 +537,7 @@ impl CommandPopup {
 
         // Add status if available
         if let Some(status) = &self.app_status {
-            header_spans.push(Span::styled(
-                "  Status: ",
-                theme.style_text_dim(),
-            ));
+            header_spans.push(Span::styled("  Status: ", theme.style_text_dim()));
 
             // Color the status based on whether it's running or stopped
             let status_color = if status.to_lowercase().contains("running") {
@@ -555,10 +550,7 @@ impl CommandPopup {
 
         // Add specific status message if provided (e.g. Error message)
         if let Some(msg) = status_msg {
-            header_spans.push(Span::styled(
-                "  Result: ",
-                theme.style_text_dim(),
-            ));
+            header_spans.push(Span::styled("  Result: ", theme.style_text_dim()));
             header_spans.push(Span::styled(
                 msg,
                 Style::default()
@@ -595,7 +587,10 @@ impl CommandPopup {
                 .collect();
 
             for output_line in visible_lines {
-                let spans = Self::parse_ansi_codes(output_line);
+                // Use the shared ANSI parser to convert escape codes to styled Spans
+                // This handles colors (foreground/background) and styles (bold, dim, etc.)
+                // The parser is located in src/tui/utils/ansi.rs for reusability
+                let spans = crate::tui::utils::ansi::parse_ansi_codes(output_line);
                 content_lines.push(Line::from(spans));
             }
         } else {
@@ -662,90 +657,6 @@ impl CommandPopup {
         ];
         let footer = Paragraph::new(footer_lines).alignment(Alignment::Left);
         frame.render_widget(footer, chunks[2]);
-    }
-
-    /// Parses ANSI escape codes and converts them to styled spans
-    fn parse_ansi_codes(text: &str) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
-        let mut current_text = String::new();
-        let mut current_style = Style::default();
-        let mut chars = text.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '\x1b' {
-                if chars.peek() == Some(&'[') {
-                    chars.next(); // consume '['
-
-                    if !current_text.is_empty() {
-                        spans.push(Span::styled(current_text.clone(), current_style));
-                        current_text.clear();
-                    }
-
-                    let mut code_str = String::new();
-                    while let Some(&next_ch) = chars.peek() {
-                        chars.next();
-                        if next_ch.is_ascii_alphabetic() {
-                            if next_ch == 'm' {
-                                current_style = Self::apply_sgr_code(&code_str, current_style);
-                            }
-                            break;
-                        } else {
-                            code_str.push(next_ch);
-                        }
-                    }
-                }
-            } else {
-                current_text.push(ch);
-            }
-        }
-
-        if !current_text.is_empty() {
-            spans.push(Span::styled(current_text, current_style));
-        }
-
-        if spans.is_empty() {
-            spans.push(Span::raw(text.to_string()));
-        }
-
-        spans
-    }
-
-    /// Applies SGR codes to a style
-    fn apply_sgr_code(code_str: &str, mut style: Style) -> Style {
-        use ratatui::style::Color;
-
-        let codes: Vec<u8> = code_str.split(';').filter_map(|s| s.parse().ok()).collect();
-
-        for code in codes {
-            match code {
-                0 => style = Style::default(),
-                1 => style = style.add_modifier(Modifier::BOLD),
-                2 => style = style.add_modifier(Modifier::DIM),
-                4 => style = style.add_modifier(Modifier::UNDERLINED),
-                // Foreground colors
-                30 => style = style.fg(Color::Black),
-                31 => style = style.fg(Color::Red),
-                32 => style = style.fg(Color::Green),
-                33 => style = style.fg(Color::Yellow),
-                34 => style = style.fg(Color::Blue),
-                35 => style = style.fg(Color::Magenta),
-                36 => style = style.fg(Color::Cyan),
-                37 => style = style.fg(Color::White),
-                39 => style = style.fg(Color::Reset),
-                // Bright foreground colors
-                90 => style = style.fg(Color::DarkGray),
-                91 => style = style.fg(Color::LightRed),
-                92 => style = style.fg(Color::LightGreen),
-                93 => style = style.fg(Color::LightYellow),
-                94 => style = style.fg(Color::LightBlue),
-                95 => style = style.fg(Color::LightMagenta),
-                96 => style = style.fg(Color::LightCyan),
-                97 => style = style.fg(Color::Gray),
-                _ => {}
-            }
-        }
-
-        style
     }
 
     /// Renders the success state
@@ -821,10 +732,7 @@ impl CommandPopup {
 
         // Show error message (may be multi-line)
         for msg_line in message.lines() {
-            lines.push(Line::from(Span::styled(
-                msg_line,
-                theme.style_text_error(),
-            )));
+            lines.push(Line::from(Span::styled(msg_line, theme.style_text_error())));
         }
 
         lines.push(Line::from(""));

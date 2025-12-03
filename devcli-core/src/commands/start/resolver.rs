@@ -109,6 +109,7 @@ pub fn validate_and_get_command(
     // Validate that the chosen environment exists for this app
     let commands = resolved_app.app.commands.get(environment).ok_or_else(|| {
         use crate::config::models::Environment;
+        // Check if the environment itself is valid (e.g., "local", "docker")
         if Environment::from_string(environment).is_none() {
             anyhow::anyhow!(
                 "Invalid environment '{}'. Must be one of: {}.",
@@ -116,11 +117,13 @@ pub fn validate_and_get_command(
                 Environment::all_names()
             )
         } else {
+            // The environment is valid, but this specific app doesn't support it
+            // Use the shared helper to list what IS supported for this app
             anyhow::anyhow!(
                 "App '{}' does not have '{}' environment configured. Available: {}",
                 app_name,
                 environment,
-                get_available_environments(&resolved_app.app)
+                crate::utils::app::get_available_environments(&resolved_app.app)
             )
         }
     })?;
@@ -153,18 +156,4 @@ pub fn validate_and_get_command(
         .clone();
 
     Ok((command, default_command))
-}
-
-/// Helper function to show which environments are configured for an app
-/// Used in error messages to help users understand what's available
-pub fn get_available_environments(app: &crate::config::models::App) -> String {
-    // Use the available_envs method from Commands which dynamically checks all environments
-    let envs = app.commands.available_envs();
-
-    // Return as comma-separated string, or "none" if empty
-    if envs.is_empty() {
-        "none".to_string()
-    } else {
-        envs.join(", ")
-    }
 }

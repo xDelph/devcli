@@ -46,54 +46,43 @@ pub async fn spawn_process(
     log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
     output_tx: Option<OutputSender>,
 ) -> Result<SpawnedProcess> {
-    // Split the command string into parts (e.g., "npm start" -> ["npm", "start"])
-    // split_whitespace() splits on spaces and tabs
-    // collect() gathers the parts into a Vec (vector/array)
     let command_parts: Vec<&str> = options.command.split_whitespace().collect();
 
-    // Validate that we have at least one command
-    // bail! is a macro that returns an error immediately
     if command_parts.is_empty() {
         anyhow::bail!("Command cannot be empty");
     }
 
-    // The first part is the program to run (e.g., "node")
     let program = command_parts[0];
-    // The rest are arguments (e.g., ["server.js"])
-    // &[1..] creates a slice (reference to a portion of the array)
     let args = &command_parts[1..];
 
-    // Handle DETACHED mode: process runs in background independently
     if options.detached {
-        // Create a new Command builder for the process
-        // 'let mut' means this variable can be modified
+        // Create the command
         let mut cmd = tokio::process::Command::new(program);
-        cmd.args(args); // Add command arguments
+        cmd.args(args);
 
-        // Configure the process:
-        cmd.current_dir(&options.working_dir) // Set working directory
-            .stdin(Stdio::null()) // Don't accept input
-            .stdout(Stdio::piped()) // Capture standard output
-            .stderr(Stdio::piped()); // Capture standard error
+        // Configure process:
+        // - Set working directory
+        // - Detach stdin (null)
+        // - Pipe stdout/stderr so we can capture and log them
+        cmd.current_dir(&options.working_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        // Add environment variables (these will override inherited ones)
+        // Set environment variables
         for (key, value) in &options.env_vars {
             cmd.env(key, value);
         }
 
-        // Platform-specific code for Unix systems (macOS, Linux)
-        // #[cfg(unix)] means "only compile this on Unix"
+        // Unix-specific: Use setsid to detach from controlling terminal
+        // This prevents the child process from being killed when the parent exits
         #[cfg(unix)]
         {
             #[allow(unused_imports)]
             use std::os::unix::process::CommandExt;
-            // 'unsafe' is required for calling C functions (like setsid)
-            // Rust can't guarantee safety of C code, so we must mark it
             unsafe {
-                // pre_exec runs code in the child process before exec
-                // setsid() creates a new session, detaching from terminal
                 cmd.pre_exec(|| {
-                    // If setsid() returns -1, it failed
+                    // setsid() creates a new session and sets the process group ID
                     if libc::setsid() == -1 {
                         return Err(std::io::Error::last_os_error());
                     }
@@ -102,122 +91,45 @@ pub async fn spawn_process(
             }
         }
 
-        // Actually spawn the process
-        // The ? operator means "if this fails, return the error immediately"
-        // .context() adds a helpful message to the error
+        // Spawn the process
         let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
-        // Get the process ID (PID)
-        // ok_or_else converts Option to Result:
-        //   - Some(pid) becomes Ok(pid)
-        //   - None becomes Err(...)
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get process ID"))?;
 
-        // Take ownership of stdout and stderr from the child process
-        // .take() returns Option and leaves None in its place
-        // This transfers ownership to us so we can read from these streams
+        // Capture stdout/stderr handles
+        // We must take() them to transfer ownership to the background tasks
         let stdout = child.stdout.take().context("Failed to capture stdout")?;
         let stderr = child.stderr.take().context("Failed to capture stderr")?;
 
-        // Clone variables we need to move into the async task
-        // Rust's ownership rules require this - we're moving data into a new task
-        // Spawn background task to handle stdout
-        // This task continuously reads output and:
-        // 1. Optionally displays it in terminal with colored app name
-        // 2. Always writes it to the log file
-        // 3. Optionally sends to TUI popup via channel
         let app_name = options.app_name.clone();
         let show_output = options.show_output;
-        let log_writer_clone = log_writer.clone();
-        let output_tx_clone = output_tx.clone();
-        // Spawn a background task to read and display stdout
-        // tokio::spawn creates a new concurrent task
-        // 'async move' captures variables and runs asynchronously
-        let stdout_task = tokio::spawn(async move {
-            // BufReader buffers input for efficient line-by-line reading
-            // .lines() returns an async iterator over lines
-            let mut stdout_reader = BufReader::new(stdout).lines();
-            let mut stdout_alive = true;
 
-            // Loop while there are lines to read
-            // 'while let' continues while the pattern matches
-            while let Ok(Some(line)) = stdout_reader.next_line().await {
-                // Show output in terminal if requested (with cyan colored app name)
-                if show_output && stdout_alive {
-                    use std::io::Write;
-                    // Use writeln! instead of println! to handle broken pipes gracefully
-                    // If writing fails (e.g. TUI closed), we stop trying to write to stdout
-                    // but CONTINUE writing to the log file
-                    if writeln!(
-                        std::io::stdout(),
-                        "[{}][stdout] {}",
-                        app_name.cyan().bold(),
-                        line
-                    )
-                    .is_err()
-                    {
-                        stdout_alive = false;
-                    }
-                }
-                // Send to TUI popup if channel is provided
-                if let Some(ref tx) = output_tx_clone {
-                    let _ = tx.send(line.clone());
-                }
-                // Always write to log file for persistence
-                // .lock().await gets exclusive access to the log writer
-                // _ = ignores the result (we don't care if logging fails)
-                let mut writer = log_writer_clone.lock().await;
-                let _ = writer.write_log(&line).await;
-            }
-        });
+        // Spawn background tasks to handle output streams
+        // These tasks will run until the stream closes (process exits)
+        let stdout_task = handle_output_stream(
+            stdout,
+            "stdout",
+            app_name.clone(),
+            show_output,
+            log_writer.clone(),
+            output_tx.clone(),
+        );
 
-        // Clone again for the stderr task
-        // Spawn background task to handle stderr (same pattern as stdout)
-        let app_name_clone = options.app_name.clone();
-        let show_output = options.show_output;
-        let log_writer_clone = log_writer.clone();
-        let output_tx_clone = output_tx.clone();
-        // Spawn another background task to read and display stderr
-        // Same pattern as stdout above, but for error output
-        let stderr_task = tokio::spawn(async move {
-            let mut stderr_reader = BufReader::new(stderr).lines();
-            let mut stderr_alive = true;
+        let stderr_task = handle_output_stream(
+            stderr,
+            "stderr",
+            app_name.clone(),
+            show_output,
+            log_writer.clone(),
+            output_tx.clone(),
+        );
 
-            while let Ok(Some(line)) = stderr_reader.next_line().await {
-                if show_output && stderr_alive {
-                    use std::io::Write;
-                    // eprintln! prints to stderr instead of stdout
-                    // Handle broken pipe gracefully
-                    if writeln!(
-                        std::io::stderr(),
-                        "[{}][stderr] {}",
-                        app_name_clone.cyan().bold(),
-                        line
-                    )
-                    .is_err()
-                    {
-                        stderr_alive = false;
-                    }
-                }
-                // Send to TUI popup if channel is provided
-                if let Some(ref tx) = output_tx_clone {
-                    let _ = tx.send(format!("[stderr] {}", line));
-                }
-                let mut writer = log_writer_clone.lock().await;
-                let _ = writer.write_log(&line).await;
-            }
-        });
-
-        // Spawn a task to wait for the child process to exit
-        // When it exits, the stdout/stderr tasks will naturally complete
-        // because the pipes will close
         let app_name_for_wait = options.app_name.clone();
         tokio::spawn(async move {
             match child.wait().await {
                 Ok(status) => {
-                    // Wait for output tasks to finish processing remaining output
                     let _ = tokio::join!(stdout_task, stderr_task);
 
                     if status.success() {
@@ -247,105 +159,149 @@ pub async fn spawn_process(
             }
         });
 
-        // Return the spawned process info
-        // We use None for child because we're not tracking detached processes
         Ok(SpawnedProcess {
             pid,
             app_name: options.app_name,
             child: None,
         })
     } else {
-        // Handle ATTACHED mode: we monitor the process and stream its output
-        // Use tokio's async Command for non-blocking I/O
+        // Create the command
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(args);
 
-        // Configure the process:
-        cmd.current_dir(&options.working_dir) // Set working directory
-            .stdout(Stdio::piped()) // Capture stdout so we can read it
-            .stderr(Stdio::piped()); // Capture stderr so we can read it
+        // Configure process:
+        // - Set working directory
+        // - Pipe stdout/stderr (even for attached, we want to capture/log them)
+        // - Note: stdin is NOT piped to null, allowing interaction if needed (though we don't explicitly handle it here)
+        cmd.current_dir(&options.working_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        // Add environment variables (these will override inherited ones)
+        // Set environment variables
         for (key, value) in &options.env_vars {
             cmd.env(key, value);
         }
 
-        // Spawn the async process
+        // Spawn the process (attached to current session)
         let mut child = cmd.spawn().context("Failed to spawn process")?;
 
-        // Get the process ID
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get process ID"))?;
 
-        // Take ownership of stdout and stderr from the child process
-        // .take() returns Option and leaves None in its place
-        // This transfers ownership to us so we can read from these streams
+        // Capture stdout/stderr handles
         let stdout = child.stdout.take().context("Failed to capture stdout")?;
         let stderr = child.stderr.take().context("Failed to capture stderr")?;
 
-        // Clone variables we need to move into the async task
-        // Rust's ownership rules require this - we're moving data into a new task
         let app_name = options.app_name.clone();
-        let log_writer_clone = log_writer.clone();
-        let output_tx_clone = output_tx.clone();
 
-        // Spawn a background task to read and display stdout
-        // tokio::spawn creates a new concurrent task
-        // 'async move' captures variables and runs asynchronously
-        tokio::spawn(async move {
-            // BufReader buffers input for efficient line-by-line reading
-            // .lines() returns an async iterator over lines
-            let mut stdout_reader = BufReader::new(stdout).lines();
+        // In attached mode, we always show output to the terminal
+        // We reuse the same helper function to handle logging and TUI updates
+        handle_output_stream(
+            stdout,
+            "stdout",
+            app_name.clone(),
+            true, // Always show output in attached mode
+            log_writer.clone(),
+            output_tx.clone(),
+        );
 
-            // Loop while there are lines to read
-            // 'while let' continues while the pattern matches
-            while let Ok(Some(line)) = stdout_reader.next_line().await {
-                // Format the line with a label so user knows which app it's from
-                println!("[{}][stdout] {}", app_name.cyan().bold(), line);
+        handle_output_stream(
+            stderr,
+            "stderr",
+            app_name.clone(),
+            true, // Always show output in attached mode
+            log_writer.clone(),
+            output_tx.clone(),
+        );
 
-                // Send to TUI popup if channel is provided
-                if let Some(ref tx) = output_tx_clone {
-                    let _ = tx.send(line.clone());
-                }
-
-                // Write to log file
-                // .lock().await gets exclusive access to the log writer
-                // _ = ignores the result (we don't care if logging fails)
-                let mut writer = log_writer_clone.lock().await;
-                let _ = writer.write_log(&line).await;
-            }
-        });
-
-        // Clone again for the stderr task
-        let app_name_clone = options.app_name.clone();
-        let log_writer_clone = log_writer.clone();
-        let output_tx_clone = output_tx.clone();
-
-        // Spawn another background task to read and display stderr
-        // Same pattern as stdout above, but for error output
-        tokio::spawn(async move {
-            let mut stderr_reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = stderr_reader.next_line().await {
-                // eprintln! prints to stderr instead of stdout
-                eprintln!("[{}][stderr] {}", app_name_clone.cyan().bold(), line);
-
-                // Send to TUI popup if channel is provided
-                if let Some(ref tx) = output_tx_clone {
-                    let _ = tx.send(format!("[stderr] {}", line));
-                }
-
-                let mut writer = log_writer_clone.lock().await;
-                let _ = writer.write_log(&line).await;
-            }
-        });
-
-        // Return the spawned process with the child handle
-        // Some(child) means we keep a handle to monitor the process
+        // Return the child handle so the caller can wait on it or kill it
         Ok(SpawnedProcess {
             pid,
             app_name: options.app_name,
             child: Some(child),
         })
     }
+}
+
+/// Handles reading from an output stream (stdout/stderr), logging, and displaying output
+///
+/// This helper function spawns a background task to:
+/// 1. Read lines from the provided stream
+/// 2. Print them to the terminal if `show_output` is true
+/// 3. Send them to the TUI via `output_tx` if provided
+/// 4. Write them to the log file via `log_writer`
+///
+/// # Arguments
+/// * `stream` - The async stream to read from (stdout or stderr)
+/// * `stream_type` - Label for the stream ("stdout" or "stderr")
+/// * `app_name` - Name of the app for logging context
+/// * `show_output` - Whether to print to terminal (stdout/stderr)
+/// * `log_writer` - Shared logger instance
+/// * `output_tx` - Optional channel to send output to TUI
+fn handle_output_stream<R>(
+    stream: R,
+    stream_type: &'static str,
+    app_name: String,
+    show_output: bool,
+    log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
+    output_tx: Option<OutputSender>,
+) -> tokio::task::JoinHandle<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        // Use a buffered reader for efficient line-by-line reading
+        let mut reader = BufReader::new(stream).lines();
+        let mut stream_alive = true;
+
+        while let Ok(Some(line)) = reader.next_line().await {
+            // 1. Show output in terminal if requested (and stream is still writable)
+            if show_output && stream_alive {
+                use std::io::Write;
+
+                // Write to appropriate standard stream based on type
+                let result = if stream_type == "stderr" {
+                    writeln!(
+                        std::io::stderr(),
+                        "[{}][{}] {}",
+                        app_name.cyan().bold(),
+                        stream_type,
+                        line
+                    )
+                } else {
+                    writeln!(
+                        std::io::stdout(),
+                        "[{}][{}] {}",
+                        app_name.cyan().bold(),
+                        stream_type,
+                        line
+                    )
+                };
+
+                // If writing fails (e.g., pipe broken), stop trying to write to terminal
+                // but continue processing logs and TUI updates
+                if result.is_err() {
+                    stream_alive = false;
+                }
+            }
+
+            // 2. Send to TUI popup if channel is provided
+            // This allows the TUI to show real-time logs in the "Executing" popup
+            if let Some(ref tx) = output_tx {
+                let msg = if stream_type == "stderr" {
+                    format!("[stderr] {}", line)
+                } else {
+                    line.clone()
+                };
+                // Ignore send errors (receiver might have dropped if popup closed)
+                let _ = tx.send(msg);
+            }
+
+            // 3. Always write to log file
+            // This ensures we have a permanent record even if terminal/TUI are closed
+            let mut writer = log_writer.lock().await;
+            let _ = writer.write_log(&line).await;
+        }
+    })
 }

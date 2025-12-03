@@ -149,35 +149,35 @@ pub struct App {
     // #[serde(rename = "type")] tells serde to map "type" in JSON to app_type in Rust
     #[serde(rename = "type")]
     pub app_type: String, // e.g., "nodejs", "nx", "redis", etc.
-    
+
     // Working directory where the app lives
     // Supports ~ expansion (e.g., "~/Projects/my-app")
     pub path: String,
-    
+
     // Commands for different environments (local, docker)
     pub commands: Commands,
-    
+
     // Apps that must be running before this one can start
     // #[serde(default)] = if missing in JSON, use Vec::new() (empty vec)
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
-    
+
     // Which commands to use by default for each environment
     pub defaults: Defaults,
-    
+
     // Path to Dockerfile relative to app path (e.g., "Dockerfile", "docker/Dockerfile")
     // Used to determine which .env file to use (prioritizes .env at Dockerfile level)
     // OPTIONAL: Only set if Dockerfile exists
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dockerfile_path: Option<String>,
-    
+
     // Environment files mapped by stage and context
     // Structure: { "dev": { "local": ".env.dev", "docker": "docker/.env.dev" }, ... }
     // Allows different env files for different runtime contexts within the same stage
     // OPTIONAL: If not set, auto-detects .env files
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_files: Option<HashMap<String, HashMap<String, String>>>,
-    
+
     // Default stage to use for each environment when starting the app
     // Structure: { "local": "dev", "docker": "qa", "orbstack": "qa", "k8s": "prod" }
     // Similar to defaults for commands, but for stages
@@ -193,7 +193,7 @@ pub struct App {
 //   - Only local: { "local": {...} }
 //   - Only docker: { "docker": {...} }
 //   - All four: { "local": {...}, "docker": {...}, "orbstack": {...}, "k8s": {...} }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Commands {
     // Local development commands (run directly on your machine)
     // Key = command name (e.g., "start", "test", "build")
@@ -201,27 +201,39 @@ pub struct Commands {
     // OPTIONAL: Not all apps need local commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local: Option<HashMap<String, String>>,
-    
+
     // Docker commands (run in containers)
     // Key = command name (e.g., "build", "run")
     // Value = docker command (e.g., "docker build -t myapp .")
     // OPTIONAL: Not all apps need docker commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<HashMap<String, String>>,
-    
+
     // OrbStack commands (run in containers with OrbStack context)
     // Key = command name (e.g., "build", "run")
     // Value = docker command with orbstack context (e.g., "docker --context orbstack build -t myapp .")
     // OPTIONAL: Not all apps need orbstack commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orbstack: Option<HashMap<String, String>>,
-    
+
     // Kubernetes commands (deploy to k8s cluster)
     // Key = command name (e.g., "apply", "delete", "restart")
     // Value = kubectl command (e.g., "kubectl apply -f k8s/")
     // OPTIONAL: Not all apps need k8s commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<HashMap<String, String>>,
+}
+
+// Implement Default manually or via derive (we used derive above)
+// This allows creating an empty Commands struct easily: Commands::default()
+// Useful for tests and initialization
+
+impl Commands {
+    /// Create a new empty Commands instance
+    /// Wrapper around default() for better ergonomics
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl Commands {
@@ -273,7 +285,7 @@ impl Commands {
 pub struct Dependency {
     // Which project contains the dependency
     pub project: String,
-    
+
     // Name of the app we depend on
     pub app: String,
 }
@@ -282,27 +294,38 @@ pub struct Dependency {
 // Points to command names defined in the Commands struct
 // Example: { "local": "start", "docker": "run", "orbstack": "run", "k8s": "apply" }
 // Only needs defaults for environments that have commands defined
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Defaults {
     // Default command for local environment (must exist in commands.local if provided)
     // OPTIONAL: Only needed if app has local commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local: Option<String>,
-    
+
     // Default command for docker environment (must exist in commands.docker if provided)
     // OPTIONAL: Only needed if app has docker commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<String>,
-    
+
     // Default command for orbstack environment (must exist in commands.orbstack if provided)
     // OPTIONAL: Only needed if app has orbstack commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orbstack: Option<String>,
-    
+
     // Default command for k8s environment (must exist in commands.k8s if provided)
     // OPTIONAL: Only needed if app has k8s commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<String>,
+}
+
+// Implement Default manually or via derive (we used derive above)
+// This allows creating an empty Defaults struct easily: Defaults::default()
+
+impl Defaults {
+    /// Create a new empty Defaults instance
+    /// Wrapper around default() for better ergonomics
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl Defaults {
@@ -348,45 +371,55 @@ impl App {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Get the default stage for a specific environment
     /// Falls back to preferences default_stage
-    pub fn get_default_stage(&self, env: &str, preferences_default: Option<&str>) -> Option<String> {
+    pub fn get_default_stage(
+        &self,
+        env: &str,
+        preferences_default: Option<&str>,
+    ) -> Option<String> {
         // Check default_stages structure
         if let Some(ref default_stages) = self.default_stages {
             if let Some(stage) = default_stages.get(env) {
                 return Some(stage.clone());
             }
         }
-        
+
         // Fall back to preferences default
         preferences_default.map(|s| s.to_string())
     }
-    
+
     /// Set env file for a specific stage and environment
     pub fn set_env_file(&mut self, stage: &str, env: &str, path: String) {
         if self.env_files.is_none() {
             self.env_files = Some(HashMap::new());
         }
-        
+
         let env_files = self.env_files.as_mut().unwrap();
         if !env_files.contains_key(stage) {
             env_files.insert(stage.to_string(), HashMap::new());
         }
-        
-        env_files.get_mut(stage).unwrap().insert(env.to_string(), path);
+
+        env_files
+            .get_mut(stage)
+            .unwrap()
+            .insert(env.to_string(), path);
     }
-    
+
     /// Set default stage for a specific environment
     pub fn set_default_stage(&mut self, env: &str, stage: String) {
         if self.default_stages.is_none() {
             self.default_stages = Some(HashMap::new());
         }
-        
-        self.default_stages.as_mut().unwrap().insert(env.to_string(), stage);
+
+        self.default_stages
+            .as_mut()
+            .unwrap()
+            .insert(env.to_string(), stage);
     }
 }
 
@@ -399,25 +432,25 @@ pub struct Preferences {
     // #[serde(default = "default_env")] = call default_env() if missing in JSON
     #[serde(default = "default_env")]
     pub default_env: String,
-    
+
     // Whether processes show output in terminal (false) or run silently (true)
     // Note: All processes are detached (survive Ctrl+C), this only controls visibility
     // false = show colored output in terminal, true = silent background
     #[serde(default = "default_detached")]
     pub detached_mode: bool,
-    
+
     // Whether to automatically start missing dependencies without prompting
     // true = auto-start dependencies when needed
     // false = error and require manual start or --skip-deps flag
     #[serde(default = "default_auto_start_deps")]
     pub auto_start_deps: bool,
-    
+
     // Docker platform to use for docker and orbstack commands
     // Default: "linux/amd64" for cross-platform compatibility
     // Can be set to "linux/arm64" for ARM-based systems
     #[serde(default = "default_docker_platform")]
     pub docker_platform: String,
-    
+
     // Default deployment stage to use when starting apps
     // Can be any string (dev, qa, preprod, prod, staging, etc.)
     // OPTIONAL: If not set, no default stage is applied

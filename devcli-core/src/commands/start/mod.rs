@@ -1,5 +1,5 @@
 //! Start command module - Launches apps using configuration
-//! 
+//!
 //! This module is organized by responsibility:
 //! - `resolver`: App resolution and validation logic
 //! - `dependencies`: Dependency handling and checking  
@@ -10,34 +10,34 @@
 //! for all apps collectively. In non-detached mode, it keeps the main process
 //! alive to show logs from all apps.
 
-mod resolver;
 mod dependencies;
 mod executor;
 mod logging;
+mod resolver;
 
 // Test modules (in separate files as per task requirements)
-#[cfg(test)]
-mod resolver_test;
 #[cfg(test)]
 mod dependencies_test;
 #[cfg(test)]
 mod executor_test;
 #[cfg(test)]
 mod logging_test;
+#[cfg(test)]
+mod resolver_test;
 
 // Re-export public API to maintain compatibility
-pub use resolver::{StartCommandArgs, resolve_apps_to_start, AppToStart, get_available_environments, validate_and_get_command};
-pub use dependencies::{handle_dependencies};
+pub use dependencies::handle_dependencies;
 pub use executor::{start_apps_in_parallel, start_single_app_internal};
-pub use logging::{setup_log_monitoring};
+pub use logging::setup_log_monitoring;
+pub use resolver::{resolve_apps_to_start, validate_and_get_command, AppToStart, StartCommandArgs};
 
 use crate::Result;
 
 /// Main implementation of the start command
-/// 
+///
 /// This is async because we do I/O operations (files, processes).
 /// Handles multiple apps and keeps process alive for log viewing in non-detached mode.
-/// 
+///
 /// Flow: Load config → Resolve all apps → Check deps → Start apps in parallel → Show logs (if not detached)
 pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     // Validate input: we need at least one app name
@@ -49,26 +49,24 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
 
     // Step 1: Resolve all apps to start and validate them
     let (apps_to_start, environment) = resolve_apps_to_start(args.clone()).await?;
-    
+
     // Step 2: Handle dependencies for all apps collectively
     if !args.skip_deps {
-        handle_dependencies(&apps_to_start, &environment, silent).await?;
+        let apps_refs: Vec<&crate::config::resolver::ResolvedApp> =
+            apps_to_start.iter().map(|a| &a.resolved_app).collect();
+        handle_dependencies(&apps_refs, &environment, silent).await?;
     }
-    
+
     // Step 3: Start all apps in parallel
-    let started_apps = start_apps_in_parallel(
-        apps_to_start,
-        &environment,
-        silent,
-        args.stage.clone(),
-    ).await?;
-    
+    let started_apps =
+        start_apps_in_parallel(apps_to_start, &environment, silent, args.stage.clone()).await?;
+
     // Step 4: Handle different modes and keep process alive for log viewing
     setup_log_monitoring(&started_apps, silent).await?;
-    
+
     // Step 5: Ensure background monitor is running
     let binary_path = crate::process::monitor::get_devcli_binary_path()?;
     let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
-    
+
     Ok(())
 }

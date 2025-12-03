@@ -4,10 +4,14 @@
 
 pub mod app;
 pub mod debug;
+pub mod event_loop;
 pub mod input;
 pub mod log_manager;
+pub mod refresh_manager;
 pub mod state;
+pub mod terminal;
 pub mod theme;
+pub mod utils;
 pub mod views;
 pub mod widgets;
 

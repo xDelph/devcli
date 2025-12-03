@@ -22,7 +22,7 @@ mod tests {
             silent: false,
             stage: Some("dev".to_string()),
         };
-        
+
         let cloned = args.clone();
         assert_eq!(args.app_names, cloned.app_names);
         assert_eq!(args.project, cloned.project);
@@ -37,25 +37,32 @@ mod tests {
         app.commands.local = Some(HashMap::new());
         app.commands.docker = Some(HashMap::new());
         app.commands.k8s = Some(HashMap::new());
-        
-        let result = super::super::resolver::get_available_environments(&app);
-        assert_eq!(result, "local, docker, k8s");
+
+        let envs = crate::utils::app::get_available_environments(&app);
+        assert_eq!(envs, "local, docker, k8s");
     }
 
     #[test]
-    fn test_get_available_environments_partial() {
-        let mut app = AppBuilder::new("test", "/tmp").build();
-        app.commands.local = Some(HashMap::new());
-        app.commands.docker = Some(HashMap::new());
-        
-        let result = super::super::resolver::get_available_environments(&app);
-        assert_eq!(result, "local, docker");
+    fn test_get_available_environments_empty() {
+        let app = App {
+            path: ".".to_string(),
+            commands: Commands::new(),
+            defaults: Defaults::new(),
+            dependencies: Vec::new(),
+            default_stages: None,
+            app_type: "nodejs".to_string(),
+            dockerfile_path: None,
+            env_files: None,
+        };
+
+        let envs = crate::utils::app::get_available_environments(&app);
+        assert_eq!(envs, "none");
     }
 
     #[test]
     fn test_get_available_environments_none() {
         let app = create_test_app();
-        let result = super::super::resolver::get_available_environments(&app);
+        let result = crate::utils::app::get_available_environments(&app);
         assert_eq!(result, "none");
     }
 
@@ -67,10 +74,14 @@ mod tests {
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
-        
-        let result = super::super::resolver::validate_and_get_command(&resolved_app, "invalid", "test-app");
+
+        let result =
+            super::super::resolver::validate_and_get_command(&resolved_app, "invalid", "test-app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid environment"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid environment"));
     }
 
     #[test]
@@ -81,26 +92,34 @@ mod tests {
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
-        
-        let result = super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
+
+        let result =
+            super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("does not have 'local' environment configured"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("does not have 'local' environment configured"));
     }
 
     #[test]
     fn test_validate_and_get_command_missing_default() {
         let mut app = create_test_app();
         app.commands.local = Some(HashMap::new()); // Has environment but no default
-        
+
         let resolved_app = ResolvedApp {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
-        
-        let result = super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
+
+        let result =
+            super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("does not have a default command"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("does not have a default command"));
     }
 
     #[test]
@@ -108,16 +127,20 @@ mod tests {
         let mut app = create_test_app();
         app.commands.local = Some(HashMap::new()); // Empty commands
         app.defaults.local = Some("start".to_string()); // Default exists but command doesn't
-        
+
         let resolved_app = ResolvedApp {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
-        
-        let result = super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
+
+        let result =
+            super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Default command 'start' not found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Default command 'start' not found"));
     }
 
     #[test]
@@ -126,14 +149,15 @@ mod tests {
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .build();
-        
+
         let resolved_app = ResolvedApp {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
         };
-        
-        let result = super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
+
+        let result =
+            super::super::resolver::validate_and_get_command(&resolved_app, "local", "test-app");
         assert!(result.is_ok());
         let (command, default_command) = result.unwrap();
         assert_eq!(command, "npm start");
