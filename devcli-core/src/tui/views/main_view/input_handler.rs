@@ -274,6 +274,26 @@ impl NavigationHandler for MainView {
                     Ok(false)
                 }
             }
+            // Quick log view shortcut
+            KeyCode::Char('l') => {
+                if let Some(app) = state.selected_app() {
+                    // Only open logs if app is running
+                    if app.status.is_running() {
+                        if let Ok(log_files) =
+                            self.log_manager.list_logs_for_app(&app.project, &app.name)
+                        {
+                            if let Some(log_file) = log_files.first() {
+                                state.current_view = crate::tui::state::ViewType::LogViewer {
+                                    log_paths: vec![log_file.path.clone()],
+                                    active_index: 0,
+                                };
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+                Ok(false)
+            }
             _ => Ok(false),
         }
     }
@@ -502,7 +522,8 @@ impl NavigationHandler for MainView {
                         {
                             if let Some(log_file) = log_files.get(self.selected_log_idx) {
                                 state.current_view = crate::tui::state::ViewType::LogViewer {
-                                    log_path: log_file.path.clone(),
+                                    log_paths: vec![log_file.path.clone()],
+                                    active_index: 0,
                                 };
                             }
                         }

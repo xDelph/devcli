@@ -32,12 +32,20 @@
 
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
-use super::views::{LogViewerView, MainView};
+use super::views::{
+    log_viewer::{LogInputResult, SelectionItem, SelectionMode},
+    LogViewerView, MainView,
+};
 use super::widgets::command_popup::{CommandPopup, PopupState};
 use super::widgets::help_overlay::HelpOverlay;
 
+use chrono::{NaiveDate, Utc};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
 use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
+
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent},
@@ -125,9 +133,10 @@ impl TuiApp {
     /// Creates a new TUI application
     /// Loads configuration and initializes state
     pub fn new() -> Result<Self> {
+        crate::debug!("TuiApp::new() called");
+
         // Initialize debug logging
         crate::tui::debug::init_debug_log();
-        crate::debug!("TuiApp::new() called");
 
         // Load configuration from disk
         let config = load_config().context("Failed to load configuration")?;
@@ -400,7 +409,22 @@ impl TuiApp {
     fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<bool> {
         // Delegate to the log viewer's input handler
         if let Some(viewer) = &mut self.log_viewer {
-            viewer.handle_input(key) // Return the viewer's result
+            match viewer.handle_input(key)? {
+                LogInputResult::Handled => Ok(true),
+                LogInputResult::Ignored => Ok(false),
+                LogInputResult::RequestAddPanel => {
+                    self.open_log_selector(SelectionMode::Add);
+                    self.needs_redraw = true;
+                    Ok(true)
+                }
+                LogInputResult::RequestSelectLog => {
+                    // Get active panel index
+                    let active_idx = viewer.active_panel_idx();
+                    self.open_log_selector(SelectionMode::Replace(active_idx));
+                    self.needs_redraw = true;
+                    Ok(true)
+                }
+            }
         } else {
             Ok(false)
         }
@@ -543,13 +567,115 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Opens the log selector popup
+    fn open_log_selector(&mut self, mode: SelectionMode) {
+        // Clone log_paths to avoid borrowing issues
+        let current_paths = if let Some(viewer) = &self.log_viewer {
+            viewer.log_paths()
+        } else {
+            Vec::new()
+        };
+
+        if let Some(viewer) = &mut self.log_viewer {
+            // Map<Project, Map<App, Vec<(PathBuf, Env, DateStr)>>>
+            type LogEntry = (PathBuf, String, String); // Path, Env, Date
+            let mut grouped_logs: BTreeMap<String, BTreeMap<String, Vec<LogEntry>>> =
+                BTreeMap::new();
+
+            if let Ok(state) = self.state.lock() {
+                for proj in &state.projects {
+                    for app in &proj.apps {
+                        if app.status.is_running() {
+                            if let Ok(logs) = self
+                                .main_view
+                                .log_manager
+                                .list_logs_for_app(&app.project, &app.name)
+                            {
+                                for log in logs {
+                                    if !current_paths.contains(&log.path) {
+                                        let filename_str = log
+                                            .path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy();
+                                        let clean_name = filename_str
+                                            .strip_suffix(".log")
+                                            .unwrap_or(&filename_str);
+                                        let parts: Vec<&str> = clean_name.split('_').collect();
+
+                                        // Parse env and date
+                                        let (env, date) = if parts.len() >= 4 {
+                                            (parts[2].to_string(), parts[3].to_string())
+                                        } else {
+                                            ("?".to_string(), "?".to_string())
+                                        };
+
+                                        grouped_logs
+                                            .entry(app.project.clone())
+                                            .or_default()
+                                            .entry(app.name.clone())
+                                            .or_default()
+                                            .push((log.path, env, date));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut candidates = Vec::new();
+            for (project, apps) in grouped_logs {
+                if apps.values().all(|v| v.is_empty()) {
+                    continue;
+                }
+
+                candidates.push(SelectionItem::Header(project));
+
+                for (app_name, logs) in apps {
+                    if logs.is_empty() {
+                        continue;
+                    }
+                    candidates.push(SelectionItem::SubHeader(app_name));
+
+                    for (path, env, date_str) in logs {
+                        let formatted_date = Self::format_smart_date(&date_str);
+                        let label = format!("{} - {}", env, formatted_date);
+                        candidates.push(SelectionItem::Option { label, path });
+                    }
+                }
+            }
+            viewer.start_log_selection(candidates, mode);
+        }
+    }
+
+    /// Helper to format date sensibly
+    fn format_smart_date(date_str: &str) -> String {
+        if date_str.len() != 8 {
+            return date_str.to_string();
+        }
+
+        if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
+            let today = Utc::now().naive_utc().date();
+            let diff = today.signed_duration_since(date).num_days();
+
+            match diff {
+                0 => "Today".to_string(), // Bold handling is done in render if needed, but here we just return text
+                1 => "Yesterday".to_string(),
+                2..=3 => format!("{} days ago", diff),
+                _ => date.format("%Y-%m-%d").to_string(),
+            }
+        } else {
+            date_str.to_string()
+        }
+    }
+
     /// Checks if we need to create a log viewer for the current view
     /// Called at the start of each event loop iteration
     ///
     /// Error Handling:
     /// - If log file cannot be opened, displays error in status bar
     /// - Returns to main view to allow user to continue
-    /// - Error is non-blocking and can be dismissed
     fn check_log_viewer_creation(&mut self) -> Result<()> {
         let current_view = {
             let state = self.state.lock().expect("Failed to lock state");
@@ -557,19 +683,24 @@ impl TuiApp {
         };
 
         // If we're in LogViewer view but don't have a viewer instance, create one
-        if let ViewType::LogViewer { log_path } = current_view {
+        if let ViewType::LogViewer { log_paths, .. } = current_view {
             if self.log_viewer.is_none() {
-                match LogViewerView::new(log_path.clone()) {
+                match LogViewerView::new(log_paths.clone()) {
                     Ok(viewer) => {
                         self.log_viewer = Some(viewer);
                         // Clear terminal to avoid artifacts from previous view
                         self.needs_clear = true;
+
+                        // If opened with no logs, trigger selector
+                        if log_paths.is_empty() {
+                            self.open_log_selector(SelectionMode::Add);
+                        }
                     }
                     Err(e) => {
                         // Failed to create viewer - set error and go back to main view
                         // This is a non-blocking error - user can dismiss and continue
                         let mut state = self.state.lock().expect("Failed to lock state");
-                        state.error_message = Some(format!("Failed to open log file: {}", e));
+                        state.error_message = Some(format!("Failed to open log files: {}", e));
                         state.current_view = ViewType::Main;
                     }
                 }

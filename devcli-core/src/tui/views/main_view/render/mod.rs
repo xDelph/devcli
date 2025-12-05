@@ -48,6 +48,6 @@ impl MainView {
             MainTab::Config => self.render_config_panel(frame, content_chunks[1], state, theme),
         }
 
-        self.render_footer(frame, main_chunks[2], theme);
+        self.render_footer(frame, main_chunks[2], state, theme);
     }
 }

@@ -9,5 +9,7 @@ pub mod app;
 pub mod command;
 pub mod path;
 
+pub mod date;
+
 #[cfg(test)]
 mod command_tests;

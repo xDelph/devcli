@@ -363,10 +363,12 @@ pub enum ViewType {
         /// App name
         app: String,
     },
-    /// Log viewer showing contents of a specific log file
+    /// Log viewer showing contents of specific log files
     LogViewer {
-        /// Path to the log file
-        log_path: PathBuf,
+        /// Paths to the log files being viewed
+        log_paths: Vec<PathBuf>,
+        /// Index of the currently active log panel
+        active_index: usize,
     },
 }
 
