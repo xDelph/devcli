@@ -4,3 +4,5 @@ pub mod navigation;
 
 pub use edit_mode::EditModeHandler;
 pub use navigation::NavigationHandler;
+
+pub mod router;

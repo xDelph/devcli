@@ -36,8 +36,8 @@ use super::views::{
     log_viewer::{LogInputResult, SelectionItem, SelectionMode},
     LogViewerView, MainView,
 };
-use super::widgets::command_popup::{CommandPopup, PopupState};
 use super::widgets::help_overlay::HelpOverlay;
+use crate::tui::popups::PopupManager;
 
 use chrono::{NaiveDate, Utc};
 use std::collections::BTreeMap;
@@ -47,10 +47,10 @@ use crate::config::loader::load_config;
 use crate::process::tracker::ProcessTracker;
 
 use anyhow::{Context, Result};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use crossterm::event::KeyEvent;
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -61,8 +61,7 @@ use ratatui::{
 };
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -71,50 +70,50 @@ use tokio::time::interval;
 pub struct TuiApp {
     /// Current application state wrapped in Arc<Mutex<>> for thread-safe access
     /// Arc allows multiple ownership across threads, Mutex ensures only one thread accesses at a time
-    state: Arc<Mutex<AppState>>,
+    pub(crate) state: Arc<Mutex<AppState>>,
     /// Visual theme for the UI
-    theme: Theme,
+    pub(crate) theme: Theme,
     /// Main view instance
-    main_view: MainView,
+    pub(crate) main_view: MainView,
     /// Log viewer instance (created when viewing a log file)
-    log_viewer: Option<LogViewerView>,
+    pub(crate) log_viewer: Option<LogViewerView>,
     /// Process tracker for checking app status
     /// Shared across threads for background status polling
-    process_tracker: Arc<ProcessTracker>,
+    pub(crate) process_tracker: Arc<ProcessTracker>,
     /// Flag to indicate the app should quit
-    should_quit: bool,
-    /// Optional command popup for command execution
-    /// When Some, the popup is displayed over the main view
-    command_popup: Option<CommandPopup>,
+    pub(crate) should_quit: bool,
+    /// Manager for popup dialogs
+    pub(crate) popup_manager: PopupManager,
     /// Help overlay for displaying keyboard shortcuts
     /// Toggled with '?' key
-    help_overlay: HelpOverlay,
+    pub(crate) help_overlay: HelpOverlay,
     /// Dirty flag to track if UI needs redrawing
     /// Optimization: Only redraw when state changes or events occur
-    needs_redraw: bool,
+    pub(crate) needs_redraw: bool,
     /// Last render timestamp for performance tracking
     /// Used to measure frame time and optimize rendering
-    last_render: Instant,
+    pub(crate) last_render: Instant,
     /// Flag to clear terminal on next render (for view transitions)
-    needs_clear: bool,
+    pub(crate) needs_clear: bool,
     /// Channel for sending command execution requests to background task
-    command_tx: mpsc::UnboundedSender<CommandRequest>,
+    #[allow(dead_code)] // Used by spawned background task
+    pub(crate) command_tx: mpsc::UnboundedSender<CommandRequest>,
     /// Channel for receiving command execution results
-    command_rx: mpsc::UnboundedReceiver<CommandResult>,
+    pub(crate) command_rx: mpsc::UnboundedReceiver<CommandResult>,
 }
 
 /// Request to execute a command in the background
 #[derive(Debug, Clone)]
-struct CommandRequest {
-    app_name: String,
-    project: String,
-    environment: String,
-    command_type: CommandType,
+pub(crate) struct CommandRequest {
+    pub(crate) app_name: String,
+    pub(crate) project: String,
+    pub(crate) environment: String,
+    pub(crate) command_type: CommandType,
 }
 
 /// Type of command being executed
 #[derive(Debug, Clone)]
-enum CommandType {
+pub(crate) enum CommandType {
     Start, // Uses start command with environment
     Run,   // Uses run command with specific command
     Stop,
@@ -123,7 +122,7 @@ enum CommandType {
 
 /// Result of command execution
 #[derive(Debug)]
-enum CommandResult {
+pub(crate) enum CommandResult {
     Success(String),
     Error(String),
     LogLine(String), // New: stream log lines to popup
@@ -168,7 +167,11 @@ impl TuiApp {
             while let Some(request) = req_rx.recv().await {
                 let tx = result_tx.clone();
                 tokio::spawn(async move {
-                    let result = Self::execute_command_async(request.clone(), tx.clone()).await;
+                    let result = crate::tui::command_executor::execute_command_async(
+                        request.clone(),
+                        tx.clone(),
+                    )
+                    .await;
                     let _ = match result {
                         Ok(msg) => tx.send(CommandResult::Success(msg)),
                         Err(e) => tx.send(CommandResult::Error(format!("{:#}", e))),
@@ -177,6 +180,9 @@ impl TuiApp {
             }
         });
 
+        // Initialize popup manager
+        let popup_manager = PopupManager::new(req_tx.clone());
+
         Ok(Self {
             state,
             theme,
@@ -184,7 +190,7 @@ impl TuiApp {
             log_viewer: None,
             process_tracker,
             should_quit: false,
-            command_popup: None,
+            popup_manager,
             help_overlay: HelpOverlay::new(),
             needs_redraw: true, // Initial render needed
             last_render: Instant::now(),
@@ -213,8 +219,9 @@ impl TuiApp {
         // It notifies the main thread when changes are detected
         let polling_handle = self.start_status_polling();
 
-        // Run the main loop
-        let result = self.run_event_loop(&mut terminal);
+        // Run the main loop via Runtime
+        let runtime = crate::tui::runtime::Runtime::new();
+        let result = runtime.run(self, &mut terminal);
 
         // Stop the background polling task
         polling_handle.abort();
@@ -228,185 +235,138 @@ impl TuiApp {
         result
     }
 
-    /// The main event loop
-    /// Handles user input and renders the UI
-    /// Optimization: Uses dirty flag to avoid unnecessary redraws
-    fn run_event_loop<B: ratatui::backend::Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<()>
-    where
-        <B as ratatui::backend::Backend>::Error: Send + Sync + 'static,
-    {
-        while !self.should_quit {
-            // Check if a command execution was requested
-            self.check_command_execution_request()?;
+    /// Check regular updates (state changes, requests, etc.)
+    pub(crate) fn tick(&mut self) -> Result<()> {
+        let mut needs_redraw = false;
 
-            // Check if stop was requested
-            self.check_stop_request()?;
+        // Delegate popup checks to manager
+        needs_redraw |=
+            self.popup_manager
+                .tick(&self.state, &mut self.command_rx, &self.main_view)?;
 
-            // Check if restart was requested
-            self.check_restart_request()?;
+        if self.popup_manager.active_popup.is_some() {
+            // If popup is active, we might need to redraw more often or differently
+        }
 
-            // Check if environment selection was requested
-            self.check_env_selection_request()?;
+        self.check_log_viewer_creation()?;
+        self.refresh_log_viewer()?;
 
-            // Check if we need to create a log viewer
-            self.check_log_viewer_creation()?;
+        // Check if status was updated by background polling
+        self.check_status_update()?;
 
-            // Refresh log viewer if active
-            self.refresh_log_viewer()?;
-
-            // Check for command execution results
-            self.check_command_results()?;
-
-            // Check if status was updated by background polling
-            self.check_status_update()?;
-
-            // Clear terminal if needed (for view transitions)
-            if self.needs_clear {
-                terminal.clear()?;
-                self.needs_clear = false;
-            }
-
-            // Only render if something changed (dirty flag optimization)
-            // This reduces CPU usage by avoiding unnecessary redraws
-            if self.needs_redraw {
-                let render_start = Instant::now();
-                terminal.draw(|f| self.render(f))?;
-                self.last_render = render_start;
-                self.needs_redraw = false;
-            }
-
-            // Wait for an event with a timeout
-            // This allows us to update the UI periodically even without user input
-            if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        self.handle_key_event(key)?;
-                        self.needs_redraw = true; // Mark for redraw after input
-                    }
-                    Event::Resize(_, _) => {
-                        // Terminal was resized - force a redraw
-                        // Clear the terminal to avoid rendering artifacts
-                        terminal.clear()?;
-                        self.needs_redraw = true;
-                    }
-                    _ => {}
-                }
-            }
+        if needs_redraw {
+            self.needs_redraw = true;
         }
 
         Ok(())
+    }
+
+    pub(crate) fn needs_clear(&self) -> bool {
+        self.needs_clear
+    }
+
+    pub(crate) fn clear_needs_clear(&mut self) {
+        self.needs_clear = false;
+    }
+
+    pub(crate) fn needs_redraw(&self) -> bool {
+        self.needs_redraw
+    }
+
+    pub(crate) fn set_needs_redraw(&mut self, needed: bool) {
+        self.needs_redraw = needed;
+    }
+
+    pub(crate) fn on_render_complete(&mut self, time: Instant) {
+        self.last_render = time;
+        self.needs_redraw = false;
     }
 
     /// Handles keyboard input events
     /// Routes events based on the current view and popup state
-    fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
-        // crate::debug!("[App] Key event received: {:?}", key);
-        // ALWAYS handle Ctrl+C first - quit immediately
-        if key.code == KeyCode::Char('c')
-            && key
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL)
-        {
-            self.should_quit = true;
-            return Ok(());
-        }
-
-        // If help overlay is visible, handle it first
-        // Any key except '?' closes the help overlay
-        if self.help_overlay.is_visible() {
-            match key.code {
-                KeyCode::Char('?') => {
-                    self.help_overlay.toggle();
-                }
-                KeyCode::Esc | KeyCode::Enter => {
-                    self.help_overlay.hide();
-                }
-                _ => {
-                    // Any other key also closes help
-                    self.help_overlay.hide();
-                }
-            }
-            return Ok(());
-        }
-
-        // If a popup is active, handle popup-specific input first
-        if self.command_popup.is_some() {
-            return self.handle_popup_input(key);
-        }
-
-        // If there's an error message, any key dismisses it
-        // This allows users to acknowledge and clear error messages
-        {
-            let mut state = self.state.lock().expect("Failed to lock state");
-            if state.error_message.is_some() {
-                state.error_message = None;
-                // Don't return - let the key event continue to be processed
-            }
-        }
-
-        // Get current view type by locking state briefly
-        let current_view = {
-            let state = self.state.lock().expect("Failed to lock state");
-            state.current_view.clone()
-        };
-
-        // View-specific handling - let views handle keys first
-        let handled = match &current_view {
-            ViewType::Main => self.handle_main_view_input(key)?,
-            ViewType::CommandList { .. } => self.handle_command_list_input(key)?,
-            ViewType::LogBrowser { .. } => self.handle_log_browser_input(key)?,
-            ViewType::LogViewer { .. } => self.handle_log_viewer_input(key)?,
-        };
-
-        // If the view handled the key, we're done
-        if handled {
-            return Ok(());
-        }
-
-        // Global shortcuts that work in any view (only if not handled by view)
-        match key.code {
-            // Show help overlay
-            KeyCode::Char('?') => {
-                self.help_overlay.toggle();
-            }
-            // Quit the application
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-            }
-            // Go back to previous view
-            KeyCode::Esc => {
-                self.handle_back();
-            }
-            _ => {}
-        }
-
-        Ok(())
+    pub(crate) fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
+        crate::tui::input::router::handle_key_event(self, key)
     }
 
     /// Handles input for the main view
     /// Returns true if the key was handled, false otherwise
-    fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<bool> {
+    pub(crate) fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<bool> {
         // Delegate to the main view's input handler
         self.main_view.handle_input(key, &self.state)
     }
 
     /// Handles input for the command list view
-    fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<bool> {
+    pub(crate) fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<bool> {
         // TODO: Implement command list navigation and execution
         Ok(false)
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_test() -> Self {
+        let state = Arc::new(Mutex::new(AppState {
+            projects: vec![],
+            selected_project_idx: 0,
+            selected_app_idx: 0,
+            current_view: ViewType::Main,
+            error_message: None,
+            status_message: None,
+            command_execution_requested: None,
+            stop_requested: false,
+            restart_requested: false,
+            env_selection_requested: false,
+            status_updated: false,
+        }));
+
+        // We might fail to create directory in some test envs, but usually it's fine.
+        // If it fails, tests will panic.
+        let process_tracker = Arc::new(ProcessTracker::new().unwrap_or_else(|_| {
+            // Fallback if we can't create real tracker?
+            // Ideally we shouldn't depend on FS in unit tests.
+            // But ProcessTracker is hard to mock without traits.
+            // We'll trust the env.
+            panic!("Failed to create ProcessTracker for test");
+        }));
+
+        let (req_tx, _req_rx) = mpsc::unbounded_channel();
+        let (_result_tx, result_rx) = mpsc::unbounded_channel();
+
+        // Initialize popup manager
+        let popup_manager = PopupManager::new(req_tx.clone());
+
+        Self {
+            state,
+            theme: Theme::default(),
+            main_view: MainView::new(),
+            log_viewer: None,
+            process_tracker,
+            should_quit: false,
+            popup_manager,
+            help_overlay: HelpOverlay::new(),
+            needs_redraw: false,
+            last_render: Instant::now(),
+            needs_clear: false,
+            command_tx: req_tx,
+            command_rx: result_rx,
+        }
+    }
+
+    pub(crate) fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_help_visible(&self) -> bool {
+        self.help_overlay.is_visible()
+    }
+
     /// Handles input for the log browser view
-    fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<bool> {
+    pub(crate) fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<bool> {
         // TODO: Implement log browser navigation
         Ok(false)
     }
 
     /// Handles input for the log viewer view
-    fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<bool> {
+    pub(crate) fn handle_log_viewer_input(&mut self, key: KeyEvent) -> Result<bool> {
         // Delegate to the log viewer's input handler
         if let Some(viewer) = &mut self.log_viewer {
             match viewer.handle_input(key)? {
@@ -432,10 +392,10 @@ impl TuiApp {
 
     /// Handles the back action (Esc key)
     /// Returns to the previous view or main view
-    fn handle_back(&mut self) {
+    pub(crate) fn handle_back(&mut self) {
         // If popup is open, close it instead of going back
-        if self.command_popup.is_some() {
-            self.command_popup = None;
+        if self.popup_manager.is_active() {
+            self.popup_manager.close_popup();
             return;
         }
 
@@ -457,114 +417,8 @@ impl TuiApp {
 
     /// Handles input when a popup is active
     /// Returns Ok(()) to indicate the event was handled
-    fn handle_popup_input(&mut self, key: KeyEvent) -> Result<()> {
-        crate::debug!("handle_popup_input: key={:?}", key);
-
-        // Get the popup state without borrowing self
-        let popup_state = self.command_popup.as_ref().map(|p| p.state().clone());
-
-        if let Some(state) = popup_state {
-            crate::debug!("Popup state: {:?}", state);
-            match state {
-                PopupState::Confirm => {
-                    match key.code {
-                        KeyCode::Enter => {
-                            crate::debug!("Enter pressed - executing command");
-                            // User confirmed - execute the command
-                            self.execute_command_from_popup()?;
-                        }
-                        KeyCode::Esc => {
-                            crate::debug!("Esc pressed - closing popup");
-                            // User cancelled - close popup
-                            self.command_popup = None;
-                        }
-                        KeyCode::Left | KeyCode::Char('h') => {
-                            // Cycle to previous environment if selection is enabled
-                            if let Some(popup) = &mut self.command_popup {
-                                if popup.allows_env_selection() {
-                                    popup.prev_environment();
-                                    self.needs_redraw = true;
-                                }
-                            }
-                        }
-                        KeyCode::Right | KeyCode::Char('l') => {
-                            // Cycle to next environment if selection is enabled
-                            if let Some(popup) = &mut self.command_popup {
-                                if popup.allows_env_selection() {
-                                    popup.next_environment();
-                                    self.needs_redraw = true;
-                                }
-                            }
-                        }
-                        _ => {
-                            crate::debug!("Other key pressed: {:?}", key.code);
-                        }
-                    }
-                }
-                PopupState::Executing => {
-                    // Allow ESC to close and arrow keys to scroll
-                    match key.code {
-                        KeyCode::Esc => {
-                            crate::debug!("Esc pressed - closing executing popup");
-                            self.command_popup = None;
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if let Some(popup) = &mut self.command_popup {
-                                popup.scroll_up();
-                                self.needs_redraw = true;
-                            }
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if let Some(popup) = &mut self.command_popup {
-                                popup.scroll_down();
-                                self.needs_redraw = true;
-                            }
-                        }
-                        KeyCode::PageUp => {
-                            if let Some(popup) = &mut self.command_popup {
-                                for _ in 0..10 {
-                                    popup.scroll_up();
-                                }
-                                self.needs_redraw = true;
-                            }
-                        }
-                        KeyCode::PageDown => {
-                            if let Some(popup) = &mut self.command_popup {
-                                for _ in 0..10 {
-                                    popup.scroll_down();
-                                }
-                                self.needs_redraw = true;
-                            }
-                        }
-                        KeyCode::Home => {
-                            if let Some(popup) = &mut self.command_popup {
-                                popup.scroll_to_top();
-                                self.needs_redraw = true;
-                            }
-                        }
-                        KeyCode::End => {
-                            if let Some(popup) = &mut self.command_popup {
-                                popup.enable_auto_scroll();
-                                self.needs_redraw = true;
-                            }
-                        }
-                        _ => {
-                            // Other keys are ignored while executing
-                        }
-                    }
-                }
-                PopupState::Success(_) | PopupState::Error(_) => {
-                    // Any key closes the result popup
-                    match key.code {
-                        KeyCode::Enter | KeyCode::Esc => {
-                            self.command_popup = None;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        Ok(())
+    pub(crate) fn handle_popup_input(&mut self, key: KeyEvent) -> Result<()> {
+        self.popup_manager.handle_input(key)
     }
 
     /// Opens the log selector popup
@@ -730,220 +584,6 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Checks if a command execution was requested and creates the popup
-    /// Called at the start of each event loop iteration
-    fn check_command_execution_request(&mut self) -> Result<()> {
-        // Check if there's a pending command execution request
-        let request = {
-            let state = self.state.lock().expect("Failed to lock state");
-            state.command_execution_requested
-        };
-
-        if let Some(command_idx) = request {
-            // Get the command details from state
-            let (app_name, project_name, command_name, environment) = {
-                let state = self.state.lock().expect("Failed to lock state");
-
-                if let Some(app) = state.selected_app() {
-                    // Get the command at the requested index using the main_view helper
-                    if let Some((env, cmd_info)) =
-                        self.main_view.get_command_by_index(app, command_idx)
-                    {
-                        crate::debug!(
-                            "[App] Command request: app={}, env={}, cmd={}",
-                            app.name,
-                            env,
-                            cmd_info.name
-                        );
-                        (
-                            app.name.clone(),
-                            app.project.clone(),
-                            cmd_info.name.clone(),
-                            env.to_string(),
-                        )
-                    } else {
-                        // Invalid command index - clear the request
-                        crate::debug!("[App] Invalid command index: {}", command_idx);
-                        drop(state);
-                        let mut state = self.state.lock().expect("Failed to lock state");
-                        state.clear_command_execution_request();
-                        return Ok(());
-                    }
-                } else {
-                    // No app selected - clear the request
-                    crate::debug!("[App] No app selected for command execution");
-                    drop(state);
-                    let mut state = self.state.lock().expect("Failed to lock state");
-                    state.clear_command_execution_request();
-                    return Ok(());
-                }
-            };
-
-            // Create the popup for run command
-            // For Commands tab, we execute the specific command from the environment
-            // Store both the command name and environment for execution
-            let mut popup = CommandPopup::new(
-                "run".to_string(),
-                format!("Running: {} ({})", command_name, environment),
-                app_name.clone(),
-                project_name,
-                format!("{}:{}", environment, command_name), // Store as "env:command" for Run type
-            );
-
-            // Set initial status
-            {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
-                    }
-                }
-            }
-
-            self.command_popup = Some(popup);
-
-            // Clear the request
-            let mut state = self.state.lock().expect("Failed to lock state");
-            state.clear_command_execution_request();
-        }
-
-        Ok(())
-    }
-
-    /// Checks if stop was requested and creates the popup
-    fn check_stop_request(&mut self) -> Result<()> {
-        let stop_requested = {
-            let state = self.state.lock().expect("Failed to lock state");
-            state.stop_requested
-        };
-
-        if stop_requested {
-            let (app_name, project_name) = {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    (app.name.clone(), app.project.clone())
-                } else {
-                    let mut state = self.state.lock().expect("Failed to lock state");
-                    state.clear_stop_requested();
-                    return Ok(());
-                }
-            };
-
-            // Create stop popup
-            let mut popup = CommandPopup::new(
-                "stop".to_string(),
-                "Stopping process...".to_string(),
-                app_name.clone(),
-                project_name.clone(),
-                "".to_string(),
-            );
-
-            // Set initial status
-            {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
-                    }
-                }
-            }
-
-            self.command_popup = Some(popup);
-
-            // Immediately execute stop
-            let request = CommandRequest {
-                app_name,
-                project: project_name,
-                environment: String::new(),
-                command_type: CommandType::Stop,
-            };
-
-            if let Some(popup) = &mut self.command_popup {
-                popup.set_executing();
-            }
-
-            self.command_tx.send(request)?;
-
-            let mut state = self.state.lock().expect("Failed to lock state");
-            state.clear_stop_requested();
-        }
-
-        Ok(())
-    }
-
-    /// Checks if restart was requested and creates the popup
-    fn check_restart_request(&mut self) -> Result<()> {
-        let restart_requested = {
-            let state = self.state.lock().expect("Failed to lock state");
-            state.restart_requested
-        };
-
-        if restart_requested {
-            let (app_name, project_name, environment) = {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    // Try to get environment from running process, fallback to "local"
-                    let env = if let Ok(tracker) = crate::process::ProcessTracker::new() {
-                        if let Ok(Some(process)) =
-                            tracker.get_process(&app.project, &app.name, None)
-                        {
-                            process.environment.unwrap_or_else(|| "local".to_string())
-                        } else {
-                            "local".to_string()
-                        }
-                    } else {
-                        "local".to_string()
-                    };
-                    (app.name.clone(), app.project.clone(), env)
-                } else {
-                    let mut state = self.state.lock().expect("Failed to lock state");
-                    state.clear_restart_requested();
-                    return Ok(());
-                }
-            };
-
-            // Create restart popup
-            let mut popup = CommandPopup::new(
-                "restart".to_string(),
-                "Restarting process...".to_string(),
-                app_name.clone(),
-                project_name.clone(),
-                environment.clone(),
-            );
-
-            // Set initial status
-            {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
-                    }
-                }
-            }
-
-            self.command_popup = Some(popup);
-
-            // Immediately execute restart
-            let request = CommandRequest {
-                app_name,
-                project: project_name,
-                environment,
-                command_type: CommandType::Restart,
-            };
-
-            if let Some(popup) = &mut self.command_popup {
-                popup.set_executing();
-            }
-
-            self.command_tx.send(request)?;
-
-            let mut state = self.state.lock().expect("Failed to lock state");
-            state.clear_restart_requested();
-        }
-
-        Ok(())
-    }
-
     /// Checks if status was updated by background polling and triggers redraw
     fn check_status_update(&mut self) -> Result<()> {
         let (status_updated, app_status) = {
@@ -954,7 +594,7 @@ impl TuiApp {
             }
 
             // Get the current app status if popup is open
-            let app_status = if self.command_popup.is_some() {
+            let app_status = if self.popup_manager.is_active() {
                 state
                     .selected_app()
                     .map(|app| app.status.as_str().to_string())
@@ -967,397 +607,11 @@ impl TuiApp {
 
         if status_updated {
             // Update popup status if it's open
-            if let (Some(popup), Some(status)) = (&mut self.command_popup, app_status) {
-                popup.update_status(status);
+            if let Some(status) = app_status {
+                self.popup_manager.update_status(status);
             }
 
             self.needs_redraw = true;
-        }
-
-        Ok(())
-    }
-
-    /// Checks if environment selection was requested and creates start popup with env selection
-    fn check_env_selection_request(&mut self) -> Result<()> {
-        let env_selection_requested = {
-            let state = self.state.lock().expect("Failed to lock state");
-            state.env_selection_requested
-        };
-
-        if env_selection_requested {
-            let (app_name, project_name, default_env) = {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    // Get default environment from preferences
-                    let preferences = crate::config::load_preferences().unwrap_or_default();
-                    (
-                        app.name.clone(),
-                        app.project.clone(),
-                        preferences.default_env,
-                    )
-                } else {
-                    let mut state = self.state.lock().expect("Failed to lock state");
-                    state.clear_env_selection_requested();
-                    return Ok(());
-                }
-            };
-
-            // Create start popup with environment selection
-            let mut popup = CommandPopup::new_with_env_selection(
-                "start".to_string(),
-                "Start application".to_string(),
-                app_name.clone(),
-                project_name,
-                default_env,
-            );
-
-            // Set initial status
-            {
-                let state = self.state.lock().expect("Failed to lock state");
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
-                    }
-                }
-            }
-
-            self.command_popup = Some(popup);
-
-            let mut state = self.state.lock().expect("Failed to lock state");
-            state.clear_env_selection_requested();
-        }
-
-        Ok(())
-    }
-
-    /// Executes the command from the popup
-    /// Sends command to background task for async execution
-    fn execute_command_from_popup(&mut self) -> Result<()> {
-        crate::debug!("execute_command_from_popup called");
-
-        // Get command details before mutating
-        let request = if let Some(popup) = &self.command_popup {
-            // Determine command type based on popup command name
-            let command_type = match popup.command_name.as_str() {
-                "start" => CommandType::Start,
-                "run" => CommandType::Run,
-                "stop" => CommandType::Stop,
-                "restart" => CommandType::Restart,
-                _ => CommandType::Start, // Default fallback
-            };
-
-            CommandRequest {
-                app_name: popup.app_name.clone(),
-                project: popup.project.clone(),
-                environment: popup.environment.clone(),
-                command_type,
-            }
-        } else {
-            crate::debug!("No popup found!");
-            return Ok(());
-        };
-
-        crate::debug!("Sending command request: {:?}", request);
-
-        // Transition to executing state
-        if let Some(popup) = &mut self.command_popup {
-            popup.set_executing();
-            crate::debug!("Popup set to executing state");
-        }
-
-        // Send to background task via channel
-        self.command_tx.send(request)?;
-        crate::debug!("Command sent to background task");
-
-        self.needs_redraw = true;
-
-        Ok(())
-    }
-
-    /// Executes a command asynchronously in a background task
-    /// This runs in a separate tokio task to avoid blocking the UI
-    /// Captures stdout/stderr directly from the spawned process
-    async fn execute_command_async(
-        request: CommandRequest,
-        output_tx: mpsc::UnboundedSender<CommandResult>,
-    ) -> Result<String> {
-        crate::debug!("execute_command_async: Starting command");
-
-        // Execute based on command type
-        match request.command_type {
-            CommandType::Start => {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                use tokio::process::Command;
-
-                // Get the CLI binary path
-                let binary_path = std::env::current_exe()?;
-
-                // Build the command: devcli start <app> --project <project> --env <env>
-                let mut cmd = Command::new(binary_path);
-                cmd.arg("start")
-                    .arg(&request.app_name)
-                    .arg("--project")
-                    .arg(&request.project)
-                    .arg("--env")
-                    .arg(&request.environment)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-
-                let mut child = cmd.spawn()?;
-
-                // Capture stdout
-                if let Some(stdout) = child.stdout.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stdout).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
-                        }
-                    });
-                }
-
-                // Capture stderr
-                // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
-                if let Some(stderr) = child.stderr.take() {
-                    let output_tx_clone = output_tx.clone();
-                    let env = request.environment.clone();
-                    let is_docker_like = env == "docker" || env == "orbstack";
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stderr).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let formatted = if is_docker_like {
-                                line // Don't prefix for docker/orbstack
-                            } else {
-                                format!("[stderr] {}", line)
-                            };
-                            let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
-                        }
-                    });
-                }
-
-                // Wait for the command to complete
-                let status = child.wait().await?;
-
-                if !status.success() {
-                    anyhow::bail!("Start command failed with status: {}", status);
-                }
-
-                crate::debug!("execute_command_async: Start command finished");
-                Ok(format!("Successfully started {}", request.app_name))
-            }
-            CommandType::Run => {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                use tokio::process::Command;
-
-                // Parse environment:command format
-                // The environment field contains "env:command" (e.g., "orbstack:run")
-                let (env, command_name) = if let Some((e, c)) = request.environment.split_once(':')
-                {
-                    (e, c)
-                } else {
-                    // Fallback if format is wrong - treat whole string as command
-                    ("local", request.environment.as_str())
-                };
-
-                // Get the CLI binary path
-                let binary_path = std::env::current_exe()?;
-
-                // Build the command: devcli run <app> <command> --project <project> --env <env>
-                let mut cmd = Command::new(binary_path);
-                cmd.arg("run")
-                    .arg(&request.app_name)
-                    .arg(command_name)
-                    .arg("--project")
-                    .arg(&request.project)
-                    .arg("--env")
-                    .arg(env)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-
-                let mut child = cmd.spawn()?;
-
-                // Capture stdout
-                if let Some(stdout) = child.stdout.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stdout).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
-                        }
-                    });
-                }
-
-                // Capture stderr
-                // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
-                if let Some(stderr) = child.stderr.take() {
-                    let output_tx_clone = output_tx.clone();
-                    let is_docker_like = env == "docker" || env == "orbstack";
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stderr).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let formatted = if is_docker_like {
-                                line // Don't prefix for docker/orbstack
-                            } else {
-                                format!("[stderr] {}", line)
-                            };
-                            let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
-                        }
-                    });
-                }
-
-                // Wait for the command to complete
-                let status = child.wait().await?;
-
-                if !status.success() {
-                    anyhow::bail!("Run command failed with status: {}", status);
-                }
-
-                crate::debug!("execute_command_async: Run command finished");
-                Ok(format!("Successfully ran command for {}", request.app_name))
-            }
-            CommandType::Stop => {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                use tokio::process::Command;
-
-                // Get the CLI binary path
-                let binary_path = std::env::current_exe()?;
-
-                // Build the command: devcli stop <app> --project <project>
-                let mut cmd = Command::new(binary_path);
-                cmd.arg("stop")
-                    .arg(&request.app_name)
-                    .arg("--project")
-                    .arg(&request.project)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-
-                let mut child = cmd.spawn()?;
-
-                // Capture stdout
-                if let Some(stdout) = child.stdout.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stdout).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
-                        }
-                    });
-                }
-
-                // Capture stderr
-                if let Some(stderr) = child.stderr.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stderr).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone
-                                .send(CommandResult::LogLine(format!("[stderr] {}", line)));
-                        }
-                    });
-                }
-
-                // Wait for the command to complete
-                let status = child.wait().await?;
-
-                if !status.success() {
-                    anyhow::bail!("Stop command failed with status: {}", status);
-                }
-
-                crate::debug!("execute_command_async: Stop command finished");
-                Ok(format!("Successfully stopped {}", request.app_name))
-            }
-            CommandType::Restart => {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                use tokio::process::Command;
-
-                // Get the CLI binary path
-                let binary_path = std::env::current_exe()?;
-
-                // Build the command: devcli restart <app> --project <project> --env <env>
-                let mut cmd = Command::new(binary_path);
-                cmd.arg("restart")
-                    .arg(&request.app_name)
-                    .arg("--project")
-                    .arg(&request.project)
-                    .arg("--env")
-                    .arg(&request.environment)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-
-                let mut child = cmd.spawn()?;
-
-                // Capture stdout
-                if let Some(stdout) = child.stdout.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stdout).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone.send(CommandResult::LogLine(line));
-                        }
-                    });
-                }
-
-                // Capture stderr
-                if let Some(stderr) = child.stderr.take() {
-                    let output_tx_clone = output_tx.clone();
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stderr).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let _ = output_tx_clone
-                                .send(CommandResult::LogLine(format!("[stderr] {}", line)));
-                        }
-                    });
-                }
-
-                // Wait for the command to complete
-                let status = child.wait().await?;
-
-                if !status.success() {
-                    anyhow::bail!("Restart command failed with status: {}", status);
-                }
-
-                crate::debug!("execute_command_async: Restart command finished");
-                Ok(format!("Successfully restarted {}", request.app_name))
-            }
-        }
-    }
-
-    /// Checks for command execution results from background tasks
-    /// Updates popup state based on results
-    /// Streams log lines to the popup in real-time
-    fn check_command_results(&mut self) -> Result<()> {
-        // Try to receive results without blocking
-        while let Ok(result) = self.command_rx.try_recv() {
-            match result {
-                CommandResult::LogLine(line) => {
-                    // Stream log line to popup
-                    if let Some(popup) = &mut self.command_popup {
-                        popup.add_output_line(line);
-                    }
-                    self.needs_redraw = true;
-                }
-                CommandResult::Success(_msg) => {
-                    crate::debug!("Received Success");
-
-                    // Refresh log list to show newly created log files
-                    // This checks if the logs directory has been modified
-                    if self.main_view.refresh_log_list() {
-                        crate::debug!("Logs directory changed, triggering UI refresh");
-                        self.needs_redraw = true;
-                    }
-
-                    // Keep the popup open showing logs
-                    // User can close with ESC when ready
-                    self.needs_redraw = true;
-                }
-                CommandResult::Error(msg) => {
-                    crate::debug!("Received Error: {}", msg);
-                    if let Some(popup) = &mut self.command_popup {
-                        popup.set_error(msg);
-                    }
-                    self.needs_redraw = true;
-                }
-            }
         }
 
         Ok(())
@@ -1494,7 +748,7 @@ impl TuiApp {
     /// Delegates to view-specific rendering based on current view
     /// Also renders popup if one is active
     /// Optimization: Layered rendering approach for efficient updates
-    fn render(&mut self, frame: &mut Frame) {
+    pub(crate) fn render(&mut self, frame: &mut Frame) {
         // Lock the state for reading during rendering
         // If we can't get the lock, skip this frame
         // Performance: Non-blocking approach prevents frame drops
@@ -1527,16 +781,13 @@ impl TuiApp {
 
         // Render error message if present (but not if popup or help is showing)
         if let Some(error) = &state.error_message {
-            if self.command_popup.is_none() && !self.help_overlay.is_visible() {
+            if !self.popup_manager.is_active() && !self.help_overlay.is_visible() {
                 self.render_error_message(frame, error);
             }
         }
 
-        // Render command popup if active (renders on top of everything except help)
-        if let Some(popup) = &self.command_popup {
-            crate::debug!("[Render] Rendering command popup");
-            popup.render(frame, &self.theme);
-        }
+        // Render popup overlay if active
+        self.popup_manager.render(frame, &self.theme);
 
         // Render help overlay if visible (renders on top of everything)
         if self.help_overlay.is_visible() {

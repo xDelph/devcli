@@ -3,11 +3,14 @@
 // Inspired by GitUI's clean and efficient design
 
 pub mod app;
+pub mod command_executor;
 pub mod debug;
 pub mod event_loop;
 pub mod input;
 pub mod log_manager;
+pub mod popups;
 pub mod refresh_manager;
+pub mod runtime;
 pub mod state;
 pub mod terminal;
 pub mod theme;
@@ -23,5 +26,7 @@ pub use theme::Theme;
 pub use views::{LogViewerView, MainTab, MainView, PanelFocus};
 pub use widgets::CommandPopup;
 
+#[cfg(test)]
+mod app_tests;
 #[cfg(test)]
 mod tests;
