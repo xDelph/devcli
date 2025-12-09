@@ -6,6 +6,8 @@ pub struct ViewportState {
     pub viewport_top: usize,
     /// Current horizontal scroll offset (character index)
     pub horizontal_offset: usize,
+    /// Last visual row scroll offset (for text wrapping)
+    pub last_visual_scroll: usize,
 }
 
 impl ViewportState {
@@ -16,6 +18,7 @@ impl ViewportState {
             cursor_line,
             viewport_top: 0, // Adjusted on first render
             horizontal_offset: 0,
+            last_visual_scroll: 0,
         }
     }
 

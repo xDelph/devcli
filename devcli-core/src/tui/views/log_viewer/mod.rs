@@ -520,10 +520,10 @@ impl SingleLogView {
                 ])
                 .split(chunks[1]);
 
-            // Adjust viewport to ensure cursor is visible
-            let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
-            self.viewport
-                .adjust_viewport(visible_height, self.total_lines);
+            // Viewport adjustment disabled - render_content handles scroll with wrapping
+            // let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
+            // self.viewport
+            //     .adjust_viewport(visible_height, self.total_lines);
 
             // Render log content on left
             self.render_content(frame, content_chunks[0], is_active);
@@ -531,10 +531,10 @@ impl SingleLogView {
             // Render JSON panel on right
             self.render_json_panel(frame, content_chunks[1]);
         } else {
-            // Adjust viewport to ensure cursor is visible
-            let visible_height = chunks[1].height.saturating_sub(2) as usize;
-            self.viewport
-                .adjust_viewport(visible_height, self.total_lines);
+            // Viewport adjustment disabled - render_content handles scroll with wrapping
+            // let visible_height = chunks[1].height.saturating_sub(2) as usize;
+            // self.viewport
+            //     .adjust_viewport(visible_height, self.total_lines);
 
             // Render log content full width
             self.render_content(frame, chunks[1], is_active);
@@ -588,28 +588,82 @@ impl SingleLogView {
         frame.render_widget(header, area);
     }
 
-    /// Renders the main log content with line numbers
-    fn render_content(&self, frame: &mut Frame, area: Rect, is_active: bool) {
+    /// Calculates how many visual rows a log line will occupy when wrapped
+    fn calculate_wrapped_rows(log_line: &LogLine, available_width: usize) -> usize {
+        let prefix_width = 8; // "12345 | " format
+        let content_width = log_line
+            .formatted
+            .iter()
+            .map(|span| span.content.len())
+            .sum::<usize>();
+        let total_line_width = prefix_width + content_width;
+
+        if total_line_width == 0 {
+            1
+        } else {
+            total_line_width.div_ceil(available_width).max(1)
+        }
+    }
+
+    /// Renders the main log content with line numbers and text wrapping
+    ///
+    /// This method handles text wrapping by:
+    /// 1. Calculating visual row positions for each logical line
+    /// 2. Determining scroll offset to keep cursor visible
+    /// 3. Rendering all lines with proper highlighting and wrapping
+    fn render_content(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
+        let available_width = area.width.saturating_sub(2) as usize;
+        let visible_height = area.height.saturating_sub(2) as usize;
+
+        // Calculate visual row position for each logical line
+        // This accounts for text wrapping - a long line may span multiple visual rows
+        let mut visual_row_positions: Vec<usize> = Vec::new();
+        let mut current_visual_row = 0;
+
+        for log_line in &self.content {
+            visual_row_positions.push(current_visual_row);
+            let wrapped_rows = Self::calculate_wrapped_rows(log_line, available_width);
+            current_visual_row += wrapped_rows;
+        }
+
+        // Get visual row position for cursor
+        let cursor_visual_row = visual_row_positions
+            .get(self.viewport.cursor_line)
+            .copied()
+            .unwrap_or(0);
+
+        // Calculate scroll offset to keep cursor visible
+        // Only scrolls when cursor moves outside the visible range
+        let scroll_offset = if cursor_visual_row < self.viewport.last_visual_scroll {
+            // Cursor moved above viewport - scroll up to show it at top
+            cursor_visual_row
+        } else if cursor_visual_row >= self.viewport.last_visual_scroll + visible_height {
+            // Cursor moved below viewport - scroll down to show it at bottom
+            cursor_visual_row.saturating_sub(visible_height - 1)
+        } else {
+            // Cursor is within visible range - maintain current scroll position
+            self.viewport.last_visual_scroll
+        };
+
+        // Remember scroll position for next frame
+        self.viewport.last_visual_scroll = scroll_offset;
+
         // Build text with ALL lines
         let mut text = Text::default();
 
         for (i, log_line) in self.content.iter().enumerate() {
-            // Determine the background color for this line
             let bg_color = if i == self.viewport.cursor_line {
                 if is_active {
-                    Color::Rgb(40, 40, 60) // Active cursor
+                    Color::Rgb(40, 40, 60)
                 } else {
-                    Color::Rgb(20, 20, 30) // Inactive but selected line
+                    Color::Rgb(20, 20, 30)
                 }
             } else {
-                Color::Rgb(0, 0, 0) // Default background
+                Color::Rgb(0, 0, 0)
             };
 
-            // Create line with line number prefix
-            // Using simple ASCII characters for better alignment
             let line_num_str = format!("{:>5} | ", log_line.line_number);
             let line_num_span = if self.search.is_match(i) {
-                // Highlight search matches
                 Span::styled(
                     line_num_str.clone(),
                     Style::default()
@@ -617,19 +671,14 @@ impl SingleLogView {
                         .add_modifier(Modifier::BOLD),
                 )
             } else if i == self.viewport.cursor_line {
-                // Highlight cursor line with arrow
                 let cursor_str = format!("{:>5} > ", log_line.line_number);
                 Span::styled(cursor_str, Style::default().fg(Color::Cyan))
             } else {
-                // Regular line number
                 Span::styled(line_num_str.clone(), Style::default().fg(Color::DarkGray))
             };
 
-            // Combine line number with content
             let mut spans = vec![line_num_span];
 
-            // If this is the selected line, we need to override the background of all content spans
-            // otherwise their explicit black background will hide the selection highlight
             if i == self.viewport.cursor_line {
                 let content_spans: Vec<Span> = log_line
                     .formatted
@@ -645,32 +694,17 @@ impl SingleLogView {
                 spans.extend(log_line.formatted.clone());
             }
 
-            // Use Line::styled to apply background to the entire line
-            // This ensures the line fills the full width with the background color
-            let mut line = Line::from(spans).style(Style::default().bg(bg_color));
-
-            // Pad the selected line with spaces to ensure the background extends to the full width
-            if i == self.viewport.cursor_line {
-                let available_width = area.width.saturating_sub(2) as usize; // Subtract borders
-                let current_width = line.width();
-                if current_width < available_width {
-                    let padding = available_width - current_width;
-                    let padding_span =
-                        Span::styled(" ".repeat(padding), Style::default().bg(bg_color));
-                    line.spans.push(padding_span);
-                }
-            }
-
+            let line = Line::from(spans).style(Style::default().bg(bg_color));
             text.lines.push(line);
         }
 
-        // Use Paragraph with scroll and set background style to fill entire area
         let border_color = if is_active {
-            Color::White // Content border for active
+            Color::White
         } else {
             Color::DarkGray
         };
 
+        // Use wrapping - scroll by visual rows
         let paragraph = Paragraph::new(text)
             .block(
                 Block::default()
@@ -679,7 +713,8 @@ impl SingleLogView {
                     .style(Style::default().bg(Color::Rgb(0, 0, 0))),
             )
             .style(Style::default().bg(Color::Rgb(0, 0, 0)))
-            .scroll((self.viewport.viewport_top as u16, 0));
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((scroll_offset as u16, 0));
 
         frame.render_widget(paragraph, area);
     }
