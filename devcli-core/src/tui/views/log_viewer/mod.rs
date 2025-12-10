@@ -648,6 +648,93 @@ impl SingleLogView {
         }
     }
 
+    /// Applies search highlighting to formatted spans
+    /// Highlights matched text with bright background colors
+    /// 
+    /// # Arguments
+    /// * `formatted_spans` - The original formatted spans from the log line
+    /// * `match_ranges` - Character ranges within the line that match the search query
+    /// * `bg_color` - Background color to apply to non-highlighted text
+    /// * `is_current_result` - Whether this is the currently selected search result
+    /// 
+    /// # Returns
+    /// Vector of spans with search highlighting applied
+    fn apply_search_highlighting(
+        &self,
+        formatted_spans: &[ratatui::text::Span],
+        match_ranges: &[search::MatchRange],
+        bg_color: Color,
+        is_current_result: bool,
+    ) -> Vec<Span<'static>> {
+        let mut result_spans = Vec::new();
+        let mut char_pos = 0;
+        
+        for span in formatted_spans {
+            let span_start = char_pos;
+            let span_end = char_pos + span.content.chars().count(); // Use char count, not byte length
+            
+            // Find matches that overlap with this span
+            let overlapping_matches: Vec<_> = match_ranges
+                .iter()
+                .filter(|m| m.start < span_end && m.end > span_start)
+                .collect();
+            
+            if overlapping_matches.is_empty() {
+                // No matches in this span, just apply background
+                let mut style = span.style;
+                style.bg = Some(bg_color);
+                result_spans.push(Span::styled(span.content.to_string(), style));
+            } else {
+                // Split span to highlight matches
+                let mut current_pos = 0;
+                let span_chars: Vec<char> = span.content.chars().collect();
+                
+                for &match_range in &overlapping_matches {
+                    let match_start_in_span = match_range.start.saturating_sub(span_start);
+                    let match_end_in_span = (match_range.end.saturating_sub(span_start)).min(span_chars.len());
+                    
+                    // Add text before match
+                    if current_pos < match_start_in_span {
+                        let before_text: String = span_chars[current_pos..match_start_in_span].iter().collect();
+                        let mut style = span.style;
+                        style.bg = Some(bg_color);
+                        result_spans.push(Span::styled(before_text, style));
+                    }
+                    
+                    // Add highlighted match
+                    if match_start_in_span < match_end_in_span {
+                        let match_text: String = span_chars[match_start_in_span..match_end_in_span].iter().collect();
+                        let highlight_color = if is_current_result {
+                            Color::Rgb(255, 255, 0) // Bright yellow for current result
+                        } else {
+                            Color::Rgb(200, 200, 100) // Dimmer yellow for other matches
+                        };
+                        
+                        let mut style = span.style;
+                        style.bg = Some(highlight_color);
+                        style.fg = Some(Color::Black); // Black text on yellow background
+                        style = style.add_modifier(Modifier::BOLD);
+                        result_spans.push(Span::styled(match_text, style));
+                    }
+                    
+                    current_pos = match_end_in_span;
+                }
+                
+                // Add remaining text after last match
+                if current_pos < span_chars.len() {
+                    let after_text: String = span_chars[current_pos..].iter().collect();
+                    let mut style = span.style;
+                    style.bg = Some(bg_color);
+                    result_spans.push(Span::styled(after_text, style));
+                }
+            }
+            
+            char_pos = span_end;
+        }
+        
+        result_spans
+    }
+
     /// Renders the main log content with line numbers and text wrapping
     ///
     /// This method handles text wrapping by:
@@ -706,11 +793,21 @@ impl SingleLogView {
             };
 
             let line_num_str = format!("{:>5} | ", log_line.line_number);
-            let line_num_span = if self.search.is_match(i) {
+            let line_num_span = if self.search.is_current_result(i) {
+                // Current search result gets bright yellow with arrow
+                let cursor_str = format!("{:>5} ▶ ", log_line.line_number);
+                Span::styled(
+                    cursor_str,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if self.search.is_match(i) {
+                // Other search matches get dimmer yellow
                 Span::styled(
                     line_num_str.clone(),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::Rgb(200, 200, 100))
                         .add_modifier(Modifier::BOLD),
                 )
             } else if i == self.viewport.cursor_line {
@@ -732,20 +829,12 @@ impl SingleLogView {
             );
             spans.push(app_name_span);
 
-            if i == self.viewport.cursor_line {
-                let content_spans: Vec<Span> = log_line
-                    .formatted
-                    .iter()
-                    .map(|s| {
-                        let mut style = s.style;
-                        style.bg = Some(bg_color);
-                        Span::styled(s.content.clone(), style)
-                    })
-                    .collect();
-                spans.extend(content_spans);
+            // Apply search highlighting if this line has matches
+            let content_spans = if let Some(match_ranges) = self.search.get_match_ranges(i) {
+                self.apply_search_highlighting(&log_line.formatted, match_ranges, bg_color, self.search.is_current_result(i))
             } else {
-                // For non-cursor lines, we need to apply background color to app name and content
-                let content_spans: Vec<Span> = log_line
+                // No search matches, just apply background color
+                log_line
                     .formatted
                     .iter()
                     .map(|s| {
@@ -753,9 +842,10 @@ impl SingleLogView {
                         style.bg = Some(bg_color);
                         Span::styled(s.content.clone(), style)
                     })
-                    .collect();
-                spans.extend(content_spans);
-            }
+                    .collect()
+            };
+            
+            spans.extend(content_spans);
 
             let line = Line::from(spans).style(Style::default().bg(bg_color));
             text.lines.push(line);
@@ -831,18 +921,18 @@ impl SingleLogView {
     /// Returns status text for the unified footer
     pub fn get_status_text(&self) -> String {
         if self.search.active {
-            // Show search input with match count
+            // Show search input with match count and navigation help
             let match_info = if !self.search.results.is_empty() {
                 format!(
-                    " [{} matches] ({}/{})",
+                    " [{} matches] ({}/{}) - ↑↓/jk/Enter: Navigate  Esc: Exit",
                     self.search.results.len(),
                     self.search.current_idx + 1,
                     self.search.results.len()
                 )
             } else if !self.search.query.is_empty() {
-                " [No matches]".to_string()
+                " [No matches] - Esc: Exit".to_string()
             } else {
-                String::new()
+                " - Type to search, Esc: Exit".to_string()
             };
 
             format!("Search: {}{}", self.search.query, match_info)
@@ -889,31 +979,35 @@ impl SingleLogView {
                 }
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Enter | KeyCode::Esc => {
-                // Exit search mode
-                self.search.active = false;
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Char('n') if key.modifiers.is_empty() => {
-                // Next search result
+            KeyCode::Enter => {
+                // Cycle to next search result
                 if let Some(idx) = self.search.next_result() {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Char('N')
-                if key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::SHIFT) =>
-            {
-                // Previous search result (Shift+N)
+            KeyCode::Esc => {
+                // Exit search mode and clear all highlighting
+                self.search.active = false;
+                self.search.clear_results();
+                Ok(LogInputResult::Handled)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                // Next search result (Down arrow or j)
+                if let Some(idx) = self.search.next_result() {
+                    self.viewport.cursor_line = idx;
+                }
+                Ok(LogInputResult::Handled)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                // Previous search result (Up arrow or k)
                 if let Some(idx) = self.search.previous_result() {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Char(c) => {
-                // Add character to search query
+            KeyCode::Char(c) if c.is_ascii() => {
+                // Add character to search query (allow all printable ASCII characters including 'n')
                 self.search.query.push(c);
                 if let Some(idx) = self.search.perform_search(&self.content) {
                     self.viewport.cursor_line = idx;
