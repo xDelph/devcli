@@ -4,6 +4,7 @@
 
 use crate::tui::theme::Theme;
 use crate::tui::views::log_viewer::app_color_manager::AppColorManager;
+use crate::config::{load_config, list_all_apps};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -47,6 +48,8 @@ pub struct CommandPopup {
     pub app_status: Option<String>,
     /// Color manager for consistent app name coloring
     color_manager: AppColorManager,
+    /// All app names from config (for colorizing any app name that appears in logs)
+    all_app_names: Vec<String>,
 }
 
 /// Represents the different states of the command popup
@@ -79,6 +82,17 @@ impl CommandPopup {
         project: String,
         environment: String,
     ) -> Self {
+        // Load config to get all app names for colorization
+        // If config loading fails, use empty list (graceful degradation)
+        let all_app_names = load_config()
+            .map(|config| {
+                list_all_apps(&config)
+                    .into_iter()
+                    .map(|(_, app_name, _)| app_name)
+                    .collect()
+            })
+            .unwrap_or_else(|_| Vec::new());
+
         Self {
             command_name,
             command_text,
@@ -95,6 +109,7 @@ impl CommandPopup {
             selected_env_index: 0,
             app_status: None,
             color_manager: AppColorManager::new(),
+            all_app_names,
         }
     }
 
@@ -123,6 +138,17 @@ impl CommandPopup {
             .position(|e| e == &default_env)
             .unwrap_or(0);
 
+        // Load config to get all app names for colorization
+        // If config loading fails, use empty list (graceful degradation)
+        let all_app_names = load_config()
+            .map(|config| {
+                list_all_apps(&config)
+                    .into_iter()
+                    .map(|(_, app_name, _)| app_name)
+                    .collect()
+            })
+            .unwrap_or_else(|_| Vec::new());
+
         Self {
             command_name,
             command_text,
@@ -139,6 +165,7 @@ impl CommandPopup {
             selected_env_index,
             app_status: None,
             color_manager: AppColorManager::new(),
+            all_app_names,
         }
     }
 
@@ -597,7 +624,7 @@ impl CommandPopup {
                 .collect();
 
             for output_line in visible_lines {
-                // Parse ANSI codes first to get styled spans
+                // Parse ANSI codes first to get styled spans using the enhanced utils parser
                 let ansi_spans = crate::tui::utils::ansi::parse_ansi_codes(&output_line);
                 
                 // Then colorize app names in the parsed spans
@@ -863,8 +890,10 @@ impl CommandPopup {
                 let app_name_with_brackets = &remaining[start..=end];
                 let app_name = &remaining[start + 1..end];
                 
-                // Skip if it's not a valid app name (e.g., empty or contains spaces)
-                if !app_name.is_empty() && !app_name.contains(' ') {
+                // Only colorize if this matches any app name from the config
+                // This allows coloring all app names that appear in logs (for dependency chains)
+                // but prevents coloring random bracketed text like [nestJs.InstanceLoader]
+                if self.all_app_names.contains(&app_name.to_string()) {
                     // Get color for this app name
                     let app_color = self.color_manager.get_color_for_app(app_name);
                     
@@ -877,7 +906,7 @@ impl CommandPopup {
                             .bg(original_style.bg.unwrap_or(Color::Reset)),
                     ));
                 } else {
-                    // Not a valid app name, keep original style
+                    // Not a configured app name, keep original style
                     spans.push(Span::styled(
                         app_name_with_brackets.to_string(),
                         original_style,

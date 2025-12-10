@@ -2,7 +2,7 @@
 // Provides scrolling, JSON prettification, syntax highlighting, and search functionality
 // Implements lazy loading for efficient handling of large log files
 
-pub mod ansi_parser;
+
 pub mod app_color_manager;
 pub mod file_loader;
 pub mod json_formatter;
@@ -307,6 +307,20 @@ impl LogViewerView {
                     if self.active_panel_idx >= self.panels.len() {
                         self.active_panel_idx = self.panels.len().saturating_sub(1);
                     }
+                    
+                    // Reset viewport state for remaining panels to handle layout change
+                    // When going from multi-panel to single-panel, the viewport needs adjustment
+                    for panel in &mut self.panels {
+                        // Reset the visual scroll offset so it recalculates for the new layout
+                        panel.viewport.last_visual_scroll = 0;
+                        
+                        // If the cursor was at the bottom, keep it at the bottom
+                        // This maintains the "follow latest logs" behavior
+                        if panel.viewport.cursor_line + 1 >= panel.total_lines {
+                            panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
+                        }
+                    }
+                    
                     return Ok(LogInputResult::Handled);
                 }
                 // If only 1 panel, let standard Esc handle exit

@@ -3,7 +3,7 @@ use ratatui::text::Span;
 use std::path::Path;
 use syntect::{highlighting::Theme, parsing::SyntaxSet};
 
-use super::ansi_parser::AnsiParser;
+use crate::tui::utils::ansi;
 use super::json_formatter::JsonFormatter;
 
 /// Represents a single line in the log file with formatting information
@@ -31,7 +31,7 @@ impl FileLoader {
         let mut content = Vec::with_capacity(total_lines);
         for (idx, line) in lines.iter().enumerate() {
             // Parse ANSI codes to get styled spans
-            let ansi_spans = AnsiParser::parse_ansi_codes(line);
+            let ansi_spans = ansi::parse_ansi_codes(line);
 
             // Extract raw text for JSON detection and storage
             let raw_text: String = ansi_spans.iter().map(|s| s.content.as_ref()).collect();
@@ -46,7 +46,7 @@ impl FileLoader {
             } else {
                 // Use the ANSI-parsed spans for regular lines
                 // Re-parse with normalized text to maintain ANSI colors
-                AnsiParser::parse_ansi_codes(line)
+                ansi::parse_ansi_codes(line)
             };
 
             content.push(LogLine {
