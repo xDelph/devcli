@@ -611,7 +611,9 @@ impl CommandPopup {
             )));
         }
 
-        let content = Paragraph::new(content_lines).alignment(Alignment::Left);
+        let content = Paragraph::new(content_lines)
+            .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: false });
         frame.render_widget(content, chunks[1]);
 
         // Render scrollbar if needed
