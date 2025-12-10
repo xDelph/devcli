@@ -9,12 +9,13 @@ use std::fs;
 
 
 
-/// Initialize a new config file with a template
+/// Initialize a new config file with empty projects
 /// 
 /// Example: `devcli config init`
 ///
-/// Creates ~/.devcli/config.json with an example app configuration.
-/// The user can then edit this file to add their own projects and apps.
+/// Creates ~/.devcli/config.json with an empty projects structure.
+/// Displays an example project configuration in the console for reference.
+/// The user can then edit the file to add their own projects and apps.
 /// 
 /// # Errors
 /// 
@@ -44,10 +45,14 @@ pub async fn config_init() -> Result<()> {
     // create_dir_all is like "mkdir -p" - creates parent directories too
     fs::create_dir_all(&config_dir)?;
     
-    // Template config with one example app
-    // r#"..."# is a raw string literal - backslashes and quotes don't need escaping
-    // This makes it easier to embed JSON
-    let template = r#"{
+    // Create empty config with no projects
+    let empty_config = r#"{
+  "projects": {}
+}
+"#;
+    
+    // Example project template to show in console
+    let example_template = r#"{
   "projects": {
     "example": {
       "apps": {
@@ -77,12 +82,14 @@ pub async fn config_init() -> Result<()> {
 }
 "#;
     
-    // Write the template to the config file
-    fs::write(&config_path, template)?;
+    // Write the empty config to the config file
+    fs::write(&config_path, empty_config)?;
     
-    // Show success message with next steps
-    println!("✓ Created config file at {}", config_path.display());
-    println!("\nEdit this file to add your projects and apps.");
+    // Show success message with example
+    println!("✓ Created empty config file at {}", config_path.display());
+    println!("\nHere's an example project configuration you can use as a reference:");
+    println!("{}", example_template);
+    println!("Edit the config file to add your projects and apps.");
     println!("Then run 'devcli config validate' to check your configuration.");
     
     Ok(())

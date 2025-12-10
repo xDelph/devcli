@@ -3,10 +3,27 @@
 #[cfg(test)]
 mod init_tests {
     #[test]
-    fn test_config_init_template_structure() {
-        // Test that the template contains expected structure
-        // This tests the template content without file I/O
-        let template = r#"{
+    fn test_empty_config_structure() {
+        // Test that the empty config contains expected structure
+        // This tests the empty config content without file I/O
+        let empty_config = r#"{
+  "projects": {}
+}
+"#;
+        
+        // Verify empty config is valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(empty_config)
+            .expect("Empty config should be valid JSON");
+        
+        // Verify structure - should have empty projects object
+        assert!(parsed["projects"].is_object(), "Should have projects object");
+        assert_eq!(parsed["projects"].as_object().unwrap().len(), 0, "Projects should be empty");
+    }
+
+    #[test]
+    fn test_example_template_structure() {
+        // Test that the example template (shown in console) contains expected structure
+        let example_template = r#"{
   "projects": {
     "example": {
       "apps": {
@@ -36,9 +53,10 @@ mod init_tests {
 }
 "#;
         
-        // Verify template is valid JSON
-        let parsed: serde_json::Value = serde_json::from_str(template)
-            .expect("Template should be valid JSON");
+        // Verify example template is valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(example_template)
+            .expect("Example template should be valid JSON");
+        
         // Verify structure
         assert!(parsed["projects"].is_object(), "Should have projects object");
         assert!(parsed["projects"]["example"].is_object(), "Should have example project");
