@@ -861,6 +861,18 @@ impl SingleLogView {
             
             spans.extend(content_spans);
 
+            // Calculate the current line width to add padding for full-width background
+            let current_width: usize = spans.iter().map(|span| span.content.len()).sum();
+            let remaining_width = available_width.saturating_sub(current_width);
+            
+            // Add padding span to fill the remaining width with background color
+            if remaining_width > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(remaining_width),
+                    Style::default().bg(bg_color),
+                ));
+            }
+
             let line = Line::from(spans).style(Style::default().bg(bg_color));
             text.lines.push(line);
         }
