@@ -83,8 +83,8 @@ impl PopupManager {
     }
 
     /// Render the active popup
-    pub(crate) fn render(&self, frame: &mut Frame, theme: &Theme) {
-        if let Some(popup) = &self.active_popup {
+    pub(crate) fn render(&mut self, frame: &mut Frame, theme: &Theme) {
+        if let Some(popup) = &mut self.active_popup {
             popup.render(frame, theme);
         }
     }

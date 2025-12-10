@@ -3,9 +3,10 @@
 // Follows the design pattern of modal dialogs with clear user feedback
 
 use crate::tui::theme::Theme;
+use crate::tui::views::log_viewer::app_color_manager::AppColorManager;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -44,6 +45,8 @@ pub struct CommandPopup {
     selected_env_index: usize,
     /// Current app status (for display in header)
     pub app_status: Option<String>,
+    /// Color manager for consistent app name coloring
+    color_manager: AppColorManager,
 }
 
 /// Represents the different states of the command popup
@@ -91,6 +94,7 @@ impl CommandPopup {
             available_envs: vec![environment],
             selected_env_index: 0,
             app_status: None,
+            color_manager: AppColorManager::new(),
         }
     }
 
@@ -134,6 +138,7 @@ impl CommandPopup {
             available_envs,
             selected_env_index,
             app_status: None,
+            color_manager: AppColorManager::new(),
         }
     }
 
@@ -278,7 +283,7 @@ impl CommandPopup {
 
     /// Renders the popup on the screen
     /// Creates a centered modal dialog with content based on current state
-    pub fn render(&self, frame: &mut Frame, theme: &Theme) {
+    pub fn render(&mut self, frame: &mut Frame, theme: &Theme) {
         let size = frame.area();
 
         // Render a dimmed overlay over the entire screen for better focus
@@ -302,8 +307,11 @@ impl CommandPopup {
         // Clear the area behind the popup for proper modal effect
         frame.render_widget(Clear, popup_area);
 
+        // Clone state to avoid borrowing conflicts
+        let state = self.state.clone();
+        
         // Render content based on current state
-        match &self.state {
+        match state {
             PopupState::Confirm => self.render_confirm(frame, popup_area, theme),
             PopupState::Executing if is_stop => {
                 self.render_executing_simple(frame, popup_area, theme)
@@ -317,17 +325,17 @@ impl CommandPopup {
                         theme,
                         "Success",
                         theme.success,
-                        Some(msg),
+                        Some(&msg),
                     )
                 } else {
-                    self.render_success(frame, popup_area, theme, msg)
+                    self.render_success(frame, popup_area, theme, &msg)
                 }
             }
             PopupState::Error(msg) => {
                 if has_logs {
-                    self.render_log_view(frame, popup_area, theme, "Error", theme.error, Some(msg))
+                    self.render_log_view(frame, popup_area, theme, "Error", theme.error, Some(&msg))
                 } else {
-                    self.render_error(frame, popup_area, theme, msg)
+                    self.render_error(frame, popup_area, theme, &msg)
                 }
             }
         }
@@ -335,7 +343,7 @@ impl CommandPopup {
 
     /// Renders the confirmation dialog
     /// Shows command details and asks user to confirm execution
-    fn render_confirm(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_confirm(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let mut lines = vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -434,7 +442,7 @@ impl CommandPopup {
 
     /// Renders a simple executing state for stop/restart operations
     /// Shows status message without logs
-    fn render_executing_simple(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_executing_simple(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let status_message = if !self.output_lines.is_empty() {
             // Show the last status line if we have any
             self.output_lines
@@ -489,13 +497,13 @@ impl CommandPopup {
 
     /// Renders the executing state
     /// Shows logs streaming from the process
-    fn render_executing(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_executing(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         self.render_log_view(frame, area, theme, "Logs", theme.warning, None)
     }
 
     /// Generic log viewer renderer
     fn render_log_view(
-        &self,
+        &mut self,
         frame: &mut Frame,
         area: Rect,
         theme: &Theme,
@@ -579,19 +587,22 @@ impl CommandPopup {
         // Render content (scrollable logs)
         let mut content_lines = Vec::new();
         if !self.output_lines.is_empty() {
-            let visible_lines: Vec<_> = self
+            // Clone the lines we need to avoid borrowing conflicts
+            let visible_lines: Vec<String> = self
                 .output_lines
                 .iter()
                 .skip(scroll_pos)
                 .take(available_height)
+                .cloned()
                 .collect();
 
             for output_line in visible_lines {
-                // Use the shared ANSI parser to convert escape codes to styled Spans
-                // This handles colors (foreground/background) and styles (bold, dim, etc.)
-                // The parser is located in src/tui/utils/ansi.rs for reusability
-                let spans = crate::tui::utils::ansi::parse_ansi_codes(output_line);
-                content_lines.push(Line::from(spans));
+                // Parse ANSI codes first to get styled spans
+                let ansi_spans = crate::tui::utils::ansi::parse_ansi_codes(&output_line);
+                
+                // Then colorize app names in the parsed spans
+                let colorized_spans = self.colorize_app_names_in_spans(ansi_spans);
+                content_lines.push(Line::from(colorized_spans));
             }
         } else {
             content_lines.push(Line::from(Span::styled(
@@ -661,7 +672,7 @@ impl CommandPopup {
 
     /// Renders the success state
     /// Shows success message and allows user to dismiss
-    fn render_success(&self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
+    fn render_success(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -709,7 +720,7 @@ impl CommandPopup {
 
     /// Renders the error state
     /// Shows error message and allows user to dismiss
-    fn render_error(&self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
+    fn render_error(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, message: &str) {
         let mut lines = vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -789,6 +800,102 @@ impl CommandPopup {
                 Constraint::Percentage((100 - percent_x) / 2),
             ])
             .split(popup_layout[1])[1]
+    }
+
+    /// Colorizes app names in log output spans
+    /// 
+    /// Searches for app names in the format [appName] within the text content
+    /// and applies consistent coloring based on the app color manager.
+    /// 
+    /// # Arguments
+    /// * `spans` - Vector of spans from ANSI parsing
+    /// 
+    /// # Returns
+    /// Vector of spans with app names colorized
+    fn colorize_app_names_in_spans(&mut self, spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
+        let mut result = Vec::new();
+        
+        for span in spans {
+            // Check if this span contains app names in [appName] format
+            let content = &span.content;
+            if content.contains('[') && content.contains(']') {
+                // Parse and colorize app names
+                let colorized_spans = self.parse_and_colorize_app_names(content, span.style);
+                result.extend(colorized_spans);
+            } else {
+                // No app names, keep original span
+                result.push(span);
+            }
+        }
+        
+        result
+    }
+
+    /// Parses text content and colorizes app names in [appName] format
+    /// 
+    /// Splits text by app name patterns and applies colors to the app names
+    /// while preserving the original style for other text.
+    /// 
+    /// # Arguments
+    /// * `content` - Text content to parse
+    /// * `original_style` - Original style to preserve for non-app-name text
+    /// 
+    /// # Returns
+    /// Vector of spans with app names colorized
+    fn parse_and_colorize_app_names(&mut self, content: &str, original_style: Style) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        let mut remaining = content;
+        
+        while let Some(start) = remaining.find('[') {
+            // Add text before the bracket
+            if start > 0 {
+                spans.push(Span::styled(
+                    remaining[..start].to_string(),
+                    original_style,
+                ));
+            }
+            
+            // Find the closing bracket
+            if let Some(end) = remaining[start..].find(']') {
+                let end = start + end;
+                let app_name_with_brackets = &remaining[start..=end];
+                let app_name = &remaining[start + 1..end];
+                
+                // Skip if it's not a valid app name (e.g., empty or contains spaces)
+                if !app_name.is_empty() && !app_name.contains(' ') {
+                    // Get color for this app name
+                    let app_color = self.color_manager.get_color_for_app(app_name);
+                    
+                    // Create colored span for the app name (including brackets)
+                    spans.push(Span::styled(
+                        app_name_with_brackets.to_string(),
+                        Style::default()
+                            .fg(app_color)
+                            .add_modifier(Modifier::BOLD)
+                            .bg(original_style.bg.unwrap_or(Color::Reset)),
+                    ));
+                } else {
+                    // Not a valid app name, keep original style
+                    spans.push(Span::styled(
+                        app_name_with_brackets.to_string(),
+                        original_style,
+                    ));
+                }
+                
+                remaining = &remaining[end + 1..];
+            } else {
+                // No closing bracket found, add the rest as-is
+                spans.push(Span::styled(remaining.to_string(), original_style));
+                break;
+            }
+        }
+        
+        // Add any remaining text
+        if !remaining.is_empty() {
+            spans.push(Span::styled(remaining.to_string(), original_style));
+        }
+        
+        spans
     }
 }
 

@@ -3,6 +3,7 @@
 // Implements lazy loading for efficient handling of large log files
 
 pub mod ansi_parser;
+pub mod app_color_manager;
 pub mod file_loader;
 pub mod json_formatter;
 pub mod search;
@@ -21,6 +22,7 @@ use ratatui::{
 use std::path::PathBuf;
 
 use self::{
+    app_color_manager::AppColorManager,
     file_loader::{FileLoader, LogLine},
     json_formatter::JsonFormatter,
     search::SearchState,
@@ -79,14 +81,22 @@ pub struct LogViewerView {
     active_panel_idx: usize,
     /// State for the log selection popup
     selection_state: LogSelectionState,
+    /// Manages color assignment for app names across all panels
+    color_manager: AppColorManager,
 }
 
 impl LogViewerView {
     /// Creates a new log viewer with initial log paths
     pub fn new(log_paths: Vec<PathBuf>) -> Result<Self> {
+        let mut color_manager = AppColorManager::new();
         let mut panels = Vec::new();
+        
         for path in log_paths {
-            panels.push(SingleLogView::new(path)?);
+            // Extract app name and assign color
+            let app_name = AppColorManager::extract_app_name_from_path(&path);
+            let app_color = color_manager.get_color_for_app(&app_name);
+            
+            panels.push(SingleLogView::new(path, app_name, app_color)?);
         }
 
         if panels.is_empty() {
@@ -97,6 +107,7 @@ impl LogViewerView {
             panels,
             active_panel_idx: 0,
             selection_state: LogSelectionState::default(),
+            color_manager,
         })
     }
 
@@ -314,7 +325,11 @@ impl LogViewerView {
     /// Add a new panel
     pub fn add_panel(&mut self, path: PathBuf) -> Result<()> {
         if self.panels.len() < 4 {
-            self.panels.push(SingleLogView::new(path)?);
+            // Extract app name and assign color
+            let app_name = AppColorManager::extract_app_name_from_path(&path);
+            let app_color = self.color_manager.get_color_for_app(&app_name);
+            
+            self.panels.push(SingleLogView::new(path, app_name, app_color)?);
             // Switch focus to new panel
             self.active_panel_idx = self.panels.len() - 1;
         }
@@ -324,7 +339,11 @@ impl LogViewerView {
     /// Replaces the panel at the given index with a new log file
     pub fn replace_panel(&mut self, index: usize, path: PathBuf) -> Result<()> {
         if index < self.panels.len() {
-            self.panels[index] = SingleLogView::new(path)?;
+            // Extract app name and assign color
+            let app_name = AppColorManager::extract_app_name_from_path(&path);
+            let app_color = self.color_manager.get_color_for_app(&app_name);
+            
+            self.panels[index] = SingleLogView::new(path, app_name, app_color)?;
         }
         Ok(())
     }
@@ -457,15 +476,24 @@ pub struct SingleLogView {
     show_json_panel: bool,
     /// Last file size to detect changes
     last_file_size: u64,
+    /// App name extracted from log file path
+    app_name: String,
+    /// Color assigned to this app for consistent display
+    app_color: Color,
 }
 
 impl SingleLogView {
     /// Creates a new log viewer for the specified file
     /// Loads the file content and prepares it for display
-    pub fn new(log_path: PathBuf) -> Result<Self> {
+    /// 
+    /// # Arguments
+    /// * `log_path` - Path to the log file
+    /// * `app_name` - Name of the app (extracted from file path)
+    /// * `app_color` - Color assigned to this app for consistent display
+    pub fn new(log_path: PathBuf, app_name: String, app_color: Color) -> Result<Self> {
         crate::debug!(
-            "[LogViewer] SingleLogView::new() called for path: {:?}",
-            log_path
+            "[LogViewer] SingleLogView::new() called for path: {:?}, app: {}, color: {:?}",
+            log_path, app_name, app_color
         );
         let highlighter = SyntaxHighlighter::new();
 
@@ -488,6 +516,8 @@ impl SingleLogView {
             total_lines,
             show_json_panel: false,
             last_file_size,
+            app_name,
+            app_color,
         })
     }
 
@@ -543,7 +573,7 @@ impl SingleLogView {
         // Footer rendering removed from here
     }
 
-    /// Renders the header showing file name and current position
+    /// Renders the header showing file name and current position with colored app name
     fn render_header(&self, frame: &mut Frame, area: Rect, is_active: bool) {
         let filename = self
             .log_path
@@ -551,52 +581,65 @@ impl SingleLogView {
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown");
 
-        // Attempt slightly smarter formatting
-        // Assuming {project}_{app}_...
-        let parts: Vec<&str> = filename.splitn(3, '_').collect();
-        let display_title = if parts.len() >= 3 {
+        // Parse filename: {project}_{app}_{context}_{date}.log
+        let parts: Vec<&str> = filename.splitn(4, '_').collect();
+        let (project, context_date) = if parts.len() >= 4 {
             let proj = parts[0];
-            let app = parts[1];
-            let rest = parts[2].replace(".log", "");
-            // Replace dashes or underscores in date part if needed, but usually ISO date is fine
-            format!("{} - {} [{}]", proj, app, rest)
+            let context = parts[2];
+            let date = parts[3].replace(".log", "");
+            (proj.to_string(), format!("{} [{}]", context, date))
         } else {
-            filename.replace(".log", "")
+            ("Unknown".to_string(), filename.replace(".log", ""))
         };
 
         let current_line = self.viewport.cursor_line + 1;
-        let title = format!(
-            "{} (Line {}/{})",
-            display_title, current_line, self.total_lines
-        );
 
-        // Active panel gets a distinct border color (Green or Cyan usually implies activity)
+        // Create title with colored app name
+        let title_spans = vec![
+            Span::styled(
+                format!("{} - ", project),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("[{}]", self.app_name),
+                Style::default()
+                    .fg(self.app_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {} (Line {}/{})", context_date, current_line, self.total_lines),
+                Style::default().fg(Color::White),
+            ),
+        ];
+
+        // Active panel gets a distinct border color
         let border_color = if is_active {
             Color::Green
         } else {
             Color::DarkGray
         };
 
-        let header = Paragraph::new(title)
+        let header = Paragraph::new(Line::from(title_spans))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(border_color)),
             )
-            .style(Style::default().fg(Color::White).bg(Color::Rgb(0, 0, 0)));
+            .style(Style::default().bg(Color::Rgb(0, 0, 0)));
 
         frame.render_widget(header, area);
     }
 
     /// Calculates how many visual rows a log line will occupy when wrapped
-    fn calculate_wrapped_rows(log_line: &LogLine, available_width: usize) -> usize {
+    fn calculate_wrapped_rows(&self, log_line: &LogLine, available_width: usize) -> usize {
         let prefix_width = 8; // "12345 | " format
+        let app_name_width = self.app_name.len() + 3; // "[appName] " format
         let content_width = log_line
             .formatted
             .iter()
             .map(|span| span.content.len())
             .sum::<usize>();
-        let total_line_width = prefix_width + content_width;
+        let total_line_width = prefix_width + app_name_width + content_width;
 
         if total_line_width == 0 {
             1
@@ -622,7 +665,7 @@ impl SingleLogView {
 
         for log_line in &self.content {
             visual_row_positions.push(current_visual_row);
-            let wrapped_rows = Self::calculate_wrapped_rows(log_line, available_width);
+            let wrapped_rows = self.calculate_wrapped_rows(log_line, available_width);
             current_visual_row += wrapped_rows;
         }
 
@@ -679,6 +722,16 @@ impl SingleLogView {
 
             let mut spans = vec![line_num_span];
 
+            // Add colored app name prefix: [appName] 
+            let app_name_span = Span::styled(
+                format!("[{}] ", self.app_name),
+                Style::default()
+                    .fg(self.app_color)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(bg_color),
+            );
+            spans.push(app_name_span);
+
             if i == self.viewport.cursor_line {
                 let content_spans: Vec<Span> = log_line
                     .formatted
@@ -691,7 +744,17 @@ impl SingleLogView {
                     .collect();
                 spans.extend(content_spans);
             } else {
-                spans.extend(log_line.formatted.clone());
+                // For non-cursor lines, we need to apply background color to app name and content
+                let content_spans: Vec<Span> = log_line
+                    .formatted
+                    .iter()
+                    .map(|s| {
+                        let mut style = s.style;
+                        style.bg = Some(bg_color);
+                        Span::styled(s.content.clone(), style)
+                    })
+                    .collect();
+                spans.extend(content_spans);
             }
 
             let line = Line::from(spans).style(Style::default().bg(bg_color));
