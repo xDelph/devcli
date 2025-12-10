@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::detection::DetectedApp;
-use crate::detection::environments::{detect_docker_commands, detect_k8s_commands};
+use crate::detection::environments::{detect_docker_commands, detect_k8s_commands, detect_orbstack_commands};
 
 /// Detect all apps within an Nx monorepo
 /// Scans apps/ and packages/ directories for individual Nx projects
@@ -130,8 +130,9 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         }
     }
     
-    // Detect Docker and Kubernetes configurations (may or may not exist)
+    // Detect Docker, OrbStack, and Kubernetes configurations (may or may not exist)
     let docker_commands = detect_docker_commands(app_path, "nx").ok().flatten();
+    let orbstack_commands = detect_orbstack_commands(app_path, "nx").ok().flatten();
     let k8s_commands = detect_k8s_commands(app_path).ok().flatten();
     
     // Suggest a sensible default based on common command names
@@ -146,6 +147,15 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
     
     // For Docker, prefer "run" as the default
     let suggested_docker_default = docker_commands.as_ref().and_then(|cmds| {
+        if cmds.contains_key("run") {
+            Some("run".to_string())
+        } else {
+            cmds.keys().next().cloned()
+        }
+    });
+    
+    // For OrbStack, prefer "run" as the default
+    let suggested_orbstack_default = orbstack_commands.as_ref().and_then(|cmds| {
         if cmds.contains_key("run") {
             Some("run".to_string())
         } else {
@@ -170,11 +180,11 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         path: contract_tilde(app_path),
         local_commands: if local_commands.is_empty() { None } else { Some(local_commands) },
         docker_commands,
-        orbstack_commands: None,
+        orbstack_commands,
         k8s_commands,
         suggested_local_default,
         suggested_docker_default,
-        suggested_orbstack_default: None,
+        suggested_orbstack_default,
         dockerfile_path,
         env_files: None, // Env files detection not implemented for Nx yet
     })
@@ -241,8 +251,9 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
     local_commands.insert("migrate".to_string(), format!("{} migrate", nx_cmd));
     local_commands.insert("daemon".to_string(), format!("{} daemon", nx_cmd));
     
-    // Detect Docker and Kubernetes configurations at workspace level
+    // Detect Docker, OrbStack, and Kubernetes configurations at workspace level
     let docker_commands = detect_docker_commands(workspace_root, "nx").ok().flatten();
+    let orbstack_commands = detect_orbstack_commands(workspace_root, "nx").ok().flatten();
     let k8s_commands = detect_k8s_commands(workspace_root).ok().flatten();
     
     // Suggest "build" as default for workspace (most commonly used)
@@ -256,6 +267,15 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
     
     // For Docker, prefer "run" as the default
     let suggested_docker_default = docker_commands.as_ref().and_then(|cmds| {
+        if cmds.contains_key("run") {
+            Some("run".to_string())
+        } else {
+            cmds.keys().next().cloned()
+        }
+    });
+    
+    // For OrbStack, prefer "run" as the default
+    let suggested_orbstack_default = orbstack_commands.as_ref().and_then(|cmds| {
         if cmds.contains_key("run") {
             Some("run".to_string())
         } else {
@@ -280,11 +300,11 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         path: contract_tilde(workspace_root),
         local_commands: if local_commands.is_empty() { None } else { Some(local_commands) },
         docker_commands,
-        orbstack_commands: None,
+        orbstack_commands,
         k8s_commands,
         suggested_local_default,
         suggested_docker_default,
-        suggested_orbstack_default: None,
+        suggested_orbstack_default,
         dockerfile_path,
         env_files: None, // Env files detection not implemented for Nx workspace yet
     })
@@ -357,5 +377,111 @@ mod tests {
         let workspace_app = workspace_app.unwrap();
         assert_eq!(workspace_app.app_type, "nx-workspace");
         assert!(workspace_app.local_commands.is_some());
+    }
+
+    #[test]
+    fn test_nx_app_with_dockerfile_generates_orbstack_commands() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create nx.json for workspace
+        let nx_json = temp_dir.path().join("nx.json");
+        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
+        
+        // Create apps directory with one app
+        let apps_dir = temp_dir.path().join("apps");
+        fs::create_dir(&apps_dir).unwrap();
+        let app_dir = apps_dir.join("test-app");
+        fs::create_dir(&app_dir).unwrap();
+        
+        // Create package.json for the app
+        let package_json = app_dir.join("package.json");
+        fs::write(&package_json, r#"{"name": "test-app", "scripts": {"build": "nx build"}}"#).unwrap();
+        
+        // Create Dockerfile in the app directory
+        let dockerfile = app_dir.join("Dockerfile");
+        fs::write(&dockerfile, "FROM node:18\nCOPY . .\nRUN npm install\nCMD [\"npm\", \"start\"]").unwrap();
+
+        // Detect the single Nx app
+        let result = detect_single_nx_app(&app_dir, temp_dir.path()).unwrap();
+        
+        // Verify basic app detection
+        assert_eq!(result.app_type, "nx");
+        assert_eq!(result.app_name, "test-app");
+        assert!(result.local_commands.is_some());
+        
+        // Verify Docker commands are generated
+        assert!(result.docker_commands.is_some());
+        let docker_commands = result.docker_commands.unwrap();
+        assert!(docker_commands.contains_key("build"));
+        assert!(docker_commands.contains_key("run"));
+        assert!(docker_commands.contains_key("stop"));
+        
+        // Verify OrbStack commands are generated
+        assert!(result.orbstack_commands.is_some());
+        let orbstack_commands = result.orbstack_commands.unwrap();
+        assert!(orbstack_commands.contains_key("build"));
+        assert!(orbstack_commands.contains_key("run"));
+        assert!(orbstack_commands.contains_key("stop"));
+        
+        // Verify OrbStack commands use the correct context
+        assert!(orbstack_commands.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack_commands.get("run").unwrap().contains("--context orbstack"));
+        assert!(orbstack_commands.get("stop").unwrap().contains("--context orbstack"));
+        
+        // Verify port mapping for Node.js app (port 3000)
+        assert!(orbstack_commands.get("run").unwrap().contains("-p 3000:3000"));
+        
+        // Verify default suggestions are set
+        assert_eq!(result.suggested_docker_default, Some("run".to_string()));
+        assert_eq!(result.suggested_orbstack_default, Some("run".to_string()));
+        
+        // Verify dockerfile path is detected
+        assert_eq!(result.dockerfile_path, Some("Dockerfile".to_string()));
+    }
+
+    #[test]
+    fn test_nx_workspace_with_dockerfile_generates_orbstack_commands() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create nx.json
+        let nx_json = temp_dir.path().join("nx.json");
+        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
+        
+        // Create Dockerfile at workspace root
+        let dockerfile = temp_dir.path().join("Dockerfile");
+        fs::write(&dockerfile, "FROM node:18\nCOPY . .\nRUN npm install\nCMD [\"npm\", \"start\"]").unwrap();
+
+        let result = detect_nx_workspace(temp_dir.path()).unwrap();
+        
+        // Verify basic workspace detection
+        assert_eq!(result.app_type, "nx-workspace");
+        assert_eq!(result.app_name, "workspace");
+        assert!(result.local_commands.is_some());
+        
+        // Verify Docker commands are generated
+        assert!(result.docker_commands.is_some());
+        let docker_commands = result.docker_commands.unwrap();
+        assert!(docker_commands.contains_key("build"));
+        assert!(docker_commands.contains_key("run"));
+        assert!(docker_commands.contains_key("stop"));
+        
+        // Verify OrbStack commands are generated
+        assert!(result.orbstack_commands.is_some());
+        let orbstack_commands = result.orbstack_commands.unwrap();
+        assert!(orbstack_commands.contains_key("build"));
+        assert!(orbstack_commands.contains_key("run"));
+        assert!(orbstack_commands.contains_key("stop"));
+        
+        // Verify OrbStack commands use the correct context
+        assert!(orbstack_commands.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack_commands.get("run").unwrap().contains("--context orbstack"));
+        assert!(orbstack_commands.get("stop").unwrap().contains("--context orbstack"));
+        
+        // Verify default suggestions are set
+        assert_eq!(result.suggested_docker_default, Some("run".to_string()));
+        assert_eq!(result.suggested_orbstack_default, Some("run".to_string()));
+        
+        // Verify dockerfile path is detected
+        assert_eq!(result.dockerfile_path, Some("Dockerfile".to_string()));
     }
 }
