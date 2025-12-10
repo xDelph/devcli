@@ -75,6 +75,28 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
         .id()
         .ok_or_else(|| anyhow::anyhow!("Failed to get child PID"))?;
 
+    // 4.1. Verify child process actually started successfully
+    // Give it a moment to fail if it's going to fail immediately
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    // Check if child is still running (hasn't exited immediately due to spawn failure)
+    match child.try_wait() {
+        Ok(Some(exit_status)) => {
+            // Child has already exited - this indicates a spawn failure
+            anyhow::bail!(
+                "Application process '{}' failed to start (exit code: {}). Check if the command exists and is executable.",
+                payload.app_name,
+                exit_status.code().unwrap_or(-1)
+            );
+        }
+        Ok(None) => {
+            // Child is still running - good!
+        }
+        Err(e) => {
+            anyhow::bail!("Failed to check child process status: {}", e);
+        }
+    }
+
     // 5. Register Process (Spawner PID)
     // We register OURSELVES as the process, so `devcli status` tracks US.
     // But we store the child PID in metadata if we want (ProcessInfo doesn't have a field for it yet, maybe add it later?)

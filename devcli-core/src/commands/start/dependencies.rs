@@ -150,10 +150,10 @@ async fn start_missing_dependencies(
         }
     }
 
-    // If any dependencies failed to start, abort
+    // If any dependencies failed to start, abort with detailed error
     if !errors.is_empty() {
         anyhow::bail!(
-            "Failed to start some dependencies:\n  {}",
+            "Failed to start dependencies. Cannot proceed with main application.\n\nDependency failures:\n  {}",
             errors.join("\n  ")
         );
     }
