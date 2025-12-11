@@ -2,7 +2,7 @@ use super::super::{MainView, PanelFocus};
 use crate::tui::state::{AppState, AppStateData};
 use crate::tui::theme::Theme;
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -12,12 +12,25 @@ use ratatui::{
 impl MainView {
     /// Renders the Status tab panel showing app details
     pub(crate) fn render_status_panel(
-        &self,
+        &mut self,
         frame: &mut Frame,
         area: Rect,
         state: &AppState,
         theme: &Theme,
     ) {
+        // Split the area into two sections: Status (top) and Logs (bottom)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(10), // Status info height (adjustable or dynamic)
+                Constraint::Min(10),    // Log view takes remaining space
+            ])
+            .split(area);
+
+        let status_area = chunks[0];
+        let log_area = chunks[1];
+
+        // --- Render Status Section ---
         let content = if let Some(app) = state.selected_app() {
             self.build_status_content(app, theme)
         } else {
@@ -40,7 +53,108 @@ impl MainView {
                 .border_style(border_style),
         );
 
-        frame.render_widget(status_panel, area);
+        frame.render_widget(status_panel, status_area);
+
+        // --- Render Log File List ---
+        let is_focused = self.focus == PanelFocus::DetailPanel;
+        let border_style = if is_focused {
+            theme.style_text_primary()
+        } else {
+            Style::default().fg(theme.border)
+        };
+
+        if let Some(app) = state.selected_app() {
+            if let Ok(mut logs) = self.log_manager.list_logs_for_app(&app.project, &app.name) {
+                // Sort by modified time descending (newest first)
+                logs.sort_by(|a, b| b.modified.cmp(&a.modified));
+
+                if logs.is_empty() {
+                    let placeholder = Paragraph::new("No logs available")
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title("Logs")
+                                .border_style(border_style),
+                        )
+                        .style(theme.style_text_dim());
+                    frame.render_widget(placeholder, log_area);
+                } else {
+                    use ratatui::widgets::{List, ListItem};
+
+                    // Build items with blank separators between date groups
+                    let mut items: Vec<ListItem> = Vec::new();
+                    let mut last_date_category: Option<String> = None;
+
+                    for (i, log) in logs.iter().enumerate() {
+                        // Get the date category (Today, Yesterday, X days ago, or YYYY-MM-DD)
+                        let date_category =
+                            crate::tui::log_manager::LogManager::format_relative_date(
+                                log.modified.with_timezone(&chrono::Local).date_naive(),
+                            );
+
+                        // Check if we need a separator (date changed)
+                        if let Some(ref last) = last_date_category {
+                            // Extract just the date part (without time for "Today HH:MM")
+                            let last_base = last.split_whitespace().next().unwrap_or(last);
+                            let curr_base = date_category
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or(&date_category);
+                            if last_base != curr_base {
+                                items.push(ListItem::new(""));
+                            }
+                        }
+                        last_date_category = Some(date_category);
+
+                        let style = if i == self.selected_log_idx && is_focused {
+                            theme.style_text_primary_bold()
+                        } else if i == self.selected_log_idx {
+                            theme.style_text()
+                        } else {
+                            theme.style_text_dim()
+                        };
+
+                        let file_name = log
+                            .path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown");
+
+                        let label =
+                            crate::tui::log_manager::LogManager::format_log_label(file_name);
+                        items.push(ListItem::new(label).style(style));
+                    }
+
+                    let list = List::new(items).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Logs")
+                            .border_style(border_style),
+                    );
+                    frame.render_widget(list, log_area);
+                }
+            } else {
+                let placeholder = Paragraph::new("Error reading logs")
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Logs")
+                            .border_style(border_style),
+                    )
+                    .style(theme.style_text_dim());
+                frame.render_widget(placeholder, log_area);
+            }
+        } else {
+            let placeholder = Paragraph::new("No app selected")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Logs")
+                        .border_style(border_style),
+                )
+                .style(theme.style_text_dim());
+            frame.render_widget(placeholder, log_area);
+        }
     }
 
     /// Builds the content for the status panel

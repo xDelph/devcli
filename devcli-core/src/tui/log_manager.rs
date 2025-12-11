@@ -3,7 +3,7 @@
 // Provides metadata about log files (name, size, modification date)
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use std::path::PathBuf;
 
 /// Information about a log file
@@ -130,28 +130,46 @@ impl LogManager {
         }
     }
 
-    /// Formats a date relative to now
-    /// Examples: "Today 14:32", "Yesterday", "2 days ago", "Nov 12"
-    pub fn format_relative_date(date: &DateTime<Utc>) -> String {
-        let now = Utc::now();
-        let duration = now.signed_duration_since(*date);
+    /// Formats a date relative to now (ignoring time)
+    pub fn format_relative_date(date: NaiveDate) -> String {
+        // Today is local date for comparison
+        let today = chrono::Local::now().naive_local().date();
+        let diff = today.signed_duration_since(date).num_days();
 
-        // Calculate days difference
-        let days = duration.num_days();
-
-        if days == 0 {
-            // Today - show time
-            format!("Today {}", date.format("%H:%M"))
-        } else if days == 1 {
-            // Yesterday
+        if diff == 0 {
+            "Today".to_string()
+        } else if diff == 1 {
             "Yesterday".to_string()
-        } else if days < 7 {
-            // Within a week - show "X days ago"
-            format!("{} days ago", days)
+        } else if diff < 7 {
+            format!("{} days ago", diff)
         } else {
-            // Older - show date
-            date.format("%b %d").to_string()
+            date.format("%Y-%m-%d").to_string()
         }
+    }
+
+    /// Formats a log filename into a display label
+    /// Filename format: {project}_{app}_{context}_{date}.log
+    /// Output: "{context} - {Today/Yesterday/X days ago}"
+    pub fn format_log_label(filename: &str) -> String {
+        // Try to extract context from filename
+        // Format: project_app_context_YYYYMMDD.log
+        let without_ext = filename.trim_end_matches(".log");
+        let parts: Vec<&str> = without_ext.split('_').collect();
+
+        // We need at least 4 parts: project, app, context, date
+        if parts.len() >= 4 {
+            // Context is the third-to-last part (before the date)
+            let context = parts[parts.len() - 2];
+            let date_str = parts.last().unwrap();
+
+            // Parse date string YYYYMMDD
+            if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
+                let smart_date = Self::format_relative_date(date);
+                return format!("{} - {}", context, smart_date);
+            }
+        }
+
+        filename.to_string()
     }
 
     /// Checks if the logs directory has been modified since last check
@@ -207,24 +225,24 @@ mod tests {
 
     #[test]
     fn test_format_relative_date() {
-        let now = Utc::now();
+        let now = chrono::Local::now().date_naive();
 
         // Today
         let today = now;
-        let formatted = LogManager::format_relative_date(&today);
-        assert!(formatted.starts_with("Today"));
+        let formatted = LogManager::format_relative_date(today);
+        assert_eq!(formatted, "Today");
 
         // Yesterday
         let yesterday = now - chrono::Duration::days(1);
-        assert_eq!(LogManager::format_relative_date(&yesterday), "Yesterday");
+        assert_eq!(LogManager::format_relative_date(yesterday), "Yesterday");
 
         // 3 days ago
         let three_days = now - chrono::Duration::days(3);
-        assert_eq!(LogManager::format_relative_date(&three_days), "3 days ago");
+        assert_eq!(LogManager::format_relative_date(three_days), "3 days ago");
 
         // 10 days ago (should show date)
         let ten_days = now - chrono::Duration::days(10);
-        let formatted = LogManager::format_relative_date(&ten_days);
+        let formatted = LogManager::format_relative_date(ten_days);
         assert!(!formatted.contains("days ago"));
         assert!(!formatted.contains("Today"));
     }

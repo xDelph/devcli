@@ -1,8 +1,8 @@
 pub mod app_list;
-pub mod commands_panel;
+
 pub mod config_panel;
 pub mod footer;
-pub mod logs_panel;
+
 pub mod status_panel;
 pub mod tab_bar;
 pub mod utils;
@@ -16,8 +16,8 @@ use ratatui::{
 };
 
 impl MainView {
-    /// Renders the main view with all its components
-    pub(super) fn render_main(&self, frame: &mut Frame, state: &AppState, theme: &Theme) {
+    /// Renders the main view    /// Main rendering entry point
+    pub(crate) fn render_main(&mut self, frame: &mut Frame, state: &AppState, theme: &Theme) {
         let size = frame.area();
 
         let main_chunks = Layout::default()
@@ -43,8 +43,7 @@ impl MainView {
 
         match self.active_tab {
             MainTab::Status => self.render_status_panel(frame, content_chunks[1], state, theme),
-            MainTab::Commands => self.render_commands_panel(frame, content_chunks[1], state, theme),
-            MainTab::Logs => self.render_logs_panel(frame, content_chunks[1], state, theme),
+
             MainTab::Config => self.render_config_panel(frame, content_chunks[1], state, theme),
         }
 

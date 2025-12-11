@@ -34,17 +34,11 @@ impl MainView {
                 parts.push("q: Quit");
                 parts.join("  ")
             }
-            MainTab::Commands => {
-                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-4: Switch Tab  Enter: Execute  q: Quit"
-                    .to_string()
-            }
-            MainTab::Logs => {
-                "↑↓/jk: Navigate  ←→: Switch Panel  Tab/1-4: Switch Tab  Enter: View Log  q: Quit"
-                    .to_string()
-            }
+
+
             MainTab::Config => match self.config_mode {
                 ConfigMode::View => {
-                    "↑↓/jk: Navigate  a: Add Cmd  e: Edit Cmd  f: Env Files  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit".to_string()
+                    "↑↓/jk: Navigate  Enter: Execute  a: Add Cmd  e: Edit Cmd  f: Env Files  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit".to_string()
                 }
                 ConfigMode::Add | ConfigMode::Edit => {
                     "Tab/↑↓: Navigate Fields  Type: Edit  Enter: Save  Esc: Cancel".to_string()

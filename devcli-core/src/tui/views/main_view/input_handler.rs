@@ -159,22 +159,19 @@ impl NavigationHandler for MainView {
         // Normal mode key handling - only reached if no popup is active
         if KeyBindings::is_tab_status(key) {
             self.switch_to_tab(MainTab::Status);
+            self.selected_log_idx = 0;
             return Ok(true);
         }
-        if KeyBindings::is_tab_commands(key) {
-            self.switch_to_tab(MainTab::Commands);
-            return Ok(true);
-        }
-        if KeyBindings::is_tab_logs(key) {
-            self.switch_to_tab(MainTab::Logs);
-            return Ok(true);
-        }
+
         if KeyBindings::is_tab_config(key) {
             self.switch_to_tab(MainTab::Config);
             return Ok(true);
         }
         if KeyBindings::is_tab_cycle(key) {
             self.cycle_tab();
+            if self.active_tab == MainTab::Status {
+                self.selected_log_idx = 0;
+            }
             return Ok(true);
         }
         if KeyBindings::is_panel_toggle(key) {
@@ -301,10 +298,7 @@ impl NavigationHandler for MainView {
     fn switch_to_tab(&mut self, tab: MainTab) {
         self.active_tab = tab;
         self.detail_scroll = 0;
-        self.selected_command_idx = 0;
-        if self.active_tab == MainTab::Logs {
-            self.selected_log_idx = 0;
-        }
+        // self.selected_command_idx = 0; // Removing this line
         if self.active_tab == MainTab::Config {
             self.config_mode = ConfigMode::View;
             self.selected_config_command_idx = 0;
@@ -313,20 +307,17 @@ impl NavigationHandler for MainView {
 
     fn cycle_tab(&mut self) {
         self.active_tab = match self.active_tab {
-            MainTab::Status => MainTab::Commands,
-            MainTab::Commands => MainTab::Logs,
-            MainTab::Logs => MainTab::Config,
+            MainTab::Status => MainTab::Config,
             MainTab::Config => MainTab::Status,
         };
         self.detail_scroll = 0;
-        self.selected_command_idx = 0;
-        if self.active_tab == MainTab::Logs {
-            self.selected_log_idx = 0;
-        }
+
         if self.active_tab == MainTab::Config {
             self.config_mode = ConfigMode::View;
         }
     }
+
+    /// Handles scrolling for the detail panel
 
     fn toggle_panel_focus(&mut self) {
         self.focus = match self.focus {
@@ -341,19 +332,18 @@ impl NavigationHandler for MainView {
                 for _ in 0..10 {
                     state.select_previous();
                 }
-                self.selected_command_idx = 0;
-                self.selected_log_idx = 0;
+
                 self.selected_config_command_idx = 0;
+
+                if self.active_tab == MainTab::Status {
+                    self.selected_log_idx = 0;
+                }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Commands {
-                    self.selected_command_idx = self.selected_command_idx.saturating_sub(10);
-                } else if self.active_tab == MainTab::Logs {
-                    self.selected_log_idx = self.selected_log_idx.saturating_sub(10);
-                } else if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View
-                {
-                    self.selected_config_command_idx =
-                        self.selected_config_command_idx.saturating_sub(10);
+                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
+                    self.handle_detail_scroll(-10, state);
+                } else if self.active_tab == MainTab::Status {
+                    self.handle_detail_scroll(-10, state);
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_sub(10);
                 }
@@ -367,33 +357,22 @@ impl NavigationHandler for MainView {
                 for _ in 0..10 {
                     state.select_next();
                 }
-                self.selected_command_idx = 0;
-                self.selected_log_idx = 0;
+
                 self.selected_config_command_idx = 0;
+
+                if self.active_tab == MainTab::Status {
+                    self.selected_log_idx = 0;
+                }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Commands {
-                    if let Some(app) = state.selected_app() {
-                        let total_commands = Self::count_total_commands(app);
-                        self.selected_command_idx =
-                            (self.selected_command_idx + 10).min(total_commands.saturating_sub(1));
-                    }
-                } else if self.active_tab == MainTab::Logs {
-                    if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) =
-                            self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        {
-                            self.selected_log_idx =
-                                (self.selected_log_idx + 10).min(log_files.len().saturating_sub(1));
-                        }
-                    }
-                } else if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View
-                {
-                    if let Some(app) = state.selected_app() {
-                        let total_commands = Self::count_total_commands(app);
-                        self.selected_config_command_idx = (self.selected_config_command_idx + 10)
-                            .min(total_commands.saturating_sub(1));
-                    }
+                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
+                    self.handle_detail_scroll(10, state);
+                } else if self.active_tab == MainTab::Status {
+                    self.handle_detail_scroll(10, state);
+                } else if let Some(app) = state.selected_app() {
+                    let total_commands = Self::count_total_commands(app);
+                    self.selected_config_command_idx = (self.selected_config_command_idx + 10)
+                        .min(total_commands.saturating_sub(1));
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_add(10);
                 }
@@ -407,19 +386,18 @@ impl NavigationHandler for MainView {
         match self.focus {
             PanelFocus::AppList => {
                 state.select_previous();
-                self.selected_command_idx = 0;
-                self.selected_log_idx = 0;
+
                 self.selected_config_command_idx = 0;
+
+                if self.active_tab == MainTab::Status {
+                    self.selected_log_idx = 0;
+                }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Commands {
-                    self.selected_command_idx = self.selected_command_idx.saturating_sub(1);
-                } else if self.active_tab == MainTab::Logs {
-                    self.selected_log_idx = self.selected_log_idx.saturating_sub(1);
-                } else if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View
-                {
-                    self.selected_config_command_idx =
-                        self.selected_config_command_idx.saturating_sub(1);
+                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
+                    self.handle_detail_scroll(-1, state);
+                } else if self.active_tab == MainTab::Status {
+                    self.handle_detail_scroll(-1, state);
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_sub(1);
                 }
@@ -433,36 +411,19 @@ impl NavigationHandler for MainView {
         match self.focus {
             PanelFocus::AppList => {
                 state.select_next();
-                self.selected_command_idx = 0;
-                self.selected_log_idx = 0;
+
                 self.selected_config_command_idx = 0;
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Commands {
-                    if let Some(app) = state.selected_app() {
-                        let total_commands = Self::count_total_commands(app);
-                        if self.selected_command_idx < total_commands.saturating_sub(1) {
-                            self.selected_command_idx += 1;
-                        }
-                    }
-                } else if self.active_tab == MainTab::Logs {
-                    if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) =
-                            self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        {
-                            if self.selected_log_idx < log_files.len().saturating_sub(1) {
-                                self.selected_log_idx += 1;
-                            }
-                        }
-                    }
-                } else if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View
-                {
+                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
                     if let Some(app) = state.selected_app() {
                         let total_commands = Self::count_total_commands(app);
                         if self.selected_config_command_idx < total_commands.saturating_sub(1) {
                             self.selected_config_command_idx += 1;
                         }
                     }
+                } else if self.active_tab == MainTab::Status {
+                    self.handle_detail_scroll(1, state);
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_add(1);
                 }
@@ -471,7 +432,6 @@ impl NavigationHandler for MainView {
     }
 
     fn handle_enter(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
-        // Add dependency
         if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::AddDependency {
             if let Ok(config) = crate::config::loader::load_config() {
                 let (curr_proj, curr_app) = if let Some(app) = state.selected_app() {
@@ -512,23 +472,6 @@ impl NavigationHandler for MainView {
 
         if self.focus == PanelFocus::DetailPanel {
             match self.active_tab {
-                MainTab::Commands => {
-                    state.set_command_execution_requested(self.selected_command_idx);
-                }
-                MainTab::Logs => {
-                    if let Some(app) = state.selected_app() {
-                        if let Ok(log_files) =
-                            self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        {
-                            if let Some(log_file) = log_files.get(self.selected_log_idx) {
-                                state.current_view = crate::tui::state::ViewType::LogViewer {
-                                    log_paths: vec![log_file.path.clone()],
-                                    active_index: 0,
-                                };
-                            }
-                        }
-                    }
-                }
                 MainTab::Config => {
                     if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
                         if let Err(e) = self.save_config_form() {
@@ -563,12 +506,27 @@ impl NavigationHandler for MainView {
                             }
                         }
                         return Ok(true);
+                    } else if self.config_mode == ConfigMode::View
+                        && self.focus == PanelFocus::DetailPanel
+                    {
+                        state.set_command_execution_requested(self.selected_config_command_idx);
+                        return Ok(true);
                     }
                 }
                 MainTab::Status => {
+                    // Open log viewer for the selected log file
                     if let Some(app) = state.selected_app() {
-                        if !app.status.is_running() {
-                            state.set_command_execution_requested(0);
+                        if let Ok(mut logs) =
+                            self.log_manager.list_logs_for_app(&app.project, &app.name)
+                        {
+                            logs.sort_by(|a, b| b.modified.cmp(&a.modified));
+                            if let Some(log) = logs.get(self.selected_log_idx) {
+                                state.current_view = crate::tui::state::ViewType::LogViewer {
+                                    log_paths: vec![log.path.clone()],
+                                    active_index: 0,
+                                };
+                                return Ok(true);
+                            }
                         }
                     }
                 }
@@ -742,5 +700,41 @@ impl NavigationHandler for MainView {
             }
         }
         Ok(true)
+    }
+}
+
+impl MainView {
+    /// Handles scrolling for the detail panel
+    fn handle_detail_scroll(&mut self, direction: i16, state: &AppState) {
+        match self.active_tab {
+            MainTab::Status => {
+                // Navigate log file list
+                if let Some(app) = state.selected_app() {
+                    if let Ok(logs) = self.log_manager.list_logs_for_app(&app.project, &app.name) {
+                        let total = logs.len();
+                        if total > 0 {
+                            let new_idx = (self.selected_log_idx as isize + direction as isize)
+                                .max(0)
+                                .min((total - 1) as isize);
+                            self.selected_log_idx = new_idx as usize;
+                        }
+                    }
+                }
+            }
+            MainTab::Config => {
+                if self.config_mode == ConfigMode::View {
+                    let total_commands = if let Some(app) = state.selected_app() {
+                        Self::count_total_commands(app)
+                    } else {
+                        0
+                    };
+                    let max_idx = total_commands.saturating_sub(1);
+                    let new_idx = (self.selected_config_command_idx as isize + direction as isize)
+                        .max(0)
+                        .min(max_idx as isize);
+                    self.selected_config_command_idx = new_idx as usize;
+                }
+            }
+        }
     }
 }

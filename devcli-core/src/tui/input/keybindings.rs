@@ -26,19 +26,9 @@ impl KeyBindings {
         matches!(key.code, KeyCode::Char('1') | KeyCode::Char('&'))
     }
 
-    /// Check if the key event triggers tab switching to Commands (2)
-    pub fn is_tab_commands(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Char('2') | KeyCode::Char('é'))
-    }
-
-    /// Check if the key event triggers tab switching to Logs (3)
-    pub fn is_tab_logs(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Char('3') | KeyCode::Char('"'))
-    }
-
-    /// Check if the key event triggers tab switching to Config (4)
+    /// Check if the key event triggers tab switching to Config (2)
     pub fn is_tab_config(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Char('4') | KeyCode::Char('\''))
+        matches!(key.code, KeyCode::Char('2') | KeyCode::Char('é'))
     }
 
     /// Check if the key event triggers cycling tabs

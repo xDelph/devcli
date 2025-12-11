@@ -752,7 +752,8 @@ impl TuiApp {
         // Lock the state for reading during rendering
         // If we can't get the lock, skip this frame
         // Performance: Non-blocking approach prevents frame drops
-        let Ok(state) = self.state.lock() else {
+        let state_arc = self.state.clone();
+        let Ok(state) = state_arc.lock() else {
             return;
         };
 
@@ -798,7 +799,8 @@ impl TuiApp {
 
     /// Renders the main view
     /// Shows projects, apps, and their status
-    fn render_main_view(&self, frame: &mut Frame, state: &AppState) {
+    /// Shows projects, apps, and their status
+    fn render_main_view(&mut self, frame: &mut Frame, state: &AppState) {
         // Delegate to the main view's render method
         self.main_view.render(frame, state, &self.theme);
     }

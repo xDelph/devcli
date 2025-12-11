@@ -27,9 +27,8 @@ mod main_view_core {
         pub(crate) list_scroll: usize,
         /// Scroll offset for the right panel details
         pub(crate) detail_scroll: usize,
-        /// Selected command index in the Commands tab
-        pub(crate) selected_command_idx: usize,
-        /// Selected log file index in the Logs tab
+
+        /// Selected log file index in Status tab
         pub(crate) selected_log_idx: usize,
         /// Log manager for discovering log files
         pub(crate) log_manager: LogManager,
@@ -113,8 +112,7 @@ mod main_view_core {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum MainTab {
         Status,
-        Commands,
-        Logs,
+
         Config,
     }
 
@@ -133,7 +131,7 @@ mod main_view_core {
                 focus: PanelFocus::AppList,
                 list_scroll: 0,
                 detail_scroll: 0,
-                selected_command_idx: 0,
+
                 selected_log_idx: 0,
                 log_manager: LogManager::default(),
                 config_mode: ConfigMode::View,
@@ -148,7 +146,7 @@ mod main_view_core {
         }
 
         /// Renders the main view with all its components
-        pub fn render(&self, frame: &mut Frame, state: &AppState, theme: &Theme) {
+        pub fn render(&mut self, frame: &mut Frame, state: &AppState, theme: &Theme) {
             // Rendering is handled in the renderer module
             self.render_main(frame, state, theme);
         }

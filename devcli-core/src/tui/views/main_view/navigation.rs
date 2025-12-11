@@ -9,14 +9,6 @@ impl MainView {
         app.commands.values().map(|cmds| cmds.len()).sum()
     }
 
-    /// Gets the currently selected command info based on the selected index
-    pub fn get_selected_command<'a>(
-        &self,
-        app: &'a AppStateData,
-    ) -> Option<(&'a str, &'a crate::tui::state::CommandInfo)> {
-        self.get_command_by_index(app, self.selected_command_idx)
-    }
-
     /// Returns (environment, command_info) tuple for a specific command index
     pub fn get_command_by_index<'a>(
         &self,

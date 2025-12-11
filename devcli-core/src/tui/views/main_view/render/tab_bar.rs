@@ -9,13 +9,11 @@ use ratatui::{
 impl MainView {
     /// Renders the tab bar at the top of the screen
     pub(crate) fn render_tab_bar(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let tab_titles = vec!["[1] Status", "[2] Commands", "[3] Logs", "[4] Config"];
+        let tab_titles = vec!["[1] Status", "[2] Config"];
 
         let selected_idx = match self.active_tab {
             MainTab::Status => 0,
-            MainTab::Commands => 1,
-            MainTab::Logs => 2,
-            MainTab::Config => 3,
+            MainTab::Config => 1,
         };
 
         let tabs = Tabs::new(tab_titles)
