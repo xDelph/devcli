@@ -58,7 +58,8 @@ impl PopupManager {
         // This corresponds to app.rs check_status_update part that updates popup
         {
             let (status_updated, app_status) = {
-                let state = state.lock().expect("Failed to lock state");
+                let state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 let updated = state.status_updated;
 
                 let app_status = if self.active_popup.is_some() {
@@ -123,13 +124,15 @@ impl PopupManager {
         main_view: &MainView,
     ) -> Result<bool> {
         let request = {
-            let state = state.lock().expect("Failed to lock state");
+            let state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.command_execution_requested
         };
 
         if let Some(command_idx) = request {
             let (app_name, project_name, command_name, environment) = {
-                let mut state = state.lock().expect("Failed to lock state");
+                let mut state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
 
                 if let Some(app) = state.selected_app() {
                     if let Some((env, cmd_info)) = main_view.get_command_by_index(app, command_idx)
@@ -162,7 +165,8 @@ impl PopupManager {
 
             // Set initial status
             {
-                let state = state.lock().expect("Failed to lock state");
+                let state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
                         popup.update_status(app.status.as_str().to_string());
@@ -172,7 +176,8 @@ impl PopupManager {
 
             self.active_popup = Some(popup);
 
-            let mut state = state.lock().expect("Failed to lock state");
+            let mut state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.clear_command_execution_request();
             return Ok(true);
         }
@@ -181,13 +186,15 @@ impl PopupManager {
 
     fn check_stop_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
         let stop_requested = {
-            let state = state.lock().expect("Failed to lock state");
+            let state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.stop_requested
         };
 
         if stop_requested {
             let (app_name, project_name) = {
-                let mut state = state.lock().expect("Failed to lock state");
+                let mut state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     (app.name.clone(), app.project.clone())
                 } else {
@@ -205,7 +212,8 @@ impl PopupManager {
             );
 
             {
-                let state = state.lock().expect("Failed to lock state");
+                let state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
                         popup.update_status(app.status.as_str().to_string());
@@ -229,7 +237,8 @@ impl PopupManager {
 
             self.command_tx.send(request)?;
 
-            let mut state = state.lock().expect("Failed to lock state");
+            let mut state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.clear_stop_requested();
             return Ok(true);
         }
@@ -238,13 +247,15 @@ impl PopupManager {
 
     fn check_restart_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
         let restart_requested = {
-            let state = state.lock().expect("Failed to lock state");
+            let state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.restart_requested
         };
 
         if restart_requested {
             let (app_name, project_name, environment) = {
-                let mut state = state.lock().expect("Failed to lock state");
+                let mut state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     let env = if let Ok(tracker) = crate::process::ProcessTracker::new() {
                         if let Ok(Some(process)) =
@@ -273,7 +284,8 @@ impl PopupManager {
             );
 
             {
-                let state = state.lock().expect("Failed to lock state");
+                let state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
                         popup.update_status(app.status.as_str().to_string());
@@ -297,7 +309,8 @@ impl PopupManager {
 
             self.command_tx.send(request)?;
 
-            let mut state = state.lock().expect("Failed to lock state");
+            let mut state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.clear_restart_requested();
             return Ok(true);
         }
@@ -306,13 +319,15 @@ impl PopupManager {
 
     fn check_env_selection_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
         let env_selection_requested = {
-            let state = state.lock().expect("Failed to lock state");
+            let state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.env_selection_requested
         };
 
         if env_selection_requested {
             let (app_name, project_name, default_env) = {
-                let mut state = state.lock().expect("Failed to lock state");
+                let mut state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     let preferences = crate::config::load_preferences().unwrap_or_default();
                     (
@@ -335,7 +350,8 @@ impl PopupManager {
             );
 
             {
-                let state = state.lock().expect("Failed to lock state");
+                let state = state.lock()
+                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
                         popup.update_status(app.status.as_str().to_string());
@@ -345,7 +361,8 @@ impl PopupManager {
 
             self.active_popup = Some(popup);
 
-            let mut state = state.lock().expect("Failed to lock state");
+            let mut state = state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.clear_env_selection_requested();
             return Ok(true);
         }

@@ -399,14 +399,15 @@ impl App {
             self.env_files = Some(HashMap::new());
         }
 
-        let env_files = self.env_files.as_mut().unwrap();
+        let env_files = self.env_files.as_mut()
+            .expect("env_files should be Some after initialization");
         if !env_files.contains_key(stage) {
             env_files.insert(stage.to_string(), HashMap::new());
         }
 
         env_files
             .get_mut(stage)
-            .unwrap()
+            .expect("stage should exist after insertion")
             .insert(env.to_string(), path);
     }
 
@@ -418,7 +419,7 @@ impl App {
 
         self.default_stages
             .as_mut()
-            .unwrap()
+            .expect("default_stages should be Some after initialization")
             .insert(env.to_string(), stage);
     }
 }

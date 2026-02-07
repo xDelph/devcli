@@ -14,9 +14,11 @@ pub fn init_debug_log() {
         .append(true)
         .open("tui-debug.log")
         .ok();
-    
-    *DEBUG_FILE.lock().unwrap() = file;
-    
+
+    if let Ok(mut debug_file) = DEBUG_FILE.lock() {
+        *debug_file = file;
+    }
+
     debug_log("=== TUI Debug Log Started ===");
 }
 

@@ -57,7 +57,8 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
         // Fallback to direct detection if discovery found nothing
         detect_app(target_path)?
     } else {
-        discovered_apps.into_iter().next().unwrap()
+        discovered_apps.into_iter().next()
+            .expect("BUG: discovered_apps should not be empty after is_empty check")
     };
     
     // Display what was detected
@@ -190,7 +191,11 @@ fn discover_individual_apps(dir_path: &std::path::Path) -> Result<Vec<crate::det
 
 // Create a Redis app from a specific config file
 fn create_redis_app_from_config(config_path: &std::path::Path, config_filename: &str) -> Result<crate::detection::DetectedApp> {
-    let dir_path = config_path.parent().unwrap();
+    let dir_path = config_path.parent()
+        .ok_or_else(|| anyhow::anyhow!(
+            "Config file path has no parent directory: {}",
+            config_path.display()
+        ))?;
     
     // Extract app name from config filename (remove .conf/.config extension)
     let app_name = if let Some(name) = config_filename.strip_suffix(".conf") {
@@ -223,7 +228,11 @@ fn create_redis_app_from_config(config_path: &std::path::Path, config_filename: 
 
 // Create a Traefik app from a specific config file
 fn create_traefik_app_from_config(config_path: &std::path::Path, config_filename: &str) -> Result<crate::detection::DetectedApp> {
-    let dir_path = config_path.parent().unwrap();
+    let dir_path = config_path.parent()
+        .ok_or_else(|| anyhow::anyhow!(
+            "Config file path has no parent directory: {}",
+            config_path.display()
+        ))?;
     
     // Extract app name from config filename (remove extension)
     let app_name = if let Some(name) = config_filename.strip_suffix(".yml") {

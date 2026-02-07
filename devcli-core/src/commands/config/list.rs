@@ -288,10 +288,14 @@ pub async fn config_list_commands(
     let app = config
         .projects
         .get(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     println!("Commands for {}/{}", resolved_project, resolved_app_name);
     

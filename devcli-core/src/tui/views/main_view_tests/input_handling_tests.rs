@@ -24,7 +24,7 @@ fn create_test_state() -> Arc<Mutex<AppState>> {
 }
 #[test]
 fn test_tab_switching_with_numbers() {
-    let mut view = MainView::new();
+    let mut view = MainView::new().unwrap();
     let state = create_test_state();
     // Test switching to Status tab (1)
     let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);

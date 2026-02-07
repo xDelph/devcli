@@ -61,14 +61,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     };
 
     // Step 3: If process is not running, we can't restart it - suggest starting instead
-    if existing_process.is_none() {
+    let Some(process) = existing_process else {
         anyhow::bail!(
             "Process '{}' is not currently running. Use 'start' command instead.",
             args.app_name
         );
-    }
-
-    let process = existing_process.unwrap();
+    };
 
     // Step 4: Determine environment and project for restart
     // Use --env flag if provided, otherwise use existing process's environment

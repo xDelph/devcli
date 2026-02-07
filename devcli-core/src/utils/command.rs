@@ -150,7 +150,7 @@ pub fn inject_orbstack_env_vars(command: &str, env_vars: &HashMap<String, String
     // Build the env var prefix (KEY="VALUE" format with quotes)
     let env_prefix: Vec<String> = keys
         .iter()
-        .map(|k| format!("{}=\"{}\"", k, env_vars.get(*k).unwrap()))
+        .filter_map(|k| env_vars.get(*k).map(|v| format!("{}=\"{}\"", k, v)))
         .collect();
 
     format!("{} {}", env_prefix.join(" "), command)

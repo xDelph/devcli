@@ -125,15 +125,15 @@ mod main_view_core {
 
     impl MainView {
         /// Creates a new MainView with default settings
-        pub fn new() -> Self {
-            Self {
+        pub fn new() -> anyhow::Result<Self> {
+            Ok(Self {
                 active_tab: MainTab::Status,
                 focus: PanelFocus::AppList,
                 list_scroll: 0,
                 detail_scroll: 0,
 
                 selected_log_idx: 0,
-                log_manager: LogManager::default(),
+                log_manager: LogManager::new()?,
                 config_mode: ConfigMode::View,
                 config_form: ConfigForm::default(),
                 config_focused_field: ConfigField::ProjectName,
@@ -142,7 +142,7 @@ mod main_view_core {
                     crate::tui::views::main_view::popups::scroll_manager::PopupScrollManager::new(),
                 delete_confirm_message: String::new(),
                 delete_confirm_type: DeleteType::App,
-            }
+            })
         }
 
         /// Renders the main view with all its components
@@ -214,9 +214,6 @@ mod main_view_core {
         }
     }
 
-    impl Default for MainView {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
+    // Note: Default trait implementation removed because MainView::new() can fail
+    // Use MainView::new()? in production code, or MainView::new().unwrap() in tests
 }

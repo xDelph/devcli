@@ -71,8 +71,8 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
             // Extract the single match from the vector
             // .into_iter() converts Vec into an iterator that takes ownership
             // .next() gets the first item
-            // .unwrap() is safe because we know len==1
-            let (project, app) = matches.into_iter().next().unwrap();
+            let (project, app) = matches.into_iter().next()
+                .expect("BUG: matches should have exactly 1 element after len check");
             
             // Return the resolved app with full context
             Ok(ResolvedApp {
@@ -106,7 +106,7 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
                     let (project, app) = matches
                         .into_iter()
                         .find(|(p, _)| p == &selected_project)
-                        .unwrap(); // Safe because we know it exists
+                        .expect("BUG: selected project should exist in matches");
                     
                     Ok(ResolvedApp {
                         project,

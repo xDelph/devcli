@@ -154,7 +154,7 @@ impl TuiApp {
         let theme = Theme::default();
 
         // Create main view
-        let main_view = MainView::new();
+        let main_view = MainView::new()?;
 
         // Create channels for command execution
         // Request channel: UI -> Background task
@@ -336,7 +336,7 @@ impl TuiApp {
         Self {
             state,
             theme: Theme::default(),
-            main_view: MainView::new(),
+            main_view: MainView::new().expect("Failed to create MainView for test"),
             log_viewer: None,
             process_tracker,
             should_quit: false,
@@ -532,7 +532,8 @@ impl TuiApp {
     /// - Returns to main view to allow user to continue
     fn check_log_viewer_creation(&mut self) -> Result<()> {
         let current_view = {
-            let state = self.state.lock().expect("Failed to lock state");
+            let state = self.state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.current_view.clone()
         };
 
@@ -553,7 +554,8 @@ impl TuiApp {
                     Err(e) => {
                         // Failed to create viewer - set error and go back to main view
                         // This is a non-blocking error - user can dismiss and continue
-                        let mut state = self.state.lock().expect("Failed to lock state");
+                        let mut state = self.state.lock()
+                            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                         state.error_message = Some(format!("Failed to open log files: {}", e));
                         state.current_view = ViewType::Main;
                     }
@@ -587,7 +589,8 @@ impl TuiApp {
     /// Checks if status was updated by background polling and triggers redraw
     fn check_status_update(&mut self) -> Result<()> {
         let (status_updated, app_status) = {
-            let mut state = self.state.lock().expect("Failed to lock state");
+            let mut state = self.state.lock()
+                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             let updated = state.status_updated;
             if updated {
                 state.status_updated = false; // Clear the flag

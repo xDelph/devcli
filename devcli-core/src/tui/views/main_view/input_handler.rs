@@ -14,8 +14,8 @@ impl MainView {
     /// Returns true if the event was handled, false otherwise
     pub fn handle_input(&mut self, key: KeyEvent, state: &Arc<Mutex<AppState>>) -> Result<bool> {
         // Lock the state for modification
-        // Use expect instead of context since PoisonError doesn't implement StdError
-        let mut state = state.lock().expect("Failed to lock state");
+        let mut state = state.lock()
+            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
 
         // Handle delete confirmation mode
         if self.config_mode == ConfigMode::ConfirmDelete {
@@ -447,22 +447,25 @@ impl NavigationHandler for MainView {
                     &candidates,
                     self.popup_scroll_manager.selected_add_dep_idx,
                 ) {
-                    // Lock will be released when function returns
-                    if let Err(e) = self.add_dependency(
-                        curr_proj.unwrap(),
-                        curr_app.unwrap(),
-                        &proj_name,
-                        &app_name,
-                    ) {
-                        eprintln!("Error adding dependency: {}", e);
-                    } else {
-                        // Reset state and return to dependencies list
-                        self.popup_scroll_manager.reset();
-                        self.config_mode = ConfigMode::EditDependencies;
+                    // Ensure we have a current project and app selected
+                    if let (Some(curr_proj), Some(curr_app)) = (curr_proj, curr_app) {
+                        // Lock will be released when function returns
+                        if let Err(e) = self.add_dependency(
+                            curr_proj,
+                            curr_app,
+                            &proj_name,
+                            &app_name,
+                        ) {
+                            eprintln!("Error adding dependency: {}", e);
+                        } else {
+                            // Reset state and return to dependencies list
+                            self.popup_scroll_manager.reset();
+                            self.config_mode = ConfigMode::EditDependencies;
 
-                        // Reload state to reflect changes in UI
-                        if let Err(e) = self.reload_state_from_config(state) {
-                            eprintln!("Error reloading state: {}", e);
+                            // Reload state to reflect changes in UI
+                            if let Err(e) = self.reload_state_from_config(state) {
+                                eprintln!("Error reloading state: {}", e);
+                            }
                         }
                     }
                 }

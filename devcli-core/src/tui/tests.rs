@@ -145,8 +145,6 @@ fn test_log_manager_creation() {
     // Test that LogManager can be created successfully
     let result = LogManager::new();
     assert!(result.is_ok(), "LogManager creation should succeed");
-    // Test default implementation
-    let _log_manager = LogManager::default();
 }
 
 #[test]

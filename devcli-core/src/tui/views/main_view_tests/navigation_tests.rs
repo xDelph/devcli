@@ -28,7 +28,7 @@ fn create_test_app_state_data() -> AppStateData {
 #[test]
 fn test_get_command_by_index() {
     let app = create_test_app_state_data();
-    let view = MainView::new();
+    let view = MainView::new().unwrap();
     // Get first command
     let result = view.get_command_by_index(&app, 0);
     assert!(result.is_some());
@@ -57,7 +57,7 @@ fn test_get_command_by_index_multiple_environments() {
     assert_eq!(env, "docker");
     assert_eq!(cmd.name, "docker-cmd0");
 fn test_get_selected_command() {
-    let mut view = MainView::new();
+    let mut view = MainView::new().unwrap();
     view.selected_command_idx = 2;
     let result = view.get_selected_command(&app);
 // Note: calculate_scroll_offset and calculate_selected_app_line are private methods

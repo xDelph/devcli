@@ -127,10 +127,14 @@ pub async fn config_add_command(
     let app = config
         .projects
         .get_mut(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get_mut(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     // Add command to the appropriate environment
     match environment.as_str() {
@@ -138,19 +142,25 @@ pub async fn config_add_command(
             if app.commands.local.is_none() {
                 app.commands.local = Some(HashMap::new());
             }
-            app.commands.local.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+            app.commands.local.as_mut()
+                .expect("local commands should be Some after initialization")
+                .insert(command_name.clone(), command_value.clone());
         }
         "docker" => {
             if app.commands.docker.is_none() {
                 app.commands.docker = Some(HashMap::new());
             }
-            app.commands.docker.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+            app.commands.docker.as_mut()
+                .expect("docker commands should be Some after initialization")
+                .insert(command_name.clone(), command_value.clone());
         }
         "k8s" => {
             if app.commands.k8s.is_none() {
                 app.commands.k8s = Some(HashMap::new());
             }
-            app.commands.k8s.as_mut().unwrap().insert(command_name.clone(), command_value.clone());
+            app.commands.k8s.as_mut()
+                .expect("k8s commands should be Some after initialization")
+                .insert(command_name.clone(), command_value.clone());
         }
         _ => unreachable!(),
     }
@@ -209,10 +219,14 @@ pub async fn config_remove_command(
     let app = config
         .projects
         .get(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     let command_name = if let Some(name) = command_name {
         name
@@ -224,10 +238,14 @@ pub async fn config_remove_command(
     let app = config
         .projects
         .get_mut(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get_mut(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     // Remove command from the appropriate environment
     let removed = match environment.as_str() {
@@ -333,10 +351,14 @@ pub async fn config_set_default(
     let app = config
         .projects
         .get(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     let command_name = if let Some(name) = command_name {
         name
@@ -348,10 +370,14 @@ pub async fn config_set_default(
     let app = config
         .projects
         .get_mut(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get_mut(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     // Verify the command exists in the specified environment
     let command_exists = match environment.as_str() {
@@ -439,10 +465,14 @@ pub async fn config_edit_command(
     let app = config
         .projects
         .get(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get(&resolved_app_name)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
     
     let command_name = if let Some(name) = command_name {
         name
@@ -499,20 +529,30 @@ pub async fn config_edit_command(
     let app = config
         .projects
         .get_mut(&resolved_project)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
         .apps
         .get_mut(&resolved_app_name)
-        .unwrap();
-    
+        .ok_or_else(|| anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        ))?;
+
     match environment.as_str() {
         "local" => {
-            app.commands.local.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+            app.commands.local.as_mut()
+                .ok_or_else(|| anyhow::anyhow!("No local commands defined for {}", resolved_app_name))?
+                .insert(command_name.clone(), new_value.to_string());
         }
         "docker" => {
-            app.commands.docker.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+            app.commands.docker.as_mut()
+                .ok_or_else(|| anyhow::anyhow!("No docker commands defined for {}", resolved_app_name))?
+                .insert(command_name.clone(), new_value.to_string());
         }
         "k8s" => {
-            app.commands.k8s.as_mut().unwrap().insert(command_name.clone(), new_value.to_string());
+            app.commands.k8s.as_mut()
+                .ok_or_else(|| anyhow::anyhow!("No k8s commands defined for {}", resolved_app_name))?
+                .insert(command_name.clone(), new_value.to_string());
         }
         _ => unreachable!(),
     }

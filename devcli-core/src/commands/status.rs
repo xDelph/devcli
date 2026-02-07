@@ -67,9 +67,11 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
     // Step 7: Handle special case - show dependencies for a specific app
     // Example: devcli status api-private --deps
-    if args.show_deps && args.app_name.is_some() {
-        // This is a different display mode - show the app with its deps
-        return show_with_dependencies(args.app_name.unwrap(), &tracker).await;
+    if args.show_deps {
+        if let Some(app_name) = args.app_name {
+            // This is a different display mode - show the app with its deps
+            return show_with_dependencies(app_name, &tracker).await;
+        }
     }
 
     // Step 8: Group processes by project

@@ -160,7 +160,7 @@ impl LogManager {
         if parts.len() >= 4 {
             // Context is the third-to-last part (before the date)
             let context = parts[parts.len() - 2];
-            let date_str = parts.last().unwrap();
+            let date_str = parts.last().unwrap_or(&"unknown");
 
             // Parse date string YYYYMMDD
             if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
@@ -203,11 +203,8 @@ impl LogManager {
     }
 }
 
-impl Default for LogManager {
-    fn default() -> Self {
-        Self::new().expect("Failed to create LogManager")
-    }
-}
+// Note: Default trait implementation removed because LogManager::new() can fail
+// Use LogManager::new()? instead of LogManager::default()
 
 #[cfg(test)]
 mod tests {

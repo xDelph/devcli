@@ -67,14 +67,14 @@ fn create_test_state_arc(config: &Config) -> Arc<Mutex<AppState>> {
     Arc::new(Mutex::new(state))
 #[test]
 fn test_config_mode_starts_in_view() {
-    let view = MainView::new();
+    let view = MainView::new().unwrap();
     assert_eq!(view.config_mode, ConfigMode::View);
 fn test_config_tab_navigation() {
     let _temp_dir = setup_test_config_dir();
     let config = create_test_config();
     save_config(&config).unwrap();
     let state = create_test_state_arc(&config);
-    let mut view = MainView::new();
+    let mut view = MainView::new().unwrap();
     view.active_tab = MainTab::Config;
     view.focus = PanelFocus::DetailPanel;
     // Press 'a' to enter add command mode

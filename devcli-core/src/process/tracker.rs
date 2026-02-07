@@ -385,14 +385,5 @@ impl ProcessTracker {
     }
 }
 
-// Implement the Default trait for ProcessTracker
-// This allows creating a ProcessTracker with ProcessTracker::default()
-// Default is a standard Rust trait for types that have a "default" value
-impl Default for ProcessTracker {
-    fn default() -> Self {
-        // Just call new() and panic if it fails
-        // expect() is like unwrap() but lets us provide a custom error message
-        // We use expect here because if we can't create a tracker, the app can't function
-        Self::new().expect("Failed to create ProcessTracker")
-    }
-}
+// Note: Default trait implementation removed because ProcessTracker::new() can fail
+// Use ProcessTracker::new()? instead of ProcessTracker::default()

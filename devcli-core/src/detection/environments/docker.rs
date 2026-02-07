@@ -33,8 +33,9 @@ pub fn detect_docker_commands(path: &Path, app_type: &str) -> Result<Option<Hash
     let app_name = path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("app");
-    
-    let dockerfile_path = dockerfile.as_ref().unwrap();
+
+    let dockerfile_path = dockerfile.as_ref()
+        .expect("dockerfile should be Some after is_none check");
     
     // Check if this is a multi-stage build
     let stages = dockerfile::parse_dockerfile(dockerfile_path).unwrap_or_default();

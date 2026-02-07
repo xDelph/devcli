@@ -34,15 +34,17 @@ pub fn add_env_file(
     if app.env_files.is_none() {
         app.env_files = Some(HashMap::new());
     }
-    
-    let env_files = app.env_files.as_mut().unwrap();
-    
+
+    let env_files = app.env_files.as_mut()
+        .expect("env_files should be Some after initialization");
+
     // Initialize stage if it doesn't exist
     if !env_files.contains_key(stage) {
         env_files.insert(stage.to_string(), HashMap::new());
     }
-    
-    let stage_map = env_files.get_mut(stage).unwrap();
+
+    let stage_map = env_files.get_mut(stage)
+        .expect("stage should exist after insertion");
     
     // Add the file for this context
     stage_map.insert(context.to_string(), file_path.to_string());
@@ -193,8 +195,9 @@ pub fn set_default_stage(
     if app.default_stages.is_none() {
         app.default_stages = Some(HashMap::new());
     }
-    
-    let default_stages = app.default_stages.as_mut().unwrap();
+
+    let default_stages = app.default_stages.as_mut()
+        .expect("default_stages should be Some after initialization");
     
     // Set the default stage for the context
     match context {
