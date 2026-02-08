@@ -1,0 +1,210 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Installation
+
+            Download the appropriate binary for your platform and add it to your PATH.
+
+            ### macOS (Apple Silicon M1/M2/M3)
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/devcli-aarch64-apple-darwin.tar.gz | tar xz
+            sudo mv devcli /usr/local/bin/
+            ```
+
+            ### macOS (Intel)
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/devcli-x86_64-apple-darwin.tar.gz | tar xz
+            sudo mv devcli /usr/local/bin/
+            ```
+
+            ### Linux (x64)
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
+            sudo mv devcli /usr/local/bin/
+            ```
+
+            ### Windows
+            Download `devcli-x86_64-pc-windows-msvc.zip`, extract, and add to PATH.
+
+            ## Checksums
+
+            See `checksums.txt` for SHA256 checksums of all binaries.
+
+  build-release:
+    name: Build ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            use_cross: false
+
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_cross: false
+
+          # Linux x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+
+          # Windows x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_cross: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Strip binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/devcli
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../devcli-${{ matrix.target }}.tar.gz devcli
+          cd -
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path devcli.exe -DestinationPath ../../../devcli-${{ matrix.target }}.zip
+          cd -
+
+      - name: Generate checksum (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          shasum -a 256 devcli-${{ matrix.target }}.tar.gz > devcli-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Generate checksum (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash devcli-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  devcli-${{ matrix.target }}.zip" | Out-File -Encoding ascii devcli-${{ matrix.target }}.zip.sha256
+
+      - name: Upload release archive (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./devcli-${{ matrix.target }}.tar.gz
+          asset_name: devcli-${{ matrix.target }}.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload release archive (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./devcli-${{ matrix.target }}.zip
+          asset_name: devcli-${{ matrix.target }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload checksum (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./devcli-${{ matrix.target }}.tar.gz.sha256
+          asset_name: devcli-${{ matrix.target }}.tar.gz.sha256
+          asset_content_type: text/plain
+
+      - name: Upload checksum (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./devcli-${{ matrix.target }}.zip.sha256
+          asset_name: devcli-${{ matrix.target }}.zip.sha256
+          asset_content_type: text/plain
