@@ -1,5 +1,5 @@
 use super::super::{MainView, PanelFocus};
-use crate::tui::state::{AppState, AppStateData};
+use crate::tui::state::{AppState, AppStateData, HealthStatus};
 use crate::tui::theme::Theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -249,6 +249,60 @@ impl MainView {
                         format!("{} stage(s) configured", total_stages),
                         theme.style_text_secondary(),
                     ),
+                ]));
+            }
+        }
+
+        // Show health status
+        match &app.health_status {
+            HealthStatus::Healthy => {
+                lines.push(Line::from(vec![
+                    Span::styled("Health:      ", theme.style_text_dim()),
+                    Span::styled("✓ ", Style::default().fg(theme.running)),
+                    Span::styled("Healthy", Style::default().fg(theme.running)),
+                ]));
+            }
+            HealthStatus::Unhealthy { failures, .. } => {
+                lines.push(Line::from(vec![
+                    Span::styled("Health:      ", theme.style_text_dim()),
+                    Span::styled("✗ ", Style::default().fg(theme.error)),
+                    Span::styled(
+                        format!("Unhealthy ({} failures)", failures),
+                        Style::default().fg(theme.error),
+                    ),
+                ]));
+            }
+            HealthStatus::Unknown => {
+                lines.push(Line::from(vec![
+                    Span::styled("Health:      ", theme.style_text_dim()),
+                    Span::styled("? ", Style::default().fg(theme.text_dim)),
+                    Span::styled("Unknown", Style::default().fg(theme.text_dim)),
+                ]));
+            }
+        }
+
+        // Show restart count if > 0
+        if app.restart_count > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("Restarts:    ", theme.style_text_dim()),
+                Span::styled(
+                    format!("🔄 {}", app.restart_count),
+                    theme.style_text_secondary(),
+                ),
+            ]));
+        }
+
+        // Show last exit code if app is stopped and has one
+        if !app.status.is_running() {
+            if let Some(exit_code) = app.last_exit_code {
+                let exit_color = if exit_code == 0 {
+                    theme.text
+                } else {
+                    theme.error
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("Exit Code:   ", theme.style_text_dim()),
+                    Span::styled(exit_code.to_string(), Style::default().fg(exit_color)),
                 ]));
             }
         }

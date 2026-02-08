@@ -124,6 +124,12 @@ mod tests {
             environment: Some("local".to_string()),
             command_variant: Some("start".to_string()),
             stage: None,
+            restart_count: 0,
+            restart_history: Vec::new(),
+            last_exit_code: None,
+            last_exit_time: None,
+            health_check_failures: 0,
+            last_health_check: None,
         };
 
         tracker.register_process(process).unwrap();

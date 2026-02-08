@@ -115,6 +115,12 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
         environment: payload.environment.clone(),
         command_variant: payload.command_variant.clone(),
         stage: payload.stage.clone(),
+        restart_count: 0,
+        restart_history: Vec::new(),
+        last_exit_code: None,
+        last_exit_time: None,
+        health_check_failures: 0,
+        last_health_check: None,
     };
 
     let tracker = ProcessTracker::new()?;
@@ -166,22 +172,42 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
-    tokio::select! {
-        _ = child.wait() => {
-            // Child exited
+    // Capture exit code for restart logic
+    let exit_code = tokio::select! {
+        result = child.wait() => {
+            // Child exited naturally
+            match result {
+                Ok(status) => status.code().unwrap_or(-1),
+                Err(_) => -1,
+            }
         }
         _ = sigint.recv() => {
             // Received SIGINT, kill child
             // We use libc::kill to send signal to child PID
             unsafe { libc::kill(child_pid as i32, libc::SIGINT) };
-            let _ = child.wait().await;
+            match child.wait().await {
+                Ok(status) => status.code().unwrap_or(-1),
+                Err(_) => -1,
+            }
         }
         _ = sigterm.recv() => {
             // Received SIGTERM, kill child
             unsafe { libc::kill(child_pid as i32, libc::SIGTERM) };
-            let _ = child.wait().await;
+            match child.wait().await {
+                Ok(status) => status.code().unwrap_or(-1),
+                Err(_) => -1,
+            }
         }
-    }
+    };
+
+    // Record exit code before cleanup
+    // This allows the monitor to detect crashes and trigger restarts
+    let _ = tracker.update_exit_info(
+        payload.project.as_deref().unwrap_or("unknown"),
+        &payload.app_name,
+        payload.environment.as_deref(),
+        exit_code,
+    );
 
     // Wait for IO tasks
     let _ = tokio::join!(stdout_task, stderr_task);

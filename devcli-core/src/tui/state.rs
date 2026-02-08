@@ -53,12 +53,37 @@ impl AppState {
                 // Determine if the app is running by checking the process tracker
                 let status = Self::determine_status(project_name, app_name, process_tracker);
 
-                // Get the active stage from the running process (if any)
-                let active_stage = process_tracker
+                // Get process info for health and restart data
+                let process_info = process_tracker
                     .get_process(project_name, app_name, None)
                     .ok()
-                    .flatten()
-                    .and_then(|info| info.stage);
+                    .flatten();
+
+                // Get the active stage from the running process (if any)
+                let active_stage = process_info.as_ref().and_then(|info| info.stage.clone());
+
+                // Extract restart count and exit code
+                let restart_count = process_info.as_ref().map(|info| info.restart_count).unwrap_or(0);
+                let last_exit_code = process_info.as_ref().and_then(|info| info.last_exit_code);
+
+                // Determine health status
+                let health_status = if let Some(info) = process_info.as_ref() {
+                    if info.health_check_failures > 0 {
+                        HealthStatus::Unhealthy {
+                            failures: info.health_check_failures,
+                            last_check: info.last_health_check.unwrap_or_else(Utc::now),
+                        }
+                    } else if info.last_health_check.is_some() {
+                        // Health check has run and is passing
+                        HealthStatus::Healthy
+                    } else {
+                        // No health check has run yet
+                        HealthStatus::Unknown
+                    }
+                } else {
+                    // No process info available
+                    HealthStatus::Unknown
+                };
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
@@ -80,6 +105,10 @@ impl AppState {
                     active_stage,
                     // Environment files configuration
                     env_files: app_config.env_files.clone(),
+                    // Restart tracking
+                    restart_count,
+                    last_exit_code,
+                    health_status,
                 };
 
                 apps.push(app_state);
@@ -259,6 +288,38 @@ impl AppState {
     }
 }
 
+/// Health status of an application
+#[derive(Debug, Clone, PartialEq)]
+pub enum HealthStatus {
+    /// Health status is unknown (no health check configured or no data yet)
+    Unknown,
+    /// Application is healthy (health checks passing)
+    Healthy,
+    /// Application is unhealthy (health checks failing)
+    Unhealthy {
+        /// Number of consecutive failures
+        failures: u32,
+        /// Timestamp of the last health check
+        last_check: DateTime<Utc>,
+    },
+}
+
+impl HealthStatus {
+    /// Returns true if the app is healthy
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, HealthStatus::Healthy)
+    }
+
+    /// Returns a human-readable status string
+    pub fn as_str(&self) -> &str {
+        match self {
+            HealthStatus::Unknown => "Unknown",
+            HealthStatus::Healthy => "Healthy",
+            HealthStatus::Unhealthy { .. } => "Unhealthy",
+        }
+    }
+}
+
 /// Represents a project with its applications
 #[derive(Debug, Clone)]
 pub struct ProjectState {
@@ -299,6 +360,12 @@ pub struct AppStateData {
     /// Example: { "qa": { "local": ".env.qa", "docker": ".env.qa" } }
     pub env_files:
         Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    /// Number of times this app has been restarted
+    pub restart_count: u32,
+    /// Exit code from the last time the process exited
+    pub last_exit_code: Option<i32>,
+    /// Current health status of the application
+    pub health_status: HealthStatus,
 }
 
 /// Information about a command

@@ -184,6 +184,18 @@ pub struct App {
     // OPTIONAL: Falls back to preferences.default_stage or no stage
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_stages: Option<HashMap<String, String>>,
+
+    // Health check configuration for monitoring process health
+    // Supports HTTP endpoints, TCP ports, custom commands, and process-alive checks
+    // OPTIONAL: If not set, only process existence is checked
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_check: Option<HealthCheck>,
+
+    // Restart policy for automatic recovery from failures
+    // Controls when and how to restart crashed or unhealthy processes
+    // OPTIONAL: If not set, no automatic restarts occur
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_policy: Option<RestartPolicy>,
 }
 
 // Commands for different environments
@@ -493,5 +505,189 @@ impl Default for Preferences {
             docker_platform: "linux/amd64".to_string(),
             default_stage: None,
         }
+    }
+}
+
+// Health check configuration
+// Tagged enum that serializes with a "type" field to distinguish variants
+// Example JSON: { "type": "http", "url": "http://localhost:3000/health", ... }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum HealthCheck {
+    // HTTP health check - makes GET request to URL and checks status code
+    Http {
+        url: String,
+        #[serde(default = "default_http_timeout")]
+        timeout_secs: u64,
+        #[serde(default = "default_http_status")]
+        expected_status: u16,
+    },
+    // TCP health check - attempts to connect to host:port
+    Tcp {
+        host: String,
+        port: u16,
+        #[serde(default = "default_tcp_timeout")]
+        timeout_secs: u64,
+    },
+    // Command health check - runs shell command and checks exit code
+    Command {
+        command: String,
+        #[serde(default = "default_command_timeout")]
+        timeout_secs: u64,
+        #[serde(default = "default_command_exit_code")]
+        expected_exit_code: i32,
+    },
+    // Process health check - just checks if process is alive (default behavior)
+    Process {},
+}
+
+// Helper functions for HealthCheck defaults
+fn default_http_timeout() -> u64 {
+    5
+}
+
+fn default_http_status() -> u16 {
+    200
+}
+
+fn default_tcp_timeout() -> u64 {
+    5
+}
+
+fn default_command_timeout() -> u64 {
+    5
+}
+
+fn default_command_exit_code() -> i32 {
+    0
+}
+
+impl HealthCheck {
+    /// Validate health check configuration
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            HealthCheck::Http { url, timeout_secs, .. } => {
+                if url.is_empty() {
+                    return Err("HTTP health check URL cannot be empty".to_string());
+                }
+                if *timeout_secs == 0 {
+                    return Err("HTTP health check timeout must be greater than 0".to_string());
+                }
+            }
+            HealthCheck::Tcp { host, port, timeout_secs } => {
+                if host.is_empty() {
+                    return Err("TCP health check host cannot be empty".to_string());
+                }
+                if *port == 0 {
+                    return Err("TCP health check port must be greater than 0".to_string());
+                }
+                if *timeout_secs == 0 {
+                    return Err("TCP health check timeout must be greater than 0".to_string());
+                }
+            }
+            HealthCheck::Command { command, timeout_secs, .. } => {
+                if command.is_empty() {
+                    return Err("Command health check command cannot be empty".to_string());
+                }
+                if *timeout_secs == 0 {
+                    return Err("Command health check timeout must be greater than 0".to_string());
+                }
+            }
+            HealthCheck::Process {} => {
+                // Process health check has no configuration to validate
+            }
+        }
+        Ok(())
+    }
+}
+
+// Restart policy configuration
+// Controls automatic restart behavior for crashed or unhealthy processes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartPolicy {
+    // Whether automatic restart is enabled
+    #[serde(default = "default_restart_enabled")]
+    pub enabled: bool,
+
+    // Maximum number of restarts within the window (0 = unlimited)
+    #[serde(default = "default_max_restarts")]
+    pub max_restarts: u32,
+
+    // Time window in seconds for counting restarts
+    #[serde(default = "default_restart_window")]
+    pub restart_window_secs: u64,
+
+    // Initial backoff delay in seconds before first restart
+    #[serde(default = "default_initial_backoff")]
+    pub initial_backoff_secs: u64,
+
+    // Maximum backoff delay in seconds (caps exponential growth)
+    #[serde(default = "default_max_backoff")]
+    pub max_backoff_secs: u64,
+
+    // Multiplier for exponential backoff (each retry multiplies delay by this)
+    #[serde(default = "default_backoff_multiplier")]
+    pub backoff_multiplier: f64,
+
+    // Exit codes that trigger restart (None = any non-zero code)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_on_exit_codes: Option<Vec<i32>>,
+}
+
+// Helper functions for RestartPolicy defaults
+fn default_restart_enabled() -> bool {
+    true
+}
+
+fn default_max_restarts() -> u32 {
+    5
+}
+
+fn default_restart_window() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_initial_backoff() -> u64 {
+    1
+}
+
+fn default_max_backoff() -> u64 {
+    60
+}
+
+fn default_backoff_multiplier() -> f64 {
+    2.0
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_restarts: 5,
+            restart_window_secs: 300,
+            initial_backoff_secs: 1,
+            max_backoff_secs: 60,
+            backoff_multiplier: 2.0,
+            restart_on_exit_codes: None,
+        }
+    }
+}
+
+impl RestartPolicy {
+    /// Validate restart policy configuration
+    pub fn validate(&self) -> Result<(), String> {
+        if self.restart_window_secs == 0 {
+            return Err("Restart window must be greater than 0".to_string());
+        }
+        if self.initial_backoff_secs == 0 {
+            return Err("Initial backoff must be greater than 0".to_string());
+        }
+        if self.max_backoff_secs < self.initial_backoff_secs {
+            return Err("Max backoff must be >= initial backoff".to_string());
+        }
+        if self.backoff_multiplier <= 0.0 {
+            return Err("Backoff multiplier must be greater than 0".to_string());
+        }
+        Ok(())
     }
 }

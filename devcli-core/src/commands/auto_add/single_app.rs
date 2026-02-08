@@ -381,6 +381,8 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             dockerfile_path: detected.dockerfile_path.clone(),
             env_files, // Interactive env files with user-selected environments
             default_stages: None, // Will be set by user via preferences or explicit command
+            health_check: None,
+            restart_policy: None,
         };
         
         // Insert the app into the config
@@ -493,6 +495,8 @@ fn add_to_config(
         dockerfile_path: detected.dockerfile_path,
         env_files, // Interactive env files with user-selected environments
         default_stages: None, // Will be set by user via preferences or explicit command
+        health_check: None,
+        restart_policy: None,
     };
     
     // Insert the app into the config

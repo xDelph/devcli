@@ -53,6 +53,8 @@ mod tests {
             app_type: "nodejs".to_string(),
             dockerfile_path: None,
             env_files: None,
+            health_check: None,
+            restart_policy: None,
         };
 
         let envs = crate::utils::app::get_available_environments(&app);

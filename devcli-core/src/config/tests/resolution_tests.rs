@@ -96,6 +96,8 @@ mod tests {
                     dockerfile_path: None,
                     env_files: None,
                     default_stages: None,
+                    health_check: None,
+                    restart_policy: None,
                 },
             );
             config.projects.insert(project_name.to_string(), Project { apps });

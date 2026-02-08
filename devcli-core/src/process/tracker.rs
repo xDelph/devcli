@@ -30,6 +30,30 @@ pub struct ProcessInfo {
     // OPTIONAL: Only set if a stage was configured or overridden
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+
+    // Number of times this process has been restarted
+    #[serde(default)]
+    pub restart_count: u32,
+
+    // History of restart events with timestamps and reasons
+    #[serde(default)]
+    pub restart_history: Vec<RestartEvent>,
+
+    // Exit code from the last time the process exited
+    #[serde(default)]
+    pub last_exit_code: Option<i32>,
+
+    // Timestamp when the process last exited
+    #[serde(default)]
+    pub last_exit_time: Option<DateTime<Utc>>,
+
+    // Number of consecutive health check failures
+    #[serde(default)]
+    pub health_check_failures: u32,
+
+    // Timestamp of the last health check
+    #[serde(default)]
+    pub last_health_check: Option<DateTime<Utc>>,
 }
 
 // Manages tracking of spawned processes via PID files
@@ -382,6 +406,123 @@ impl ProcessTracker {
             .context("Failed to get modification time")?;
 
         Ok(Some(modified))
+    }
+
+    /// Update exit information for a process
+    /// Called by internal-spawner when a process exits
+    pub fn update_exit_info(
+        &self,
+        project: &str,
+        app_name: &str,
+        environment: Option<&str>,
+        exit_code: i32,
+    ) -> Result<()> {
+        // Load existing process info
+        if let Some(mut info) = self.get_process(project, app_name, environment)? {
+            // Update exit information
+            info.last_exit_code = Some(exit_code);
+            info.last_exit_time = Some(Utc::now());
+
+            // Save updated info back to disk
+            self.register_process(info)?;
+        }
+
+        Ok(())
+    }
+}
+
+// Restart event record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartEvent {
+    pub timestamp: DateTime<Utc>,
+    pub exit_code: Option<i32>,
+    pub reason: RestartReason,
+}
+
+// Reason for restart
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum RestartReason {
+    Crash { exit_code: i32 },
+    HealthCheckFailure { check_type: String },
+    Manual,
+}
+
+impl ProcessInfo {
+    /// Record a restart event
+    pub fn record_restart(&mut self, exit_code: Option<i32>, reason: RestartReason) {
+        self.restart_count += 1;
+        self.restart_history.push(RestartEvent {
+            timestamp: Utc::now(),
+            exit_code,
+            reason,
+        });
+    }
+
+    /// Check if this process should be restarted based on policy
+    pub fn should_restart(&self, policy: &crate::config::models::RestartPolicy) -> bool {
+        // If restart is disabled, never restart
+        if !policy.enabled {
+            return false;
+        }
+
+        // Check if we have an exit code to evaluate
+        if let Some(exit_code) = self.last_exit_code {
+            // If restart_on_exit_codes is specified, only restart on those codes
+            if let Some(ref codes) = policy.restart_on_exit_codes {
+                if !codes.contains(&exit_code) {
+                    return false;
+                }
+            } else {
+                // Default: only restart on non-zero exit codes
+                if exit_code == 0 {
+                    return false;
+                }
+            }
+        }
+
+        // Check if we've exceeded max restarts within the window
+        if policy.max_restarts > 0 {
+            // Count restarts within the window
+            let window_start = Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
+            let recent_restarts = self.restart_history
+                .iter()
+                .filter(|event| event.timestamp > window_start)
+                .count() as u32;
+
+            if recent_restarts >= policy.max_restarts {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Calculate exponential backoff delay for next restart
+    pub fn calculate_backoff(&self, policy: &crate::config::models::RestartPolicy) -> std::time::Duration {
+        // Calculate exponential backoff: initial * multiplier^(attempts - 1)
+        let attempts = self.restart_count.max(1);
+        let backoff_secs = policy.initial_backoff_secs as f64
+            * policy.backoff_multiplier.powi((attempts - 1) as i32);
+
+        // Cap at max_backoff_secs
+        let capped_secs = backoff_secs.min(policy.max_backoff_secs as f64);
+
+        std::time::Duration::from_secs(capped_secs as u64)
+    }
+
+    /// Clear restart history if the window has expired
+    /// Should be called after successful restart to reset the window
+    pub fn clear_restart_history_if_window_expired(&mut self, policy: &crate::config::models::RestartPolicy) {
+        let window_start = Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
+
+        // Remove restart events outside the window
+        self.restart_history.retain(|event| event.timestamp > window_start);
+
+        // If all events were removed, reset the count
+        if self.restart_history.is_empty() {
+            self.restart_count = 0;
+        }
     }
 }
 

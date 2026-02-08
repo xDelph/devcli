@@ -217,6 +217,12 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         environment: Some(environment.clone()),
         command_variant: Some(args.command_variant), // Store the variant!
         stage: None,                                 // Stage tracking will be added in future task
+        restart_count: 0,
+        restart_history: Vec::new(),
+        last_exit_code: None,
+        last_exit_time: None,
+        health_check_failures: 0,
+        last_health_check: None,
     };
 
     tracker.register_process(process_info)?;

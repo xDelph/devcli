@@ -12,9 +12,9 @@ use clap::{Parser, Subcommand};
 use devcli_core::commands::{
     add_env_file, auto_add_command, config_add_command, config_edit, config_edit_command,
     config_init, config_list, config_list_commands, config_remove_command, config_set_default,
-    config_show, config_validate, internal_spawner_command, list_env_files, monitor_command,
-    pref_reset, pref_set, pref_show, remove_env_file, restart_command, run_command,
-    set_default_stage, start_command, status_command, stop_command, ui_command,
+    config_show, config_validate, health_check_command, internal_spawner_command, list_env_files,
+    monitor_command, pref_reset, pref_set, pref_show, remove_env_file, restart_command,
+    run_command, set_default_stage, start_command, status_command, stop_command, ui_command,
 };
 use devcli_core::Result; // Our error handling type
 
@@ -147,6 +147,21 @@ enum Commands {
     AutoAdd {
         #[arg(long, help = "Path to detect (defaults to current directory)")]
         path: Option<String>,
+    },
+
+    // The "health-check" subcommand
+    // Example: devcli health-check api
+    #[command(about = "Manually check the health of a running app")]
+    HealthCheck {
+        #[arg(help = "Name of the application to check")]
+        app_name: String,
+
+        #[arg(
+            short,
+            long,
+            help = "Environment: 'local', 'docker', 'orbstack', or 'k8s'"
+        )]
+        env: Option<String>,
     },
 
     // The "monitor" subcommand
@@ -506,6 +521,15 @@ async fn run() -> Result<()> {
 
         Commands::AutoAdd { path } => {
             auto_add_command(path).await?;
+        }
+
+        // Handle the "health-check" command
+        Commands::HealthCheck { app_name, env } => {
+            let args = devcli_core::commands::health_check::HealthCheckArgs {
+                app_name,
+                environment: env,
+            };
+            health_check_command(args).await?;
         }
 
         // Handle the "monitor" command

@@ -1,5 +1,5 @@
 use super::super::{MainView, PanelFocus};
-use crate::tui::state::{AppState, AppStateData};
+use crate::tui::state::{AppState, AppStateData, HealthStatus};
 use crate::tui::theme::Theme;
 use ratatui::{
     layout::Rect,
@@ -132,7 +132,36 @@ impl MainView {
             theme.style_text_secondary()
         };
 
-        Line::from(vec![
+        // Build restart count indicator
+        let restart_indicator = if app.restart_count > 0 {
+            format!(" 🔄{}", app.restart_count)
+        } else {
+            String::new()
+        };
+
+        // Build health status indicator
+        let health_indicator = match &app.health_status {
+            HealthStatus::Healthy => " ✓",
+            HealthStatus::Unhealthy { .. } => " ✗",
+            HealthStatus::Unknown => "",
+        };
+
+        // Build exit code indicator (only show for stopped apps with exit code)
+        let exit_code_indicator = if !app.status.is_running() {
+            if let Some(exit_code) = app.last_exit_code {
+                if exit_code != 0 {
+                    format!(" [exit:{}]", exit_code)
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let mut spans = vec![
             Span::raw("  "),
             Span::styled(
                 status_icon,
@@ -144,6 +173,40 @@ impl MainView {
             ),
             Span::styled(format!(" {}", app.name), text_style),
             Span::styled(stage_indicator, stage_style),
-        ])
+        ];
+
+        // Add restart indicator if present
+        if !restart_indicator.is_empty() {
+            spans.push(Span::styled(restart_indicator, stage_style));
+        }
+
+        // Add health indicator if present
+        if !health_indicator.is_empty() {
+            let health_style = if is_selected {
+                if self.focus == PanelFocus::AppList {
+                    theme.style_bg_selected_secondary()
+                } else {
+                    match &app.health_status {
+                        HealthStatus::Healthy => theme.style_text_running(),
+                        HealthStatus::Unhealthy { .. } => theme.style_text_error(),
+                        HealthStatus::Unknown => theme.style_text_secondary(),
+                    }
+                }
+            } else {
+                match &app.health_status {
+                    HealthStatus::Healthy => theme.style_text_running(),
+                    HealthStatus::Unhealthy { .. } => theme.style_text_error(),
+                    HealthStatus::Unknown => theme.style_text_secondary(),
+                }
+            };
+            spans.push(Span::styled(health_indicator, health_style));
+        }
+
+        // Add exit code indicator if present
+        if !exit_code_indicator.is_empty() {
+            spans.push(Span::styled(exit_code_indicator, theme.style_text_error()));
+        }
+
+        Line::from(spans)
     }
 }
