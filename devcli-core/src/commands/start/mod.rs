@@ -39,11 +39,17 @@ use crate::Result;
 /// Handles multiple apps and keeps process alive for log viewing in non-detached mode.
 ///
 /// Flow: Load config → Resolve all apps → Check deps → Start apps in parallel → Show logs (if not detached)
+#[tracing::instrument(skip(args), fields(app_names = ?args.app_names, env = ?args.env, skip_deps = args.skip_deps, stage = ?args.stage))]
 pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     // Validate input: we need at least one app name
     if args.app_names.is_empty() {
         anyhow::bail!("At least one app name must be provided");
     }
+
+    tracing::info!(
+        app_count = args.app_names.len(),
+        "Starting command execution"
+    );
 
     let silent = args.silent;
 

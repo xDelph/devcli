@@ -5,6 +5,7 @@ pub mod config;
 pub mod env;
 pub mod health_check;
 pub mod internal_spawner;
+pub mod metrics;
 pub mod monitor;
 pub mod preferences;
 pub mod prepare;
@@ -23,6 +24,7 @@ pub use config::{
 pub use env::{add_env_file, list_env_files, remove_env_file, set_default_stage};
 pub use health_check::health_check_command;
 pub use internal_spawner::internal_spawner_command;
+pub use metrics::metrics_command;
 pub use monitor::monitor_command;
 pub use preferences::{pref_reset, pref_set, pref_show};
 pub use restart::restart_command;

@@ -25,7 +25,15 @@ pub struct RunCommandArgs {
 
 // Main implementation of the run command
 // Very similar to start_command, but uses a specific command variant instead of default
+#[tracing::instrument(skip(args), fields(app_name = %args.app_name, command_variant = %args.command_variant, project = ?args.project, env = ?args.env))]
 pub async fn run_command(args: RunCommandArgs) -> Result<()> {
+    tracing::info!(
+        app_name = %args.app_name,
+        command_variant = %args.command_variant,
+        project = ?args.project,
+        "Run command initiated"
+    );
+
     // Load config and preferences (same as start command)
     let config = load_config()?;
     let preferences = load_preferences()?;
@@ -169,6 +177,16 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
 
     // Display what we're doing
     // Note: We show the command variant being executed
+    tracing::info!(
+        app_name = %args.app_name,
+        command_variant = %args.command_variant,
+        environment = %environment,
+        working_dir = %working_dir.display(),
+        command = %final_command,
+        log_file = %log_path.display(),
+        "Running command"
+    );
+
     println!(
         "Running command '{}' for app '{}' (environment: {})",
         args.command_variant, args.app_name, environment
@@ -190,6 +208,12 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     if !process_still_running {
         // Process completed - check if it was successful or crashed
         // For short-running commands like builds, this is normal
+        tracing::info!(
+            app_name = %args.app_name,
+            command_variant = %args.command_variant,
+            pid = spawned.pid,
+            "Process completed quickly"
+        );
 
         println!(
             "✓ Process '{}' completed (PID: {}). Check log for details: {}",
@@ -215,8 +239,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         project: Some(resolved_app.project.clone()),
         app_config_name: Some(resolved_app.app_name.clone()),
         environment: Some(environment.clone()),
-        command_variant: Some(args.command_variant), // Store the variant!
-        stage: None,                                 // Stage tracking will be added in future task
+        command_variant: Some(args.command_variant.clone()), // Store the variant!
+        stage: None,                                          // Stage tracking will be added in future task
         restart_count: 0,
         restart_history: Vec::new(),
         last_exit_code: None,
@@ -226,6 +250,13 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     };
 
     tracker.register_process(process_info)?;
+
+    tracing::info!(
+        app_name = %args.app_name,
+        command_variant = %args.command_variant,
+        pid = spawned.pid,
+        "Process started successfully"
+    );
 
     println!(
         "✓ Process '{}' started successfully with PID {}",

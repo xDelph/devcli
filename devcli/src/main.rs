@@ -13,9 +13,11 @@ use devcli_core::commands::{
     add_env_file, auto_add_command, config_add_command, config_edit, config_edit_command,
     config_init, config_list, config_list_commands, config_remove_command, config_set_default,
     config_show, config_validate, health_check_command, internal_spawner_command, list_env_files,
-    monitor_command, pref_reset, pref_set, pref_show, remove_env_file, restart_command,
-    run_command, set_default_stage, start_command, status_command, stop_command, ui_command,
+    metrics_command, monitor_command, pref_reset, pref_set, pref_show, remove_env_file,
+    restart_command, run_command, set_default_stage, start_command, status_command, stop_command,
+    ui_command,
 };
+use devcli_core::logging::init_tracing;
 use devcli_core::Result; // Our error handling type
 
 // Main CLI structure
@@ -171,6 +173,11 @@ enum Commands {
         #[arg(long, help = "Run as background daemon")]
         daemon: bool,
     },
+
+    // The "metrics" subcommand
+    // Example: devcli metrics
+    #[command(about = "Display metrics from the monitor daemon")]
+    Metrics,
 
     // The "internal-spawner" subcommand (hidden, for internal use only)
     // Spawned by devcli start to manage app processes and log capturing
@@ -414,6 +421,11 @@ async fn main() {
 // Main application logic
 // Separated from main() so we can use ? for error handling
 async fn run() -> Result<()> {
+    // Initialize structured logging with tracing
+    // This sets up JSON file logging and console output
+    // Ignore errors from tracing initialization - non-critical
+    let _ = init_tracing();
+
     // Parse command-line arguments into our Cli struct
     // This automatically handles --help, --version, validation, etc.
     let cli = Cli::parse();
@@ -535,6 +547,11 @@ async fn run() -> Result<()> {
         // Handle the "monitor" command
         Commands::Monitor { daemon } => {
             monitor_command(daemon).await?;
+        }
+
+        // Handle the "metrics" command
+        Commands::Metrics => {
+            metrics_command().await?;
         }
 
         // Handle the "internal-spawner" command (hidden)

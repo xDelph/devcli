@@ -34,6 +34,7 @@ pub struct AppToStart {
 /// Returns a tuple of (apps_to_start, environment) where:
 /// - apps_to_start: Vector of validated apps ready to start
 /// - environment: The resolved environment name (local/docker/k8s)
+#[tracing::instrument(skip(args), fields(app_names = ?args.app_names, project = ?args.project, env = ?args.env))]
 pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToStart>, String)> {
     // Step 1: Load the main configuration file and user preferences
     let config = load_config()?;
@@ -47,6 +48,12 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         .env
         .clone()
         .unwrap_or_else(|| preferences.default_env.clone());
+
+    tracing::debug!(
+        app_count = args.app_names.len(),
+        environment = %environment,
+        "Resolving apps to start"
+    );
 
     // Step 3: Initialize process tracker and clean up any dead processes
     let tracker = ProcessTracker::new()?;
@@ -65,6 +72,11 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
             tracker.get_process(&resolved_app.project, app_name, Some(&environment))?
         {
             if tracker.is_running(existing.pid) {
+                tracing::info!(
+                    app = %app_name,
+                    pid = existing.pid,
+                    "App already running, skipping"
+                );
                 if !silent {
                     println!(
                         "⚠ Process '{}' is already running with PID {}, skipping",
@@ -73,6 +85,11 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
                 }
                 continue;
             } else {
+                tracing::debug!(
+                    app = %app_name,
+                    pid = existing.pid,
+                    "Cleaning up stale process"
+                );
                 if !silent {
                     println!(
                         "Cleaning up stale process '{}' (PID {} is no longer running)",
@@ -87,6 +104,13 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         let (command, default_command) =
             validate_and_get_command(&resolved_app, &environment, app_name)?;
 
+        tracing::debug!(
+            app = %app_name,
+            project = %resolved_app.project,
+            command = %default_command,
+            "App validated and ready to start"
+        );
+
         // Store this app's info for later processing
         apps_to_start.push(AppToStart {
             resolved_app,
@@ -95,12 +119,19 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         });
     }
 
+    tracing::info!(
+        apps_to_start = apps_to_start.len(),
+        environment = %environment,
+        "App resolution complete"
+    );
+
     Ok((apps_to_start, environment))
 }
 
 /// Validate that the chosen environment exists for an app and get the command to run
 ///
 /// Returns a tuple of (command_string, default_command_name)
+#[tracing::instrument(skip(resolved_app), fields(app_name = %app_name, environment = %environment))]
 pub fn validate_and_get_command(
     resolved_app: &crate::config::resolver::ResolvedApp,
     environment: &str,

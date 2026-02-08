@@ -25,6 +25,7 @@ pub struct SpawnerPayload {
     pub log_file_path: PathBuf,
 }
 
+#[tracing::instrument(skip(payload_base64), name = "internal_spawner")]
 pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     // 1. Decode payload
     let payload_bytes = general_purpose::STANDARD
@@ -32,6 +33,13 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
         .context("Failed to decode payload")?;
     let payload: SpawnerPayload =
         serde_json::from_slice(&payload_bytes).context("Failed to parse payload JSON")?;
+
+    tracing::info!(
+        app = %payload.app_name,
+        project = ?payload.project,
+        environment = ?payload.environment,
+        "Internal spawner starting"
+    );
 
     let log_path = &payload.log_file_path;
 
@@ -75,24 +83,48 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
         .id()
         .ok_or_else(|| anyhow::anyhow!("Failed to get child PID"))?;
 
+    tracing::debug!(
+        app = %payload.app_name,
+        child_pid = child_pid,
+        command = %payload.command,
+        "Child process spawned"
+    );
+
     // 4.1. Verify child process actually started successfully
     // Give it a moment to fail if it's going to fail immediately
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Check if child is still running (hasn't exited immediately due to spawn failure)
     match child.try_wait() {
         Ok(Some(exit_status)) => {
             // Child has already exited - this indicates a spawn failure
+            let exit_code = exit_status.code().unwrap_or(-1);
+            tracing::error!(
+                app = %payload.app_name,
+                child_pid = child_pid,
+                exit_code = exit_code,
+                "Child process failed to start"
+            );
             anyhow::bail!(
                 "Application process '{}' failed to start (exit code: {}). Check if the command exists and is executable.",
                 payload.app_name,
-                exit_status.code().unwrap_or(-1)
+                exit_code
             );
         }
         Ok(None) => {
             // Child is still running - good!
+            tracing::info!(
+                app = %payload.app_name,
+                child_pid = child_pid,
+                "Child process verified running"
+            );
         }
         Err(e) => {
+            tracing::error!(
+                app = %payload.app_name,
+                error = %e,
+                "Failed to check child process status"
+            );
             anyhow::bail!("Failed to check child process status: {}", e);
         }
     }
@@ -125,6 +157,13 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
 
     let tracker = ProcessTracker::new()?;
     tracker.register_process(process_info)?;
+
+    tracing::info!(
+        app = %payload.app_name,
+        spawner_pid = my_pid,
+        child_pid = child_pid,
+        "Process registered in tracker"
+    );
 
     // 6. Handle Output Streaming
     let stdout = child.stdout.take().context("Failed to capture stdout")?;
@@ -202,6 +241,13 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
 
     // Record exit code before cleanup
     // This allows the monitor to detect crashes and trigger restarts
+    tracing::info!(
+        app = %payload.app_name,
+        exit_code = exit_code,
+        child_pid = child_pid,
+        "Child process exited"
+    );
+
     let _ = tracker.update_exit_info(
         payload.project.as_deref().unwrap_or("unknown"),
         &payload.app_name,
@@ -211,6 +257,11 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
 
     // Wait for IO tasks
     let _ = tokio::join!(stdout_task, stderr_task);
+
+    tracing::debug!(
+        app = %payload.app_name,
+        "Cleaning up process registration"
+    );
 
     // Cleanup PID file
     // We need to re-instantiate tracker because it might have been dropped?

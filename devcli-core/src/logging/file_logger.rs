@@ -1,3 +1,13 @@
+// DEPRECATED: This custom file logger is being phased out in favor of the tracing infrastructure.
+//
+// New code should use the tracing crate for structured logging:
+// - Use tracing::info!(), tracing::warn!(), tracing::error!() macros
+// - Logs are automatically written to JSON files with structured fields
+// - See src/logging/tracing_setup.rs for the new logging infrastructure
+//
+// This module is kept temporarily for backwards compatibility but will be removed
+// in a future release once all usages are migrated to tracing.
+
 // Import required functionality
 use anyhow::{Context, Result}; // Error handling
 use chrono::Utc; // UTC timezone for timestamps
@@ -7,6 +17,10 @@ use tokio::io::AsyncWriteExt; // Trait for async write operations (write_all, fl
 
 // Handles writing logs to a file with timestamps
 // Uses async I/O to avoid blocking when writing
+#[deprecated(
+    since = "0.2.0",
+    note = "Use tracing infrastructure instead. See src/logging/tracing_setup.rs"
+)]
 pub struct FileLogger {
     file: File,        // The open file handle
     log_path: PathBuf, // Path to the log file (for reference)

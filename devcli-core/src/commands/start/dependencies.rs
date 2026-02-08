@@ -23,6 +23,7 @@ use crate::Result;
 /// * `apps` - Slice of resolved apps to check dependencies for
 /// * `environment` - The target environment (e.g., "local", "docker")
 /// * `silent` - If true, suppresses output messages
+#[tracing::instrument(skip(apps), fields(app_count = apps.len(), environment = %environment))]
 pub async fn handle_dependencies(
     apps: &[&crate::config::resolver::ResolvedApp],
     environment: &str,
@@ -42,12 +43,18 @@ pub async fn handle_dependencies(
     }
 
     if all_dependencies.is_empty() {
+        tracing::debug!("No dependencies to check");
         return Ok(());
     }
 
     // Remove duplicates by app name
     all_dependencies.sort_by(|a, b| a.app_name.cmp(&b.app_name));
     all_dependencies.dedup_by(|a, b| a.app_name == b.app_name);
+
+    tracing::debug!(
+        dependency_count = all_dependencies.len(),
+        "Checking dependencies"
+    );
 
     if !silent {
         println!("Checking dependencies for all apps...");
@@ -57,11 +64,19 @@ pub async fn handle_dependencies(
     let missing = check_dependencies_running(&tracker, &all_dependencies)?;
 
     if missing.is_empty() {
+        tracing::info!("All dependencies are running");
         if !silent {
             println!("✓ All dependencies are running");
         }
         return Ok(());
     }
+
+    tracing::warn!(
+        missing_count = missing.len(),
+        missing = ?missing,
+        auto_start = preferences.auto_start_deps,
+        "Missing dependencies detected"
+    );
 
     // Handle missing dependencies based on preferences
     if preferences.auto_start_deps {
@@ -83,11 +98,18 @@ pub async fn handle_dependencies(
 }
 
 /// Start missing dependencies in parallel
+#[tracing::instrument(skip(missing), fields(dependency_count = missing.len(), environment = %environment))]
 async fn start_missing_dependencies(
     missing: Vec<String>,
     environment: &str,
     silent: bool,
 ) -> Result<()> {
+    tracing::info!(
+        dependency_count = missing.len(),
+        dependencies = ?missing,
+        "Starting missing dependencies in parallel"
+    );
+
     if !silent {
         println!("⚠ Missing dependencies: {}", missing.join(", "));
         println!("Starting dependencies in parallel...\n");
@@ -152,11 +174,21 @@ async fn start_missing_dependencies(
 
     // If any dependencies failed to start, abort with detailed error
     if !errors.is_empty() {
+        tracing::error!(
+            error_count = errors.len(),
+            errors = ?errors,
+            "Failed to start dependencies"
+        );
         anyhow::bail!(
             "Failed to start dependencies. Cannot proceed with main application.\n\nDependency failures:\n  {}",
             errors.join("\n  ")
         );
     }
+
+    tracing::info!(
+        dependency_count = missing.len(),
+        "All dependencies started successfully"
+    );
 
     Ok(())
 }

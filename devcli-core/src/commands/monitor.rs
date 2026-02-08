@@ -4,15 +4,18 @@
 
 use crate::config::{load_config, Config};
 use crate::logging::MonitorLogger;
+use crate::metrics::{start_metrics_server, MetricsCollector};
 use crate::process::{HealthCheckEngine, ProcessInfo, ProcessTracker, RestartCoordinator, RestartReason};
 use crate::Result;
 use chrono::Utc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // Main entry point for the monitor daemon
 // This runs in a loop, checking process health every few seconds
 // Args:
 //   - daemon: If true, runs as a background daemon. If false, runs once and exits.
+#[tracing::instrument]
 pub async fn monitor_command(daemon: bool) -> Result<()> {
     if daemon {
         // Run as daemon - continuous monitoring loop
@@ -43,11 +46,12 @@ struct MonitorState {
     health_check_engine: HealthCheckEngine,
     restart_coordinator: RestartCoordinator,
     logger: MonitorLogger,
+    metrics: Arc<MetricsCollector>,
 }
 
 impl MonitorState {
     /// Create new monitor state
-    async fn new() -> Result<Self> {
+    async fn new(metrics: Arc<MetricsCollector>) -> Result<Self> {
         let tracker = ProcessTracker::new()?;
         let config = load_config()?;
         let health_check_engine = HealthCheckEngine::new();
@@ -60,6 +64,7 @@ impl MonitorState {
             health_check_engine,
             restart_coordinator,
             logger,
+            metrics,
         })
     }
 
@@ -75,6 +80,7 @@ impl MonitorState {
     }
 
     /// Perform health checks on all running processes
+    #[tracing::instrument(skip(self), name = "health_check_cycle")]
     async fn perform_health_checks(&mut self) -> Result<()> {
         let processes = self.tracker.list_processes()?;
 
@@ -138,6 +144,13 @@ impl MonitorState {
                     // If multiple failures, trigger restart
                     // TODO: Make threshold configurable (currently hardcoded to 3)
                     if updated_process.health_check_failures >= 3 {
+                        tracing::warn!(
+                            project = %project,
+                            app = %app_name,
+                            failures = updated_process.health_check_failures,
+                            "Health check threshold reached, will attempt restart"
+                        );
+
                         eprintln!(
                             "Health check failed {} times for {}/{}, will attempt restart",
                             updated_process.health_check_failures, project, app_name
@@ -158,6 +171,13 @@ impl MonitorState {
                     let _ = self.tracker.register_process(updated_process);
                 }
                 Err(e) => {
+                    tracing::error!(
+                        project = %project,
+                        app = %app_name,
+                        error = %e,
+                        "Error performing health check"
+                    );
+
                     let error_msg = format!("{}", e);
                     let check_type = format!("{:?}", health_check);
                     let _ = self.logger.log_health_check_failure(
@@ -175,6 +195,7 @@ impl MonitorState {
     }
 
     /// Handle crashed processes and trigger restarts if configured
+    #[tracing::instrument(skip(self), name = "handle_crashed")]
     async fn handle_crashed_processes(&mut self) -> Result<()> {
         let processes = self.tracker.list_processes()?;
 
@@ -241,6 +262,15 @@ impl MonitorState {
             // Trigger restart via coordinator
             let app_key = format!("{}:{}:{}", project, app_name, process.environment.as_deref().unwrap_or("local"));
 
+            tracing::warn!(
+                project = %project,
+                app = %app_name,
+                exit_code = exit_code,
+                backoff_secs = backoff.as_secs(),
+                restart_count = process.restart_count + 1,
+                "Process crashed, triggering restart"
+            );
+
             eprintln!(
                 "Process {}/{} crashed with exit code {}. Restarting after {:?}...",
                 project, app_name, exit_code, backoff
@@ -254,6 +284,11 @@ impl MonitorState {
                 async {
                     // TODO: Implement actual restart logic
                     // This should call the restart command with proper arguments
+                    tracing::info!(
+                        project = %project,
+                        app = %app_name,
+                        "Executing restart (TODO: implement)"
+                    );
                     eprintln!("TODO: Execute restart for {}/{}", project, app_name);
                     Ok(())
                 },
@@ -275,9 +310,24 @@ impl MonitorState {
 // Background daemon loop
 // Continuously monitors process health and cleans up dead processes
 // Exits automatically when no processes remain
+#[tracing::instrument(name = "monitor_daemon")]
 async fn run_daemon_loop() -> Result<()> {
-    let mut state = MonitorState::new().await?;
+    // Create metrics collector
+    let metrics = Arc::new(MetricsCollector::new());
+
+    // Start metrics HTTP server in background
+    let metrics_clone = metrics.clone();
+    tokio::spawn(async move {
+        if let Err(e) = start_metrics_server(metrics_clone).await {
+            tracing::error!(error = %e, "Metrics server error");
+            eprintln!("Metrics server error: {}", e);
+        }
+    });
+
+    let mut state = MonitorState::new(metrics.clone()).await?;
     let tracker = &state.tracker;
+
+    tracing::info!("Monitor daemon starting");
 
     // Log monitor startup
     let _ = state.logger.log_monitor_started().await;
@@ -309,6 +359,9 @@ async fn run_daemon_loop() -> Result<()> {
 
     // Main monitoring loop
     loop {
+        // Increment loop iteration counter for metrics
+        state.metrics.increment_loop_iteration();
+
         // 1. Cleanup dead processes (existing behavior)
         let _cleaned = state.tracker.cleanup_dead()?;
 
@@ -320,11 +373,13 @@ async fn run_daemon_loop() -> Result<()> {
 
         // 3. Perform health checks on running processes
         if let Err(e) = state.perform_health_checks().await {
+            tracing::error!(error = %e, "Error performing health checks");
             eprintln!("Error performing health checks: {}", e);
         }
 
         // 4. Handle crashed processes and trigger restarts
         if let Err(e) = state.handle_crashed_processes().await {
+            tracing::error!(error = %e, "Error handling crashed processes");
             eprintln!("Error handling crashed processes: {}", e);
         }
 

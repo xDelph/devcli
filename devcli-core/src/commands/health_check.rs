@@ -16,6 +16,7 @@ pub struct HealthCheckArgs {
 }
 
 /// Execute a manual health check on a running application
+#[tracing::instrument(skip(args), fields(app_name = %args.app_name, environment = ?args.environment))]
 pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     // Load configuration
     let config = load_config()?;
@@ -24,6 +25,11 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     let resolved = resolve_app(&config, &args.app_name, args.environment.as_deref())
         .context("Failed to resolve app")?;
 
+    tracing::info!(
+        project = %resolved.project,
+        app = %resolved.app_name,
+        "Checking health of application"
+    );
     println!("Checking health of: {}/{}", resolved.project, resolved.app_name);
 
     // Get app configuration
@@ -59,6 +65,12 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
 
     let process_info = process_info.unwrap();
 
+    tracing::debug!(
+        pid = process_info.pid,
+        health_check = ?health_check,
+        "Starting health check execution"
+    );
+
     println!("Process ID: {}", process_info.pid);
     println!("Health check type: {:?}", health_check);
     println!();
@@ -71,6 +83,14 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     match engine.check(health_check).await {
         Ok(true) => {
             let duration = start.elapsed();
+            tracing::info!(
+                project = %resolved.project,
+                app = %resolved.app_name,
+                duration_secs = %duration.as_secs_f64(),
+                result = "passed",
+                "Health check passed"
+            );
+
             println!("✅ Health check PASSED ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Status: Healthy");
@@ -87,6 +107,15 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         }
         Ok(false) => {
             let duration = start.elapsed();
+            tracing::warn!(
+                project = %resolved.project,
+                app = %resolved.app_name,
+                duration_secs = %duration.as_secs_f64(),
+                failures = process_info.health_check_failures,
+                result = "failed",
+                "Health check failed"
+            );
+
             println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Status: Unhealthy");
@@ -107,6 +136,15 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         }
         Err(e) => {
             let duration = start.elapsed();
+            tracing::error!(
+                project = %resolved.project,
+                app = %resolved.app_name,
+                duration_secs = %duration.as_secs_f64(),
+                error = %e,
+                result = "error",
+                "Health check encountered error"
+            );
+
             println!("⚠️  Health check ERROR ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Error: {}", e);

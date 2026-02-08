@@ -17,6 +17,7 @@ pub struct PreparedCommand {
 ///    - For Docker/OrbStack: uses --env-file flag
 ///    - For Local: loads vars and injects into process environment
 /// 3. Injecting Dockerfile path for build commands
+#[tracing::instrument(skip(resolved_app, working_dir, preferences), fields(environment = %environment, stage = ?stage))]
 pub fn prepare_command(
     command: &str,
     environment: &str,
@@ -26,6 +27,13 @@ pub fn prepare_command(
     preferences: &Preferences,
     show_output: bool,
 ) -> Result<PreparedCommand> {
+    tracing::debug!(
+        command = %command,
+        environment = %environment,
+        stage = ?stage,
+        "Preparing command"
+    );
+
     // Start with current process environment
     let mut env_vars: HashMap<String, String> = std::env::vars().collect();
 
@@ -49,6 +57,12 @@ pub fn prepare_command(
                 "docker",
                 resolved_app.app.dockerfile_path.as_deref(),
             ) {
+                tracing::debug!(
+                    env_file = %env_file_path,
+                    environment = "docker",
+                    "Using env file"
+                );
+
                 final_command =
                     crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
 
@@ -74,6 +88,12 @@ pub fn prepare_command(
                 "orbstack",
                 resolved_app.app.dockerfile_path.as_deref(),
             ) {
+                tracing::debug!(
+                    env_file = %env_file_path,
+                    environment = "orbstack",
+                    "Using env file"
+                );
+
                 final_command =
                     crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
 
@@ -99,6 +119,13 @@ pub fn prepare_command(
             ) {
                 let full_env_path = working_dir.join(&env_file_path);
                 if let Ok(file_vars) = crate::detection::parse_env_file(&full_env_path) {
+                    tracing::debug!(
+                        env_file = %env_file_path,
+                        environment = "local",
+                        var_count = file_vars.len(),
+                        "Loaded env vars from file"
+                    );
+
                     // Add variables to the process environment
                     for (key, value) in &file_vars {
                         // Overwrite existing env vars (inherited from shell)
@@ -120,6 +147,12 @@ pub fn prepare_command(
             }
         }
     }
+
+    tracing::debug!(
+        final_command = %final_command,
+        env_var_count = env_vars.len(),
+        "Command preparation complete"
+    );
 
     Ok(PreparedCommand {
         final_command,

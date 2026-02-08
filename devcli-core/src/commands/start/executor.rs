@@ -23,12 +23,19 @@ use tokio::sync::Mutex;
 /// Start all apps in parallel
 ///
 /// Returns a vector of successfully started app names
+#[tracing::instrument(skip(apps_to_start), fields(app_count = apps_to_start.len(), environment = %environment))]
 pub async fn start_apps_in_parallel(
     apps_to_start: Vec<AppToStart>,
     environment: &str,
     silent: bool,
     stage_override: Option<String>,
 ) -> Result<Vec<String>> {
+    tracing::info!(
+        app_count = apps_to_start.len(),
+        environment = %environment,
+        "Starting apps in parallel"
+    );
+
     if !silent {
         println!("\nStarting {} app(s) in parallel...", apps_to_start.len());
     }
@@ -75,20 +82,40 @@ pub async fn start_apps_in_parallel(
     }
 
     // Report results to the user (unless in silent mode)
-    if !started_apps.is_empty() && show_output {
-        println!(
-            "\n✓ Successfully started {} app(s): {}",
-            started_apps.len(),
-            started_apps.join(", ")
+    if !started_apps.is_empty() {
+        tracing::info!(
+            started_count = started_apps.len(),
+            apps = ?started_apps,
+            "Apps started successfully"
         );
+
+        if show_output {
+            println!(
+                "\n✓ Successfully started {} app(s): {}",
+                started_apps.len(),
+                started_apps.join(", ")
+            );
+        }
     }
 
     if !errors.is_empty() {
         if started_apps.is_empty() {
             // All apps failed - this is a complete failure
+            tracing::error!(
+                error_count = errors.len(),
+                errors = ?errors,
+                "Failed to start all apps"
+            );
             anyhow::bail!("Failed to start all apps:\n  {}", errors.join("\n  "));
         } else {
             // Some apps started, some failed - show warning but continue
+            tracing::warn!(
+                started_count = started_apps.len(),
+                failed_count = errors.len(),
+                errors = ?errors,
+                "Some apps failed to start"
+            );
+
             if show_output {
                 println!("\n⚠ Some apps failed to start:\n  {}", errors.join("\n  "));
             }
@@ -102,6 +129,15 @@ pub async fn start_apps_in_parallel(
 ///
 /// This is used by the parallel app starting logic.
 /// Returns the app name on success for reporting.
+#[tracing::instrument(
+    skip(resolved_app, command, default_command),
+    fields(
+        app = %resolved_app.app_name,
+        project = %resolved_app.project,
+        environment = %environment,
+        stage = ?stage_override
+    )
+)]
 async fn start_single_app_process(
     resolved_app: crate::config::resolver::ResolvedApp,
     command: String,
@@ -111,6 +147,12 @@ async fn start_single_app_process(
     stage_override: Option<String>,
 ) -> Result<String> {
     let app_name = resolved_app.app_name.clone();
+
+    tracing::debug!(
+        app = %app_name,
+        command = %command,
+        "Starting single app process"
+    );
 
     // Load preferences to get default_stage
     let preferences = load_preferences()?;
@@ -171,6 +213,16 @@ async fn start_single_app_process(
     let env_vars = prepared.env_vars;
 
     // Step 4: Display info to the user about what we're doing (unless silent)
+    tracing::info!(
+        app = %app_name,
+        working_dir = %working_dir.display(),
+        environment = %environment,
+        command = %final_command,
+        log_file = %log_path.display(),
+        stage = ?effective_stage,
+        "Starting app process"
+    );
+
     if show_output {
         println!(
             "→ Starting '{}' in {} (environment: {})",
@@ -246,6 +298,12 @@ async fn start_single_app_process(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let tracker = ProcessTracker::new()?;
     if !tracker.is_running(spawner_pid) {
+        tracing::error!(
+            app = %app_name,
+            spawner_pid = spawner_pid,
+            log_file = %log_path.display(),
+            "Spawner failed to start"
+        );
         anyhow::bail!(
             "Spawner for '{}' failed to start (PID: {}). Check the log file: {}",
             app_name,
@@ -253,6 +311,12 @@ async fn start_single_app_process(
             log_path.display()
         );
     }
+
+    tracing::info!(
+        app = %app_name,
+        spawner_pid = spawner_pid,
+        "Spawner verified running"
+    );
 
     // Step 7: If show_output is true, stream stdout/stderr from spawner
     // This keeps the command running so the TUI can capture logs
@@ -299,6 +363,7 @@ async fn start_single_app_process(
 ///
 /// This is a simplified version of start_command that handles exactly one app.
 /// Used when starting dependencies in parallel.
+#[tracing::instrument(skip(args), fields(app = ?args.app_names.first(), project = ?args.project))]
 pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool) -> Result<()> {
     // Validate that we have exactly one app name (this is for dependencies)
     if args.app_names.len() != 1 {

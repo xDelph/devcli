@@ -20,9 +20,18 @@ pub struct StopCommandArgs {
 }
 
 // Main implementation of the stop command
+#[tracing::instrument(skip(args), fields(app_name = ?args.app_name, project = ?args.project, all = args.all, force = args.force))]
 pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let tracker = ProcessTracker::new()?;
     let silent = args.silent;
+
+    tracing::info!(
+        app_name = ?args.app_name,
+        project = ?args.project,
+        all = args.all,
+        force = args.force,
+        "Stop command initiated"
+    );
 
     // Clean up dead processes to ensure accurate status
     tracker.cleanup_dead()?;
@@ -34,6 +43,8 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let processes_to_stop = filter_processes(&args, &mut processes, &tracker)?;
 
     if processes_to_stop.is_empty() {
+        tracing::info!("No processes found to stop");
+
         if !silent {
             if args.all {
                 println!("No processes are currently running");
@@ -60,15 +71,33 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let mut stopped_count = 0;
     let mut errors = Vec::new();
 
+    tracing::info!(
+        process_count = processes_to_stop.len(),
+        "Stopping processes"
+    );
+
     for process in &processes_to_stop {
         match stop_single_process(process, args.force, &tracker, silent).await {
             Ok(_) => {
+                tracing::info!(
+                    app = %process.app_name,
+                    pid = process.pid,
+                    "Process stopped successfully"
+                );
+
                 if !silent {
                     println!("✓ Stopped: {} (PID: {})", process.app_name, process.pid);
                 }
                 stopped_count += 1;
             }
             Err(e) => {
+                tracing::error!(
+                    app = %process.app_name,
+                    pid = process.pid,
+                    error = %e,
+                    "Failed to stop process"
+                );
+
                 let error_msg = format!("Failed to stop {}: {}", process.app_name, e);
                 errors.push(error_msg.clone());
                 if !silent {
@@ -79,6 +108,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     }
 
     // Summary
+    tracing::info!(
+        stopped_count = stopped_count,
+        failed_count = errors.len(),
+        "Stop command completed"
+    );
+
     if !silent {
         println!("\nStop Summary:");
         println!("  ✓ Successfully stopped: {}", stopped_count);
@@ -210,6 +245,7 @@ fn get_child_pids(parent_pid: u32) -> Vec<u32> {
 }
 
 // Stop a single process with proper signal handling
+#[tracing::instrument(skip(process, tracker), fields(app = %process.app_name, pid = process.pid, force = force))]
 async fn stop_single_process(
     process: &crate::process::ProcessInfo,
     force: bool,
@@ -220,6 +256,12 @@ async fn stop_single_process(
     {
         // First, try graceful shutdown with SIGTERM
         if !force {
+            tracing::debug!(
+                app = %process.app_name,
+                pid = process.pid,
+                "Sending SIGTERM for graceful shutdown"
+            );
+
             if !silent {
                 println!(
                     "Sending SIGTERM to process '{}' (PID: {})...",
@@ -249,6 +291,12 @@ async fn stop_single_process(
             for _i in 0..10 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 if !tracker.is_running(process.pid) {
+                    tracing::info!(
+                        app = %process.app_name,
+                        pid = process.pid,
+                        "Process terminated gracefully"
+                    );
+
                     if !silent {
                         println!("Process '{}' terminated gracefully", process.app_name);
                     }
@@ -265,6 +313,12 @@ async fn stop_single_process(
             }
 
             // If we get here, the process didn't terminate gracefully
+            tracing::warn!(
+                app = %process.app_name,
+                pid = process.pid,
+                "Process did not terminate gracefully, using SIGKILL"
+            );
+
             if !force && !silent {
                 println!(
                     "Process '{}' did not terminate gracefully, using SIGKILL...",
@@ -274,6 +328,12 @@ async fn stop_single_process(
         }
 
         // Force kill with SIGKILL
+        tracing::debug!(
+            app = %process.app_name,
+            pid = process.pid,
+            "Sending SIGKILL for forced termination"
+        );
+
         if !silent {
             println!(
                 "Sending SIGKILL to process '{}' (PID: {})...",

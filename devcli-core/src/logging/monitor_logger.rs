@@ -1,5 +1,12 @@
-// Specialized logger for monitor daemon events
-// Logs health check failures, restart events, and other monitoring activities
+// DEPRECATED: This custom monitor logger is being phased out in favor of the tracing infrastructure.
+//
+// New code should use the tracing crate for structured logging:
+// - Use tracing::info!(), tracing::warn!(), tracing::error!() macros with structured fields
+// - Logs are automatically written to JSON files at ~/.devcli/logs/devcli.YYYY-MM-DD.json
+// - All monitor events now logged via tracing spans and events in src/commands/monitor.rs
+//
+// This module is kept temporarily for backwards compatibility but will be removed
+// in a future release once all usages are migrated to tracing.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -10,6 +17,10 @@ use tokio::io::AsyncWriteExt;
 
 /// Logger for monitor daemon events
 /// Writes to a centralized monitor.log file
+#[deprecated(
+    since = "0.2.0",
+    note = "Use tracing infrastructure instead. Monitor events are now logged via tracing spans in monitor.rs"
+)]
 pub struct MonitorLogger {
     file: File,
     log_path: PathBuf,

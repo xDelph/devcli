@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod detection;
 pub mod logging;
+pub mod metrics;
 pub mod process;
 pub mod tui;
 pub mod utils;

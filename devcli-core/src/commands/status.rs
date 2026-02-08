@@ -19,6 +19,7 @@ pub struct StatusCommandArgs {
 
 // Main implementation of the status command
 // Displays processes grouped by project with nice formatting
+#[tracing::instrument(skip(args), fields(app_name = ?args.app_name, project = ?args.project, show_deps = args.show_deps))]
 pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     // Step 1: Get the process tracker to access running processes
     let tracker = ProcessTracker::new()?;
@@ -31,6 +32,11 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     // Step 3: Get all tracked processes from PID files
     // Returns Vec<ProcessInfo> with all process metadata
     let mut processes = tracker.list_processes()?;
+
+    tracing::debug!(
+        total_processes = processes.len(),
+        "Retrieved process list"
+    );
 
     // Step 4: Filter by project if requested
     // Example: devcli status --project qm
@@ -61,9 +67,15 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
     // Step 6: Check if we have any processes to display
     if processes.is_empty() {
+        tracing::info!("No processes found matching filters");
         println!("No processes are currently tracked");
         return Ok(());
     }
+
+    tracing::info!(
+        process_count = processes.len(),
+        "Displaying process status"
+    );
 
     // Step 7: Handle special case - show dependencies for a specific app
     // Example: devcli status api-private --deps
@@ -215,6 +227,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 //
 // This is called when both app_name and --deps are specified
 // Shows the app's dependencies and whether each is running
+#[tracing::instrument(skip(tracker), fields(app_name = %app_name))]
 async fn show_with_dependencies(app_name: String, tracker: &ProcessTracker) -> Result<()> {
     // Load the config to resolve dependencies
     let config = load_config()?;
@@ -225,6 +238,13 @@ async fn show_with_dependencies(app_name: String, tracker: &ProcessTracker) -> R
     // Get the full dependency chain
     // This returns all apps that this one depends on
     let dependencies = resolve_dependency_chain(&config, &resolved)?;
+
+    tracing::info!(
+        app = %app_name,
+        project = %resolved.project,
+        dependency_count = dependencies.len(),
+        "Showing app with dependencies"
+    );
 
     // Display header with app and project info
     println!(

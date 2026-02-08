@@ -20,8 +20,16 @@ pub struct RestartCommandArgs {
 
 // Main implementation of the restart command
 // Restart means: stop existing process → start same process with same config
+#[tracing::instrument(skip(args), fields(app_name = %args.app_name, project = ?args.project, env = ?args.env, skip_deps = args.skip_deps))]
 pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let silent = args.silent;
+
+    tracing::info!(
+        app_name = %args.app_name,
+        project = ?args.project,
+        env = ?args.env,
+        "Restart command initiated"
+    );
 
     // Step 0: Load config and resolve app to get project name
     // We need the project name to find the PID file
@@ -62,11 +70,23 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     // Step 3: If process is not running, we can't restart it - suggest starting instead
     let Some(process) = existing_process else {
+        tracing::warn!(
+            app_name = %args.app_name,
+            project = %project_name,
+            "Cannot restart - process not running"
+        );
         anyhow::bail!(
             "Process '{}' is not currently running. Use 'start' command instead.",
             args.app_name
         );
     };
+
+    tracing::debug!(
+        app_name = %args.app_name,
+        pid = process.pid,
+        environment = ?process.environment,
+        "Found running process to restart"
+    );
 
     // Step 4: Determine environment and project for restart
     // Use --env flag if provided, otherwise use existing process's environment
@@ -81,6 +101,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     // Use --project flag if provided, otherwise use existing process's project
     // Note: we already resolved the project above, but we keep this logic for consistency with args
     let project = Some(project_name.clone());
+
+    tracing::info!(
+        app_name = %args.app_name,
+        environment = %environment,
+        "Restarting process"
+    );
 
     if !silent {
         println!("Restarting process '{}'...", args.app_name);
@@ -144,6 +170,11 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
         crate::commands::start::start_command(start_args).await?;
     }
+
+    tracing::info!(
+        app_name = %args.app_name,
+        "Process restarted successfully"
+    );
 
     if !silent {
         println!("✓ Process '{}' restarted successfully", args.app_name);

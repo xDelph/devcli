@@ -425,4 +425,266 @@ CMD ["node", "server.js"]
         assert!(apply_cmd.contains("kubectl"));
         assert!(apply_cmd.contains("k8s/"));
     }
+
+    // === Metrics Integration Tests ===
+
+    #[test]
+    fn test_integration_metrics_collector_basic_operations() {
+        use crate::metrics::{MetricsCollector, OperationTiming};
+        use chrono::Utc;
+
+        // Step 1: Create metrics collector
+        let collector = MetricsCollector::new();
+
+        // Step 2: Record some operations
+        for i in 0..5 {
+            collector.record_operation(OperationTiming {
+                operation: "start".to_string(),
+                app: format!("app-{}", i),
+                duration_ms: 100 + i * 10,
+                timestamp: Utc::now(),
+                success: true,
+            });
+        }
+
+        // Step 3: Record exit codes
+        collector.record_exit_code(0);
+        collector.record_exit_code(0);
+        collector.record_exit_code(1);
+
+        // Step 4: Increment loop iterations
+        for _ in 0..10 {
+            collector.increment_loop_iteration();
+        }
+
+        // Verify operations work without panicking
+        // (Actual verification would require exposing internal state or collect_all())
+    }
+
+    #[test]
+    fn test_integration_metrics_json_serialization() {
+        use crate::metrics::{
+            AllMetrics, AppMetrics, PerformanceMetrics, ProcessMetrics, SystemMetrics,
+        };
+        use chrono::Utc;
+        use std::collections::HashMap;
+
+        // Step 1: Create sample metrics
+        let metrics = AllMetrics {
+            processes: ProcessMetrics {
+                total_processes: 5,
+                running_processes: 3,
+                stopped_processes: 2,
+                total_restarts: 10,
+                restarts_last_hour: 2,
+                health_check_success_rate: 0.95,
+                exit_code_distribution: {
+                    let mut map = HashMap::new();
+                    map.insert(0, 8);
+                    map.insert(1, 2);
+                    map
+                },
+                apps: vec![
+                    AppMetrics {
+                        project: "test-project".to_string(),
+                        name: "api-server".to_string(),
+                        status: "running".to_string(),
+                        uptime_seconds: Some(3600),
+                        restart_count: 2,
+                        last_exit_code: None,
+                        health_status: "healthy".to_string(),
+                        health_check_failures: 0,
+                    },
+                    AppMetrics {
+                        project: "test-project".to_string(),
+                        name: "worker".to_string(),
+                        status: "stopped".to_string(),
+                        uptime_seconds: None,
+                        restart_count: 0,
+                        last_exit_code: Some(0),
+                        health_status: "unknown".to_string(),
+                        health_check_failures: 0,
+                    },
+                ],
+            },
+            system: SystemMetrics {
+                monitor_uptime_seconds: 3600,
+                monitor_loop_iterations: 1200,
+                devcli_version: "0.1.0".to_string(),
+                total_apps_configured: 10,
+                config_last_modified: None,
+            },
+            performance: PerformanceMetrics {
+                avg_startup_time_ms: 500.0,
+                avg_health_check_duration_ms: 50.0,
+                avg_restart_duration_ms: 1000.0,
+                recent_operations: vec![],
+            },
+            timestamp: Utc::now(),
+        };
+
+        // Step 2: Serialize to JSON
+        let json = serde_json::to_string_pretty(&metrics).unwrap();
+
+        // Step 3: Verify JSON contains expected fields
+        assert!(json.contains("total_processes"));
+        assert!(json.contains("monitor_uptime_seconds"));
+        assert!(json.contains("avg_startup_time_ms"));
+        assert!(json.contains("api-server"));
+        assert!(json.contains("exit_code_distribution"));
+
+        // Step 4: Deserialize back
+        let deserialized: AllMetrics = serde_json::from_str(&json).unwrap();
+
+        // Step 5: Verify critical fields match
+        assert_eq!(deserialized.processes.total_processes, 5);
+        assert_eq!(deserialized.processes.running_processes, 3);
+        assert_eq!(deserialized.system.monitor_loop_iterations, 1200);
+        assert_eq!(deserialized.processes.apps.len(), 2);
+        assert_eq!(deserialized.processes.apps[0].name, "api-server");
+    }
+
+    #[test]
+    fn test_integration_metrics_operation_timing_limit() {
+        use crate::metrics::{MetricsCollector, OperationTiming};
+        use chrono::Utc;
+
+        let collector = MetricsCollector::new();
+
+        // Step 1: Record more than 1000 operations
+        for i in 0..1200 {
+            collector.record_operation(OperationTiming {
+                operation: "test".to_string(),
+                app: format!("app-{}", i),
+                duration_ms: 100,
+                timestamp: Utc::now(),
+                success: true,
+            });
+        }
+
+        // The collector should have pruned operations to keep memory bounded
+        // (Verification would require exposing internal state, but we test it doesn't panic)
+    }
+
+    #[test]
+    fn test_integration_metrics_exit_code_distribution() {
+        use crate::metrics::MetricsCollector;
+
+        let collector = MetricsCollector::new();
+
+        // Step 1: Record various exit codes
+        for _ in 0..10 {
+            collector.record_exit_code(0); // Success
+        }
+        for _ in 0..3 {
+            collector.record_exit_code(1); // Error
+        }
+        for _ in 0..2 {
+            collector.record_exit_code(137); // SIGKILL
+        }
+
+        // Exit code distribution should be tracked
+        // (Actual verification would require collect_all() which needs ProcessTracker)
+    }
+
+    #[test]
+    fn test_integration_metrics_types_defaults() {
+        use crate::metrics::{AppMetrics, ProcessMetrics, SystemMetrics};
+        use std::collections::HashMap;
+
+        // Step 1: Create metrics with minimal data
+        let app = AppMetrics {
+            project: "test".to_string(),
+            name: "app".to_string(),
+            status: "running".to_string(),
+            uptime_seconds: None,
+            restart_count: 0,
+            last_exit_code: None,
+            health_status: "unknown".to_string(),
+            health_check_failures: 0,
+        };
+
+        // Step 2: Verify optional fields work
+        assert!(app.uptime_seconds.is_none());
+        assert!(app.last_exit_code.is_none());
+
+        // Step 3: Create process metrics with empty collections
+        let process_metrics = ProcessMetrics {
+            total_processes: 0,
+            running_processes: 0,
+            stopped_processes: 0,
+            total_restarts: 0,
+            restarts_last_hour: 0,
+            health_check_success_rate: 1.0,
+            exit_code_distribution: HashMap::new(),
+            apps: vec![],
+        };
+
+        // Step 4: Verify empty state is valid
+        assert_eq!(process_metrics.total_processes, 0);
+        assert!(process_metrics.exit_code_distribution.is_empty());
+        assert!(process_metrics.apps.is_empty());
+
+        // Step 5: Create system metrics
+        let system_metrics = SystemMetrics {
+            monitor_uptime_seconds: 0,
+            monitor_loop_iterations: 0,
+            devcli_version: env!("CARGO_PKG_VERSION").to_string(),
+            total_apps_configured: 0,
+            config_last_modified: None,
+        };
+
+        // Step 6: Verify system metrics structure
+        assert!(!system_metrics.devcli_version.is_empty());
+    }
+
+    #[test]
+    fn test_integration_metrics_performance_averages() {
+        use crate::metrics::{OperationTiming, PerformanceMetrics};
+        use chrono::Utc;
+
+        // Step 1: Create performance metrics with operations
+        let operations = vec![
+            OperationTiming {
+                operation: "start".to_string(),
+                app: "app1".to_string(),
+                duration_ms: 100,
+                timestamp: Utc::now(),
+                success: true,
+            },
+            OperationTiming {
+                operation: "start".to_string(),
+                app: "app2".to_string(),
+                duration_ms: 200,
+                timestamp: Utc::now(),
+                success: true,
+            },
+            OperationTiming {
+                operation: "health_check".to_string(),
+                app: "app1".to_string(),
+                duration_ms: 50,
+                timestamp: Utc::now(),
+                success: true,
+            },
+        ];
+
+        let metrics = PerformanceMetrics {
+            avg_startup_time_ms: 150.0, // Average of 100 and 200
+            avg_health_check_duration_ms: 50.0,
+            avg_restart_duration_ms: 0.0,
+            recent_operations: operations.clone(),
+        };
+
+        // Step 2: Verify structure
+        assert_eq!(metrics.recent_operations.len(), 3);
+        assert!(metrics.avg_startup_time_ms > 0.0);
+
+        // Step 3: Serialize and deserialize
+        let json = serde_json::to_string(&metrics).unwrap();
+        let deserialized: PerformanceMetrics = serde_json::from_str(&json).unwrap();
+
+        // Step 4: Verify values preserved
+        assert_eq!(deserialized.avg_startup_time_ms, 150.0);
+        assert_eq!(deserialized.recent_operations.len(), 3);
+    }
 }

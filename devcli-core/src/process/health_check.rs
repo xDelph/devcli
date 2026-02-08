@@ -17,6 +17,7 @@ impl HealthCheckEngine {
 
     /// Execute a health check based on its configuration
     /// Returns true if the check passed, false if it failed
+    #[tracing::instrument(skip(self), fields(check_type = ?health_check))]
     pub async fn check(&self, health_check: &HealthCheck) -> Result<bool> {
         match health_check {
             HealthCheck::Http {
@@ -47,6 +48,7 @@ impl HealthCheckEngine {
 
     /// Perform HTTP health check
     /// Makes a GET request to the URL and checks if the status code matches expected
+    #[tracing::instrument(skip(self), fields(url = %url, timeout_secs = timeout_secs, expected_status = expected_status))]
     async fn check_http(&self, url: &str, timeout_secs: u64, expected_status: u16) -> Result<bool> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
@@ -58,12 +60,30 @@ impl HealthCheckEngine {
                 let status = response.status().as_u16();
                 // Check if status matches expected
                 if status == expected_status {
+                    tracing::debug!(
+                        url = %url,
+                        status = status,
+                        expected = expected_status,
+                        "HTTP health check passed"
+                    );
                     Ok(true)
                 } else {
                     // Also accept any 2xx status if expected is 200
                     if expected_status == 200 && (200..300).contains(&status) {
+                        tracing::debug!(
+                            url = %url,
+                            status = status,
+                            expected = expected_status,
+                            "HTTP health check passed (2xx status)"
+                        );
                         Ok(true)
                     } else {
+                        tracing::warn!(
+                            url = %url,
+                            status = status,
+                            expected = expected_status,
+                            "HTTP health check failed - status mismatch"
+                        );
                         Ok(false)
                     }
                 }
@@ -71,6 +91,11 @@ impl HealthCheckEngine {
             Err(e) => {
                 // Connection errors, timeouts, etc. are health check failures
                 // Don't propagate the error, just return false
+                tracing::warn!(
+                    url = %url,
+                    error = %e,
+                    "HTTP health check failed"
+                );
                 eprintln!("HTTP health check failed for {}: {}", url, e);
                 Ok(false)
             }
@@ -79,6 +104,7 @@ impl HealthCheckEngine {
 
     /// Perform TCP health check
     /// Attempts to connect to host:port and returns true if successful
+    #[tracing::instrument(skip(self), fields(host = %host, port = port, timeout_secs = timeout_secs))]
     async fn check_tcp(&self, host: &str, port: u16, timeout_secs: u64) -> Result<bool> {
         let addr = format!("{}:{}", host, port);
         let timeout = Duration::from_secs(timeout_secs);
@@ -92,15 +118,29 @@ impl HealthCheckEngine {
         {
             Ok(Ok(_stream)) => {
                 // Connection succeeded
+                tracing::debug!(
+                    addr = %addr,
+                    "TCP health check passed"
+                );
                 Ok(true)
             }
             Ok(Err(e)) => {
                 // Connection failed
+                tracing::warn!(
+                    addr = %addr,
+                    error = %e,
+                    "TCP health check failed"
+                );
                 eprintln!("TCP health check failed for {}: {}", addr, e);
                 Ok(false)
             }
             Err(_) => {
                 // Timeout
+                tracing::warn!(
+                    addr = %addr,
+                    timeout_secs = timeout_secs,
+                    "TCP health check timed out"
+                );
                 eprintln!("TCP health check timed out for {}", addr);
                 Ok(false)
             }
@@ -109,6 +149,7 @@ impl HealthCheckEngine {
 
     /// Perform command health check
     /// Executes a shell command and checks if the exit code matches expected
+    #[tracing::instrument(skip(self), fields(command = %command, timeout_secs = timeout_secs, expected_exit_code = expected_exit_code))]
     async fn check_command(
         &self,
         command: &str,
@@ -131,8 +172,19 @@ impl HealthCheckEngine {
             Ok(Ok(status)) => {
                 let exit_code = status.code().unwrap_or(-1);
                 if exit_code == expected_exit_code {
+                    tracing::debug!(
+                        command = %command,
+                        exit_code = exit_code,
+                        "Command health check passed"
+                    );
                     Ok(true)
                 } else {
+                    tracing::warn!(
+                        command = %command,
+                        exit_code = exit_code,
+                        expected = expected_exit_code,
+                        "Command health check failed - exit code mismatch"
+                    );
                     eprintln!(
                         "Command health check failed: expected exit code {}, got {}",
                         expected_exit_code, exit_code
@@ -142,12 +194,22 @@ impl HealthCheckEngine {
             }
             Ok(Err(e)) => {
                 // Command execution failed
+                tracing::error!(
+                    command = %command,
+                    error = %e,
+                    "Command health check failed to execute"
+                );
                 eprintln!("Command health check failed to execute: {}", e);
                 Ok(false)
             }
             Err(_) => {
                 // Timeout - kill the process
                 let _ = child.kill().await;
+                tracing::warn!(
+                    command = %command,
+                    timeout_secs = timeout_secs,
+                    "Command health check timed out"
+                );
                 eprintln!("Command health check timed out: {}", command);
                 Ok(false)
             }
