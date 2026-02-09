@@ -1,0 +1,114 @@
+name: Update Homebrew Formula
+
+# This workflow runs in the PUBLIC repo (xDelph/devcli)
+# When a release is published, it updates the Homebrew tap automatically
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release info
+        id: release
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION_NUMBER="${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Download binaries and compute checksums
+        id: checksums
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+
+          # Download all binaries
+          platforms=(
+            "aarch64-apple-darwin"
+            "x86_64-apple-darwin"
+            "aarch64-unknown-linux-gnu"
+            "x86_64-unknown-linux-gnu"
+          )
+
+          declare -A checksums
+
+          for platform in "${platforms[@]}"; do
+            url="https://github.com/${{ github.repository }}/releases/download/${VERSION}/devcli-${platform}.tar.gz"
+            echo "Downloading ${platform}..."
+
+            curl -fsSL "$url" -o "/tmp/devcli-${platform}.tar.gz"
+            checksum=$(sha256sum "/tmp/devcli-${platform}.tar.gz" | awk '{print $1}')
+
+            echo "${platform//-/_}_sha=${checksum}" >> $GITHUB_OUTPUT
+            echo "  ${platform}: ${checksum}"
+          done
+
+      - name: Checkout homebrew-devcli
+        uses: actions/checkout@v4
+        with:
+          repository: xDelph/homebrew-devcli
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cd homebrew-tap
+
+          VERSION="${{ steps.release.outputs.version }}"
+          VERSION_NUMBER="${{ steps.release.outputs.version_number }}"
+
+          cat > Formula/devcli.rb <<'EOF'
+          class Devcli < Formula
+            desc "Powerful CLI for managing spawned processes with config-based management"
+            homepage "https://github.com/xDelph/devcli"
+            version "${{ steps.release.outputs.version_number }}"
+            license "PolyForm-Noncommercial-1.0.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.release.outputs.version }}/devcli-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.checksums.outputs.aarch64_apple_darwin_sha }}"
+              else
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.release.outputs.version }}/devcli-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.checksums.outputs.x86_64_apple_darwin_sha }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.release.outputs.version }}/devcli-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.checksums.outputs.aarch64_unknown_linux_gnu_sha }}"
+              else
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.release.outputs.version }}/devcli-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.checksums.outputs.x86_64_unknown_linux_gnu_sha }}"
+              end
+            end
+
+            def install
+              bin.install "devcli"
+            end
+
+            test do
+              system "#{bin}/devcli", "--version"
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          git add Formula/devcli.rb
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update formula to ${{ steps.release.outputs.version }}"
+            git push
+            echo "✅ Formula updated to ${{ steps.release.outputs.version }}"
+          fi

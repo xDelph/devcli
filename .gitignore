@@ -1,0 +1,24 @@
+# Source code stays in private repo
+/devcli-core/
+/devcli/
+/target/
+Cargo.toml
+Cargo.lock
+*.rs
+!docs/**/*.rs  # Allow code examples in docs
+
+# Rust
+*.o
+*.so
+*.dylib
+*.rlib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
