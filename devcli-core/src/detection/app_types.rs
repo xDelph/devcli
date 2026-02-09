@@ -10,10 +10,10 @@ use std::path::Path;
 /// Phase 1: Detect what type of app this is
 /// Checks for marker files that identify different app types
 /// Priority: nx > nodejs > redis > traefik > python
-/// 
+///
 /// # Arguments
 /// * `path` - Directory to check for app type markers
-/// 
+///
 /// # Returns
 /// App type as string (nx, nodejs, python, redis, traefik)
 pub fn detect_app_type(path: &Path) -> Result<String> {
@@ -22,45 +22,47 @@ pub fn detect_app_type(path: &Path) -> Result<String> {
     if path.join("nx.json").exists() {
         return Ok("nx".to_string());
     }
-    
+
     // Check for Node.js app (package.json)
     if path.join("package.json").exists() {
         return Ok("nodejs".to_string());
     }
-    
+
     // Check for Redis configurations (multiple patterns)
     if path.join("redis.conf").exists() {
         return Ok("redis".to_string());
     }
-    
+
     // Check for Traefik configurations (multiple patterns)
-    if path.join("traefik.yml").exists() 
-        || path.join("traefik.yaml").exists() 
-        || path.join("traefik.toml").exists() {
+    if path.join("traefik.yml").exists()
+        || path.join("traefik.yaml").exists()
+        || path.join("traefik.toml").exists()
+    {
         return Ok("traefik".to_string());
     }
-    
+
     // Check all files in directory for additional patterns
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let file_name_str = file_name.to_string_lossy();
-            
+
             // Additional Traefik patterns
-            if file_name_str.starts_with("traefik") && 
-               (file_name_str.ends_with(".yml") || 
-                file_name_str.ends_with(".yaml") || 
-                file_name_str.ends_with(".toml")) {
+            if file_name_str.starts_with("traefik")
+                && (file_name_str.ends_with(".yml")
+                    || file_name_str.ends_with(".yaml")
+                    || file_name_str.ends_with(".toml"))
+            {
                 return Ok("traefik".to_string());
             }
-            
+
             // Additional Redis patterns
-            if file_name_str.starts_with("redis") && 
-               (file_name_str.ends_with(".conf") || 
-                file_name_str.ends_with(".config")) {
+            if file_name_str.starts_with("redis")
+                && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
+            {
                 return Ok("redis".to_string());
             }
-            
+
             // Check docker-compose for redis or traefik services
             if file_name_str == "docker-compose.yml" || file_name_str == "docker-compose.yaml" {
                 if let Ok(content) = fs::read_to_string(entry.path()) {
@@ -68,60 +70,64 @@ pub fn detect_app_type(path: &Path) -> Result<String> {
                     if content_lower.contains("redis:") || content_lower.contains("image: redis") {
                         return Ok("redis".to_string());
                     }
-                    if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                    if content_lower.contains("traefik") || content_lower.contains("image: traefik")
+                    {
                         return Ok("traefik".to_string());
                     }
                 }
             }
         }
     }
-    
+
     // Check subdirectories for Redis and Traefik (common pattern: redis/ folder with configs)
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
                 let dir_name = entry.file_name();
                 let dir_name_str = dir_name.to_string_lossy();
-                
+
                 // Check for redis/ directory with configs
                 if dir_name_str == "redis" {
                     let redis_dir = entry.path();
-                    if redis_dir.join("redis.conf").exists() ||
-                       redis_dir.join("redis.config").exists() {
+                    if redis_dir.join("redis.conf").exists()
+                        || redis_dir.join("redis.config").exists()
+                    {
                         return Ok("redis".to_string());
                     }
                 }
-                
+
                 // Check for traefik/ directory with configs
                 if dir_name_str == "traefik" {
                     let traefik_dir = entry.path();
-                    if traefik_dir.join("traefik.yml").exists() ||
-                       traefik_dir.join("traefik.yaml").exists() ||
-                       traefik_dir.join("traefik.toml").exists() {
+                    if traefik_dir.join("traefik.yml").exists()
+                        || traefik_dir.join("traefik.yaml").exists()
+                        || traefik_dir.join("traefik.toml").exists()
+                    {
                         return Ok("traefik".to_string());
                     }
                 }
             }
         }
     }
-    
+
     // Check for Python app (requirements.txt, pyproject.toml, or setup.py)
-    if path.join("requirements.txt").exists() 
-        || path.join("pyproject.toml").exists() 
-        || path.join("setup.py").exists() {
+    if path.join("requirements.txt").exists()
+        || path.join("pyproject.toml").exists()
+        || path.join("setup.py").exists()
+    {
         return Ok("python".to_string());
     }
-    
+
     // No recognized app type found
     anyhow::bail!("No supported app type detected in {}", path.display())
 }
 
 /// Extract the app name from configuration files or directory name
-/// 
+///
 /// # Arguments
 /// * `path` - Directory path
 /// * `app_type` - The detected app type
-/// 
+///
 /// # Returns
 /// App name as string
 pub fn extract_app_name(path: &Path, app_type: &str) -> Result<String> {
@@ -142,7 +148,7 @@ pub fn extract_app_name(path: &Path, app_type: &str) -> Result<String> {
             }
         }
     }
-    
+
     // For Python apps, check pyproject.toml for the project name
     if app_type == "python" {
         if let Ok(content) = fs::read_to_string(path.join("pyproject.toml")) {
@@ -157,7 +163,7 @@ pub fn extract_app_name(path: &Path, app_type: &str) -> Result<String> {
             }
         }
     }
-    
+
     // Fallback: Use the directory name as the app name
     path.file_name()
         .and_then(|n| n.to_str())

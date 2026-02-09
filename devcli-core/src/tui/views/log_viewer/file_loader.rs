@@ -3,8 +3,8 @@ use ratatui::text::Span;
 use std::path::Path;
 use syntect::{highlighting::Theme, parsing::SyntaxSet};
 
-use crate::tui::utils::ansi;
 use super::json_formatter::JsonFormatter;
+use crate::tui::utils::ansi;
 
 /// Represents a single line in the log file with formatting information
 #[derive(Debug, Clone)]

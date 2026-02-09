@@ -110,12 +110,7 @@ impl HealthCheckEngine {
         let timeout = Duration::from_secs(timeout_secs);
 
         // Use tokio's timeout to wrap the connection attempt
-        match tokio::time::timeout(
-            timeout,
-            tokio::net::TcpStream::connect(&addr),
-        )
-        .await
-        {
+        match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(&addr)).await {
             Ok(Ok(_stream)) => {
                 // Connection succeeded
                 tracing::debug!(

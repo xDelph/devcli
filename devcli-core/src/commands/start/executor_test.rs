@@ -11,13 +11,13 @@ mod tests {
             .with_local_command("start", "echo test")
             .with_local_default("start")
             .build();
-        
+
         let resolved_app = ResolvedApp {
             app,
             app_name: app_name.to_string(),
             project: project.to_string(),
         };
-        
+
         AppToStart {
             resolved_app,
             command: "echo test".to_string(),
@@ -35,7 +35,7 @@ mod tests {
             silent: false,
             stage: None,
         };
-        
+
         // Empty app_names should be handled by the caller
         assert_eq!(args.app_names.len(), 0);
     }
@@ -50,7 +50,7 @@ mod tests {
             silent: false,
             stage: Some("dev".to_string()),
         };
-        
+
         assert_eq!(args.app_names.len(), 1);
         assert_eq!(args.app_names[0], "test-app");
         assert_eq!(args.project.as_ref().unwrap(), "test-project");
@@ -69,7 +69,7 @@ mod tests {
             silent: false,
             stage: None,
         };
-        
+
         assert_eq!(args.app_names.len(), 3);
         assert_eq!(args.app_names[0], "app1");
         assert_eq!(args.app_names[1], "app2");

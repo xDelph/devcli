@@ -2,9 +2,9 @@
 // Shows confirmation dialog before executing commands and displays execution feedback
 // Follows the design pattern of modal dialogs with clear user feedback
 
+use crate::config::{list_all_apps, load_config};
 use crate::tui::theme::Theme;
 use crate::tui::views::log_viewer::app_color_manager::AppColorManager;
-use crate::config::{load_config, list_all_apps};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -336,7 +336,7 @@ impl CommandPopup {
 
         // Clone state to avoid borrowing conflicts
         let state = self.state.clone();
-        
+
         // Render content based on current state
         match state {
             PopupState::Confirm => self.render_confirm(frame, popup_area, theme),
@@ -626,7 +626,7 @@ impl CommandPopup {
             for output_line in visible_lines {
                 // Parse ANSI codes first to get styled spans using the enhanced utils parser
                 let ansi_spans = crate::tui::utils::ansi::parse_ansi_codes(&output_line);
-                
+
                 // Then colorize app names in the parsed spans
                 let colorized_spans = self.colorize_app_names_in_spans(ansi_spans);
                 content_lines.push(Line::from(colorized_spans));
@@ -832,18 +832,18 @@ impl CommandPopup {
     }
 
     /// Colorizes app names in log output spans
-    /// 
+    ///
     /// Searches for app names in the format [appName] within the text content
     /// and applies consistent coloring based on the app color manager.
-    /// 
+    ///
     /// # Arguments
     /// * `spans` - Vector of spans from ANSI parsing
-    /// 
+    ///
     /// # Returns
     /// Vector of spans with app names colorized
     fn colorize_app_names_in_spans(&mut self, spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
         let mut result = Vec::new();
-        
+
         for span in spans {
             // Check if this span contains app names in [appName] format
             let content = &span.content;
@@ -856,47 +856,48 @@ impl CommandPopup {
                 result.push(span);
             }
         }
-        
+
         result
     }
 
     /// Parses text content and colorizes app names in [appName] format
-    /// 
+    ///
     /// Splits text by app name patterns and applies colors to the app names
     /// while preserving the original style for other text.
-    /// 
+    ///
     /// # Arguments
     /// * `content` - Text content to parse
     /// * `original_style` - Original style to preserve for non-app-name text
-    /// 
+    ///
     /// # Returns
     /// Vector of spans with app names colorized
-    fn parse_and_colorize_app_names(&mut self, content: &str, original_style: Style) -> Vec<Span<'static>> {
+    fn parse_and_colorize_app_names(
+        &mut self,
+        content: &str,
+        original_style: Style,
+    ) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
         let mut remaining = content;
-        
+
         while let Some(start) = remaining.find('[') {
             // Add text before the bracket
             if start > 0 {
-                spans.push(Span::styled(
-                    remaining[..start].to_string(),
-                    original_style,
-                ));
+                spans.push(Span::styled(remaining[..start].to_string(), original_style));
             }
-            
+
             // Find the closing bracket
             if let Some(end) = remaining[start..].find(']') {
                 let end = start + end;
                 let app_name_with_brackets = &remaining[start..=end];
                 let app_name = &remaining[start + 1..end];
-                
+
                 // Only colorize if this matches any app name from the config
                 // This allows coloring all app names that appear in logs (for dependency chains)
                 // but prevents coloring random bracketed text like [nestJs.InstanceLoader]
                 if self.all_app_names.contains(&app_name.to_string()) {
                     // Get color for this app name
                     let app_color = self.color_manager.get_color_for_app(app_name);
-                    
+
                     // Create colored span for the app name (including brackets)
                     spans.push(Span::styled(
                         app_name_with_brackets.to_string(),
@@ -912,7 +913,7 @@ impl CommandPopup {
                         original_style,
                     ));
                 }
-                
+
                 remaining = &remaining[end + 1..];
             } else {
                 // No closing bracket found, add the rest as-is
@@ -920,12 +921,12 @@ impl CommandPopup {
                 break;
             }
         }
-        
+
         // Add any remaining text
         if !remaining.is_empty() {
             spans.push(Span::styled(remaining.to_string(), original_style));
         }
-        
+
         spans
     }
 }

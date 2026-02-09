@@ -9,9 +9,9 @@ use inquire::Select;
 // When we find an app, we need to know both which project it's in and its data
 #[derive(Debug, Clone)]
 pub struct ResolvedApp {
-    pub project: String,      // Which project contains this app
-    pub app_name: String,      // The app's name
-    pub app: App,              // The actual app configuration
+    pub project: String,  // Which project contains this app
+    pub app_name: String, // The app's name
+    pub app: App,         // The actual app configuration
 }
 
 // Find an app by name across all projects
@@ -21,10 +21,14 @@ pub struct ResolvedApp {
 // 3. App not found → Error with typo suggestion if possible
 //
 // project_filter: If Some("project-name"), only search that project
-pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>) -> Result<ResolvedApp> {
+pub fn resolve_app(
+    config: &Config,
+    app_name: &str,
+    project_filter: Option<&str>,
+) -> Result<ResolvedApp> {
     // Vec to collect all matches (project_name, app_config)
     let mut matches = Vec::new();
-    
+
     // Search through all projects
     // .iter() creates an iterator over (key, value) pairs
     for (project_name, project) in &config.projects {
@@ -34,7 +38,7 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
                 continue; // Skip this project
             }
         }
-        
+
         // Try to get the app from this project's apps HashMap
         // .get(app_name) returns Option<&App>
         // - Some(&app) if the app exists
@@ -45,14 +49,14 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
             matches.push((project_name.clone(), app.clone()));
         }
     }
-    
+
     // Now analyze the matches to decide what to return
     match matches.len() {
         // Case 1: App not found anywhere
         0 => {
             // Try to find a similar app name (typo detection)
             let suggestion = find_similar_app_name(config, app_name);
-            
+
             // If we found a similar name, suggest it
             if let Some(similar) = suggestion {
                 anyhow::bail!(
@@ -65,15 +69,17 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
                 anyhow::bail!("App '{}' not found in config.", app_name);
             }
         }
-        
+
         // Case 2: Found exactly one match - this is what we want!
         1 => {
             // Extract the single match from the vector
             // .into_iter() converts Vec into an iterator that takes ownership
             // .next() gets the first item
-            let (project, app) = matches.into_iter().next()
+            let (project, app) = matches
+                .into_iter()
+                .next()
                 .expect("BUG: matches should have exactly 1 element after len check");
-            
+
             // Return the resolved app with full context
             Ok(ResolvedApp {
                 project,
@@ -81,7 +87,7 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
                 app,
             })
         }
-        
+
         // Case 3: Found multiple matches - ambiguous!
         _ => {
             // Build a list of project names where we found the app
@@ -89,17 +95,16 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
             // .map(|(p, _)| p.clone()) = extract just the project name
             // .collect() = gather into a Vec<String>
             let project_list: Vec<String> = matches.iter().map(|(p, _)| p.clone()).collect();
-            
+
             // Instead of just throwing an error, prompt the user to select
             let prompt_message = format!(
                 "App '{}' found in multiple projects. Please select one:",
                 app_name
             );
-            
+
             // Create an interactive selection prompt
-            let selection = Select::new(&prompt_message, project_list.clone())
-                .prompt();
-            
+            let selection = Select::new(&prompt_message, project_list.clone()).prompt();
+
             match selection {
                 Ok(selected_project) => {
                     // User selected a project, find and return that app
@@ -107,7 +112,7 @@ pub fn resolve_app(config: &Config, app_name: &str, project_filter: Option<&str>
                         .into_iter()
                         .find(|(p, _)| p == &selected_project)
                         .expect("BUG: selected project should exist in matches");
-                    
+
                     Ok(ResolvedApp {
                         project,
                         app_name: app_name.to_string(),
@@ -139,13 +144,13 @@ pub fn get_app_by_project(config: &Config, project: &str, app_name: &str) -> Res
         .projects
         .get(project)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found in config.", project))?;
-    
+
     // Try to get the app from that project
     let app = proj
         .apps
         .get(app_name)
         .ok_or_else(|| anyhow::anyhow!("App '{}' not found in project '{}'.", app_name, project))?;
-    
+
     // Success! Return the resolved app
     Ok(ResolvedApp {
         project: project.to_string(),
@@ -159,7 +164,7 @@ pub fn get_app_by_project(config: &Config, project: &str, app_name: &str) -> Res
 // Useful for listing all available apps
 pub fn list_all_apps(config: &Config) -> Vec<(String, String, App)> {
     let mut apps = Vec::new();
-    
+
     // Nested loops to iterate through all projects and all apps
     for (project_name, project) in &config.projects {
         for (app_name, app) in &project.apps {
@@ -167,7 +172,7 @@ pub fn list_all_apps(config: &Config) -> Vec<(String, String, App)> {
             apps.push((project_name.clone(), app_name.clone(), app.clone()));
         }
     }
-    
+
     apps
 }
 
@@ -181,7 +186,7 @@ pub fn list_all_apps(config: &Config) -> Vec<(String, String, App)> {
 fn find_similar_app_name(config: &Config, target: &str) -> Option<String> {
     // Get all app names
     let all_apps = list_all_apps(config);
-    
+
     // Find the first app name with distance <= 2
     // .iter() = iterate over the apps
     // .map(|(_, app_name, _)| app_name) = extract just the app name
@@ -207,31 +212,31 @@ fn find_similar_app_name(config: &Config, target: &str) -> Option<String> {
 fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let len1 = s1.len();
     let len2 = s2.len();
-    
+
     // Create a 2D matrix to store distances
     // matrix[i][j] = distance between first i chars of s1 and first j chars of s2
     let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
-    
+
     // Initialize first column: distance from empty string to prefixes of s1
     // matrix[i][0] = i (need i deletions)
     #[allow(clippy::needless_range_loop)]
     for i in 0..=len1 {
         matrix[i][0] = i;
     }
-    
+
     // Initialize first row: distance from empty string to prefixes of s2
     // matrix[0][j] = j (need j insertions)
     for j in 0..=len2 {
         matrix[0][j] = j;
     }
-    
+
     // Fill in the rest of the matrix
     // .enumerate() gives us (index, character) pairs
     for (i, c1) in s1.chars().enumerate() {
         for (j, c2) in s2.chars().enumerate() {
             // If characters match, no cost. Otherwise, cost of 1 (replacement)
             let cost = if c1 == c2 { 0 } else { 1 };
-            
+
             // Matrix is 1-indexed (we have the extra row/col for empty string)
             // Three options:
             // 1. Delete from s1: matrix[i][j+1] + 1
@@ -240,14 +245,14 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
             // Take the minimum of these three
             matrix[i + 1][j + 1] = std::cmp::min(
                 std::cmp::min(
-                    matrix[i][j + 1] + 1,      // deletion
-                    matrix[i + 1][j] + 1        // insertion
+                    matrix[i][j + 1] + 1, // deletion
+                    matrix[i + 1][j] + 1, // insertion
                 ),
-                matrix[i][j] + cost,             // replacement/match
+                matrix[i][j] + cost, // replacement/match
             );
         }
     }
-    
+
     // The answer is in the bottom-right corner
     // This represents the distance between the full strings
     matrix[len1][len2]

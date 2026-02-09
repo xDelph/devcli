@@ -484,8 +484,10 @@ impl ProcessInfo {
         // Check if we've exceeded max restarts within the window
         if policy.max_restarts > 0 {
             // Count restarts within the window
-            let window_start = Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
-            let recent_restarts = self.restart_history
+            let window_start =
+                Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
+            let recent_restarts = self
+                .restart_history
                 .iter()
                 .filter(|event| event.timestamp > window_start)
                 .count() as u32;
@@ -499,7 +501,10 @@ impl ProcessInfo {
     }
 
     /// Calculate exponential backoff delay for next restart
-    pub fn calculate_backoff(&self, policy: &crate::config::models::RestartPolicy) -> std::time::Duration {
+    pub fn calculate_backoff(
+        &self,
+        policy: &crate::config::models::RestartPolicy,
+    ) -> std::time::Duration {
         // Calculate exponential backoff: initial * multiplier^(attempts - 1)
         let attempts = self.restart_count.max(1);
         let backoff_secs = policy.initial_backoff_secs as f64
@@ -513,11 +518,16 @@ impl ProcessInfo {
 
     /// Clear restart history if the window has expired
     /// Should be called after successful restart to reset the window
-    pub fn clear_restart_history_if_window_expired(&mut self, policy: &crate::config::models::RestartPolicy) {
-        let window_start = Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
+    pub fn clear_restart_history_if_window_expired(
+        &mut self,
+        policy: &crate::config::models::RestartPolicy,
+    ) {
+        let window_start =
+            Utc::now() - chrono::Duration::seconds(policy.restart_window_secs as i64);
 
         // Remove restart events outside the window
-        self.restart_history.retain(|event| event.timestamp > window_start);
+        self.restart_history
+            .retain(|event| event.timestamp > window_start);
 
         // If all events were removed, reset the count
         if self.restart_history.is_empty() {

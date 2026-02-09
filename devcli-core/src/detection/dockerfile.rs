@@ -17,7 +17,7 @@ pub struct DockerStage {
 // Args:
 //   - dockerfile_path: Path to the Dockerfile
 // Returns: List of stage names found in the Dockerfile
-// 
+//
 // Examples of FROM statements we need to parse:
 //   - FROM node:18 AS build
 //   - FROM python:3.11-slim as test
@@ -26,45 +26,43 @@ pub struct DockerStage {
 pub fn parse_dockerfile(dockerfile_path: &Path) -> Result<Vec<DockerStage>> {
     // Read the Dockerfile contents
     let content = fs::read_to_string(dockerfile_path)?;
-    
+
     let mut stages = Vec::new();
-    
+
     // Process each line of the Dockerfile
     for line in content.lines() {
         // Remove leading/trailing whitespace
         let line = line.trim();
-        
+
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        
+
         // Convert to uppercase for case-insensitive matching
         let line_upper = line.to_uppercase();
-        
+
         // Check if this line is a FROM statement
         // FROM statements can have stage names with "AS stage-name"
         if line_upper.starts_with("FROM ") {
             // Split the line into parts
             // Example: "FROM node:18 AS build" -> ["FROM", "node:18", "AS", "build"]
             let parts: Vec<&str> = line.split_whitespace().collect();
-            
+
             // Look for "AS" keyword (case-insensitive)
             // The stage name comes right after "AS"
             for i in 0..parts.len() {
                 if parts[i].to_uppercase() == "AS" && i + 1 < parts.len() {
                     // Found a stage! The next part is the stage name
                     let stage_name = parts[i + 1].to_string();
-                    
-                    stages.push(DockerStage {
-                        name: stage_name,
-                    });
+
+                    stages.push(DockerStage { name: stage_name });
                     break;
                 }
             }
         }
     }
-    
+
     Ok(stages)
 }
 
@@ -77,7 +75,7 @@ pub fn has_multi_stage_build(dockerfile_path: &Path) -> bool {
     if !dockerfile_path.exists() {
         return false;
     }
-    
+
     // Try to parse the Dockerfile
     if let Ok(stages) = parse_dockerfile(dockerfile_path) {
         // Multi-stage if we found at least one named stage
@@ -92,7 +90,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-    
+
     // Helper to create a temporary Dockerfile for testing
     fn create_test_dockerfile(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().unwrap();
@@ -100,18 +98,16 @@ mod tests {
         file.flush().unwrap();
         file
     }
-    
+
     #[test]
     fn test_parse_single_stage() {
-        let dockerfile = create_test_dockerfile(
-            "FROM node:18 AS build\nRUN npm install\n"
-        );
-        
+        let dockerfile = create_test_dockerfile("FROM node:18 AS build\nRUN npm install\n");
+
         let stages = parse_dockerfile(dockerfile.path()).unwrap();
         assert_eq!(stages.len(), 1);
         assert_eq!(stages[0].name, "build");
     }
-    
+
     #[test]
     fn test_parse_multi_stage() {
         let dockerfile = create_test_dockerfile(
@@ -125,28 +121,27 @@ RUN npm test
 
 FROM nginx:alpine AS production
 COPY --from=build /app/dist /usr/share/nginx/html
-"#
+"#,
         );
-        
+
         let stages = parse_dockerfile(dockerfile.path()).unwrap();
         assert_eq!(stages.len(), 3);
         assert_eq!(stages[0].name, "build");
         assert_eq!(stages[1].name, "test");
         assert_eq!(stages[2].name, "production");
     }
-    
+
     #[test]
     fn test_parse_case_insensitive() {
-        let dockerfile = create_test_dockerfile(
-            "from node:18 as build\nFROM python:3.11 As test\n"
-        );
-        
+        let dockerfile =
+            create_test_dockerfile("from node:18 as build\nFROM python:3.11 As test\n");
+
         let stages = parse_dockerfile(dockerfile.path()).unwrap();
         assert_eq!(stages.len(), 2);
         assert_eq!(stages[0].name, "build");
         assert_eq!(stages[1].name, "test");
     }
-    
+
     #[test]
     fn test_parse_with_comments() {
         let dockerfile = create_test_dockerfile(
@@ -156,41 +151,34 @@ FROM node:18 AS build
 RUN npm install
 # This is a comment
 FROM nginx:alpine AS production
-"#
+"#,
         );
-        
+
         let stages = parse_dockerfile(dockerfile.path()).unwrap();
         assert_eq!(stages.len(), 2);
         assert_eq!(stages[0].name, "build");
         assert_eq!(stages[1].name, "production");
     }
-    
+
     #[test]
     fn test_parse_no_stages() {
-        let dockerfile = create_test_dockerfile(
-            "FROM node:18\nRUN npm install\n"
-        );
-        
+        let dockerfile = create_test_dockerfile("FROM node:18\nRUN npm install\n");
+
         let stages = parse_dockerfile(dockerfile.path()).unwrap();
         assert_eq!(stages.len(), 0);
     }
-    
+
     #[test]
     fn test_has_multi_stage_build() {
-        let dockerfile = create_test_dockerfile(
-            "FROM node:18 AS build\nRUN npm install\n"
-        );
-        
+        let dockerfile = create_test_dockerfile("FROM node:18 AS build\nRUN npm install\n");
+
         assert!(has_multi_stage_build(dockerfile.path()));
     }
-    
+
     #[test]
     fn test_has_multi_stage_build_single_stage() {
-        let dockerfile = create_test_dockerfile(
-            "FROM node:18\nRUN npm install\n"
-        );
-        
+        let dockerfile = create_test_dockerfile("FROM node:18\nRUN npm install\n");
+
         assert!(!has_multi_stage_build(dockerfile.path()));
     }
 }
-

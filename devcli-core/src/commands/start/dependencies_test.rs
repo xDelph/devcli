@@ -11,13 +11,13 @@ mod tests {
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .build();
-        
+
         let resolved_app = ResolvedApp {
             app,
             app_name: app_name.to_string(),
             project: project.to_string(),
         };
-        
+
         AppToStart {
             resolved_app,
             command: "npm start".to_string(),
@@ -48,13 +48,13 @@ mod tests {
             create_test_app_to_start("app1", "project1"),
             create_test_app_to_start("app2", "project2"),
         ];
-        
+
         assert_eq!(apps_to_start.len(), 2);
         assert_eq!(apps_to_start[0].resolved_app.app_name, "app1");
         assert_eq!(apps_to_start[1].resolved_app.app_name, "app2");
     }
 
-    // Note: Integration tests for handle_dependencies would require 
+    // Note: Integration tests for handle_dependencies would require
     // setting up config files and process tracking, which is better
     // suited for integration tests rather than unit tests.
     // The core logic is tested through the existing integration test suite.

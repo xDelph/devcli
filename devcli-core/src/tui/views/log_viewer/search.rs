@@ -43,12 +43,16 @@ impl SearchState {
 
         for (idx, log_line) in content.iter().enumerate() {
             // Reconstruct the text from formatted spans to ensure consistency with highlighting
-            let formatted_text: String = log_line.formatted.iter().map(|s| s.content.as_ref()).collect();
+            let formatted_text: String = log_line
+                .formatted
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
             let line_lower = formatted_text.to_lowercase();
-            
+
             // Find all matches in this line
             let matches = self.find_matches_in_line(&line_lower, &query_lower);
-            
+
             if !matches.is_empty() {
                 self.results.push(idx);
                 self.match_ranges.insert(idx, matches);
@@ -64,17 +68,17 @@ impl SearchState {
     }
 
     /// Finds all matches of the query in a line using substring matching
-    /// 
+    ///
     /// # Arguments
     /// * `line_lower` - The line text in lowercase for case-insensitive matching
     /// * `query_lower` - The search query in lowercase
-    /// 
+    ///
     /// # Returns
     /// Vector of MatchRange structs indicating character positions of matches
     fn find_matches_in_line(&self, line_lower: &str, query_lower: &str) -> Vec<MatchRange> {
         let mut matches = Vec::new();
         let mut start_pos = 0;
-        
+
         // Find all substring matches in the line
         while let Some(match_pos) = line_lower[start_pos..].find(query_lower) {
             let absolute_pos = start_pos + match_pos;
@@ -84,7 +88,7 @@ impl SearchState {
             });
             start_pos = absolute_pos + 1; // Move past this match to find overlapping matches
         }
-        
+
         matches
     }
 

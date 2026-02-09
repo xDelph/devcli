@@ -19,7 +19,7 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
     // Convert the input to a Path reference
     // .as_ref() does the conversion
     let path = path.as_ref();
-    
+
     // Check if the path starts with ~
     if path.starts_with("~") {
         // Try to get the HOME environment variable
@@ -31,7 +31,7 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
             // .to_string_lossy() converts Path to Cow<str>
             // "lossy" means invalid UTF-8 becomes �, but that's rare
             let path_str = path.to_string_lossy();
-            
+
             // Remove the ~ and optionally the following /
             // "~/foo/bar" → "foo/bar"
             // "~" → ""
@@ -45,7 +45,7 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
                 // Shouldn't happen since we checked starts_with above
                 &path_str
             };
-            
+
             // Build the full path: HOME + remaining
             // Example: /Users/username + foo/bar = /Users/username/foo/bar
             let mut expanded = PathBuf::from(home);
@@ -55,7 +55,7 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
             return expanded;
         }
     }
-    
+
     // If path doesn't start with ~ or HOME is not set, return as-is
     // .to_path_buf() converts Path to PathBuf (owned version)
     path.to_path_buf()
@@ -70,19 +70,19 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
 pub fn expand_env_vars(s: &str) -> String {
     // Start with a copy of the input string
     let mut result = s.to_string();
-    
+
     // Get all environment variables as (key, value) pairs
     // env::vars() returns an iterator over all environment variables
     for (key, value) in env::vars() {
         // Build the pattern to search for: $KEY
         // format! creates a new String from a template
         let pattern = format!("${}", key);
-        
+
         // Replace all occurrences of $KEY with its value
         // Example: if HOME=/Users/alice, replace "$HOME" with "/Users/alice"
         result = result.replace(&pattern, &value);
     }
-    
+
     result
 }
 
@@ -95,7 +95,7 @@ pub fn expand_env_vars(s: &str) -> String {
 pub fn expand_path(path: &str) -> PathBuf {
     // First expand environment variables
     let expanded_env = expand_env_vars(path);
-    
+
     // Then expand tilde
     // The result of expand_env_vars is a String, which implements AsRef<Path>
     expand_tilde(expanded_env)
@@ -106,11 +106,11 @@ pub fn expand_path(path: &str) -> PathBuf {
 // This makes configs more portable between machines
 pub fn contract_tilde<P: AsRef<Path>>(path: P) -> String {
     let path = path.as_ref();
-    
+
     // Try to get the HOME environment variable
     if let Some(home) = env::var_os("HOME") {
         let home_path = PathBuf::from(home);
-        
+
         // Check if the path starts with the home directory
         if let Ok(relative) = path.strip_prefix(&home_path) {
             // Convert the relative path back to tilde notation
@@ -123,7 +123,7 @@ pub fn contract_tilde<P: AsRef<Path>>(path: P) -> String {
             }
         }
     }
-    
+
     // If path is not under home directory, return as-is
     path.display().to_string()
 }
@@ -138,10 +138,10 @@ mod tests {
     fn test_expand_tilde() {
         // Get the actual HOME value
         let home = env::var("HOME").unwrap();
-        
+
         // Test that ~/test/path expands correctly
         let expanded = expand_tilde("~/test/path");
-        
+
         // Assert that the result matches what we expect
         assert_eq!(expanded, PathBuf::from(format!("{}/test/path", home)));
     }
@@ -150,10 +150,10 @@ mod tests {
     fn test_expand_env_vars() {
         // Set a test environment variable
         env::set_var("TEST_VAR", "test_value");
-        
+
         // Test that $TEST_VAR gets replaced
         let result = expand_env_vars("$TEST_VAR/path");
-        
+
         // Verify the result
         assert_eq!(result, "test_value/path");
     }
@@ -162,14 +162,14 @@ mod tests {
     fn test_contract_tilde() {
         // Get the actual HOME value
         let home = env::var("HOME").unwrap();
-        
+
         // Test that absolute paths under home get contracted
         let absolute_path = format!("{}/test/path", home);
         let contracted = contract_tilde(&absolute_path);
-        
+
         // Should become ~/test/path
         assert_eq!(contracted, "~/test/path");
-        
+
         // Test that paths outside home stay absolute
         let outside_path = "/usr/local/bin";
         let contracted_outside = contract_tilde(outside_path);

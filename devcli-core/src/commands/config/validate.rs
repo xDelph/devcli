@@ -1,5 +1,5 @@
 //! Configuration validation functionality
-//! 
+//!
 //! This module handles comprehensive validation of the configuration file,
 //! including path validation, dependency checking, and circular dependency detection.
 //! It provides the `devcli config validate` command functionality.
@@ -10,10 +10,8 @@ use crate::config::{
 use crate::Result;
 use std::collections::HashSet;
 
-
-
 /// Validate the config file
-/// 
+///
 /// Example: `devcli config validate`
 ///
 /// Performs comprehensive validation:
@@ -22,29 +20,29 @@ use std::collections::HashSet;
 /// - Are dependencies valid?
 /// - Any circular dependencies?
 /// - Any duplicate app names across projects?
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns an error if validation fails with any critical issues.
 /// Warnings are displayed but don't cause failure.
 pub async fn config_validate() -> Result<()> {
     // Load the config (this already validates JSON syntax)
     let config = load_config()?;
-    
+
     println!("Validating configuration...\n");
-    
+
     // Collections to store validation issues
     // Vec = resizable array for collecting errors/warnings
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
-    
+
     // Get a flat list of all apps across all projects
     let all_apps = list_all_apps(&config);
-    
+
     // HashSet to track app names and detect duplicates
     // HashSet = no duplicates, O(1) lookup
     let mut app_names: HashSet<String> = HashSet::new();
-    
+
     // Validation pass 1: Check each app individually
     for (project_name, app_name, app) in &all_apps {
         // Check for duplicate app names across projects
@@ -58,7 +56,7 @@ pub async fn config_validate() -> Result<()> {
         }
         // Add to the set for future duplicate checks
         app_names.insert(app_name.clone());
-        
+
         // Check if the app's path exists
         // Expand ~ and env vars first, then check
         let path = crate::utils::path::expand_path(&app.path);
@@ -70,19 +68,29 @@ pub async fn config_validate() -> Result<()> {
                 path.display()
             ));
         }
-        
+
         // Check if app has any commands defined
         // An app without commands is useless!
-        let has_local = app.commands.local.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
-        let has_docker = app.commands.docker.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
-        
+        let has_local = app
+            .commands
+            .local
+            .as_ref()
+            .map(|m| !m.is_empty())
+            .unwrap_or(false);
+        let has_docker = app
+            .commands
+            .docker
+            .as_ref()
+            .map(|m| !m.is_empty())
+            .unwrap_or(false);
+
         if !has_local && !has_docker {
             errors.push(format!(
                 "[{}/{}] No commands defined (need at least one environment)",
                 project_name, app_name
             ));
         }
-        
+
         // Validate local environment (if configured)
         if let Some(local_commands) = &app.commands.local {
             // If we have local commands, we should have a default
@@ -102,7 +110,7 @@ pub async fn config_validate() -> Result<()> {
                 ));
             }
         }
-        
+
         // Validate docker environment (if configured)
         if let Some(docker_commands) = &app.commands.docker {
             // If we have docker commands, we should have a default
@@ -122,12 +130,14 @@ pub async fn config_validate() -> Result<()> {
                 ));
             }
         }
-        
+
         // Validate each dependency exists
         // Try to get each dependency from the config
         for dep in &app.dependencies {
             // get_app_by_project returns Result - Err if not found
-            if let Err(e) = crate::config::resolver::get_app_by_project(&config, &dep.project, &dep.app) {
+            if let Err(e) =
+                crate::config::resolver::get_app_by_project(&config, &dep.project, &dep.app)
+            {
                 errors.push(format!(
                     "[{}/{}] Invalid dependency {}/{}: {}",
                     project_name, app_name, dep.project, dep.app, e
@@ -135,7 +145,7 @@ pub async fn config_validate() -> Result<()> {
             }
         }
     }
-    
+
     // Validation pass 2: Check dependency chains
     // This detects circular dependencies (A→B→A)
     for (project_name, app_name, _app) in &all_apps {
@@ -150,9 +160,9 @@ pub async fn config_validate() -> Result<()> {
             }
         }
     }
-    
+
     // Display validation results
-    
+
     // Show warnings (non-fatal issues)
     if !warnings.is_empty() {
         println!("⚠ Warnings:");
@@ -161,7 +171,7 @@ pub async fn config_validate() -> Result<()> {
         }
         println!();
     }
-    
+
     // Show errors (fatal issues that prevent usage)
     if !errors.is_empty() {
         println!("✗ Errors:");
@@ -169,16 +179,16 @@ pub async fn config_validate() -> Result<()> {
             println!("  - {}", error);
         }
         println!("\nValidation failed with {} error(s)", errors.len());
-        
+
         // Return error to indicate validation failed
         anyhow::bail!("Config validation failed");
     }
-    
+
     // Success! No errors found
     println!("✓ Configuration is valid!");
     println!("  - {} projects", config.projects.len());
     println!("  - {} apps", all_apps.len());
-    
+
     Ok(())
 }
 

@@ -75,7 +75,10 @@ fn display_metrics(metrics: &crate::metrics::AllMetrics) {
         "○".bright_black()
     );
     println!();
-    println!("Total Restarts:        {}", metrics.processes.total_restarts);
+    println!(
+        "Total Restarts:        {}",
+        metrics.processes.total_restarts
+    );
     println!(
         "Restarts (last hour):  {}",
         metrics.processes.restarts_last_hour
@@ -92,16 +95,16 @@ fn display_metrics(metrics: &crate::metrics::AllMetrics) {
         let mut codes: Vec<_> = metrics.processes.exit_code_distribution.iter().collect();
         codes.sort_by_key(|(code, _)| **code);
         for (code, count) in codes {
-            let color = if *code == 0 {
-                "green"
-            } else {
-                "red"
-            };
+            let color = if *code == 0 { "green" } else { "red" };
             println!(
                 "  Exit {}: {} times {}",
                 code,
                 count,
-                if color == "green" { "✓".green() } else { "✗".red() }
+                if color == "green" {
+                    "✓".green()
+                } else {
+                    "✗".red()
+                }
             );
         }
     }
@@ -143,19 +146,21 @@ fn display_metrics(metrics: &crate::metrics::AllMetrics) {
         println!();
         println!("Recent Operations (last 5):");
         let recent = if metrics.performance.recent_operations.len() > 5 {
-            &metrics.performance.recent_operations[metrics.performance.recent_operations.len() - 5..]
+            &metrics.performance.recent_operations
+                [metrics.performance.recent_operations.len() - 5..]
         } else {
             &metrics.performance.recent_operations[..]
         };
 
         for op in recent {
-            let status_icon = if op.success { "✓".green() } else { "✗".red() };
+            let status_icon = if op.success {
+                "✓".green()
+            } else {
+                "✗".red()
+            };
             println!(
                 "  {} {} - {} ({} ms)",
-                status_icon,
-                op.operation,
-                op.app,
-                op.duration_ms
+                status_icon, op.operation, op.app, op.duration_ms
             );
         }
     }
@@ -180,11 +185,7 @@ fn display_metrics(metrics: &crate::metrics::AllMetrics) {
 
                 println!(
                     "  {} {}/{} (uptime: {}, restarts: {})",
-                    health_icon,
-                    app.project,
-                    app.name,
-                    uptime,
-                    app.restart_count
+                    health_icon, app.project, app.name, uptime, app.restart_count
                 );
             }
         }

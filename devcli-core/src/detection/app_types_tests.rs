@@ -39,9 +39,13 @@ mod tests {
     fn test_detect_python_app_type_pyproject() {
         let temp_dir = create_test_dir();
         let pyproject = temp_dir.path().join("pyproject.toml");
-        fs::write(&pyproject, r#"[project]
+        fs::write(
+            &pyproject,
+            r#"[project]
 name = "test-app"
-version = "1.0.0""#).unwrap();
+version = "1.0.0""#,
+        )
+        .unwrap();
         let result = detect_app_type(temp_dir.path()).unwrap();
         assert_eq!(result, "python");
     }
@@ -77,13 +81,17 @@ version = "1.0.0""#).unwrap();
     fn test_detect_redis_via_docker_compose() {
         let temp_dir = create_test_dir();
         let docker_compose = temp_dir.path().join("docker-compose.yml");
-        fs::write(&docker_compose, r#"
+        fs::write(
+            &docker_compose,
+            r#"
 services:
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let result = detect_app_type(temp_dir.path()).unwrap();
         assert_eq!(result, "redis");
     }
@@ -92,13 +100,17 @@ services:
     fn test_detect_traefik_via_docker_compose() {
         let temp_dir = create_test_dir();
         let docker_compose = temp_dir.path().join("docker-compose.yml");
-        fs::write(&docker_compose, r#"
+        fs::write(
+            &docker_compose,
+            r#"
 services:
   traefik:
     image: traefik:latest
     ports:
       - "80:80"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let result = detect_app_type(temp_dir.path()).unwrap();
         assert_eq!(result, "traefik");
     }
@@ -144,7 +156,10 @@ services:
         fs::write(&random_file, "nothing special").unwrap();
         let result = detect_app_type(temp_dir.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No supported app type detected"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No supported app type detected"));
     }
 
     #[test]
@@ -169,9 +184,13 @@ services:
     fn test_extract_app_name_from_pyproject_toml() {
         let temp_dir = create_test_dir();
         let pyproject = temp_dir.path().join("pyproject.toml");
-        fs::write(&pyproject, r#"[project]
+        fs::write(
+            &pyproject,
+            r#"[project]
 name = "python-app"
-version = "1.0.0""#).unwrap();
+version = "1.0.0""#,
+        )
+        .unwrap();
         let result = extract_app_name(temp_dir.path(), "python").unwrap();
         assert_eq!(result, "python-app");
     }

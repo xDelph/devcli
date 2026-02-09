@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 /// Builder for creating App test fixtures
 /// Provides sensible defaults and allows overriding specific fields
-/// 
+///
 /// # Example
 /// ```
 /// use devcli_core::test_utils::AppBuilder;
-/// 
+///
 /// let app = AppBuilder::new("nodejs", "/tmp/app")
 ///     .with_stage("qa")
 ///     .with_local_command("start", "npm start")
@@ -53,25 +53,29 @@ impl AppBuilder {
 
     /// Add a local command
     pub fn with_local_command(mut self, name: &str, command: &str) -> Self {
-        self.local_commands.insert(name.to_string(), command.to_string());
+        self.local_commands
+            .insert(name.to_string(), command.to_string());
         self
     }
 
     /// Add a docker command
     pub fn with_docker_command(mut self, name: &str, command: &str) -> Self {
-        self.docker_commands.insert(name.to_string(), command.to_string());
+        self.docker_commands
+            .insert(name.to_string(), command.to_string());
         self
     }
 
     /// Add an orbstack command
     pub fn with_orbstack_command(mut self, name: &str, command: &str) -> Self {
-        self.orbstack_commands.insert(name.to_string(), command.to_string());
+        self.orbstack_commands
+            .insert(name.to_string(), command.to_string());
         self
     }
 
     /// Add a k8s command
     pub fn with_k8s_command(mut self, name: &str, command: &str) -> Self {
-        self.k8s_commands.insert(name.to_string(), command.to_string());
+        self.k8s_commands
+            .insert(name.to_string(), command.to_string());
         self
     }
 
@@ -149,7 +153,7 @@ impl AppBuilder {
                 k8s: self.k8s_default,
             },
             dockerfile_path: self.dockerfile_path,
-            env_files: None, // Test utils don't set env_files by default
+            env_files: None,      // Test utils don't set env_files by default
             default_stages: None, // Test utils don't set default_stages by default
             health_check: None,
             restart_policy: None,
@@ -158,11 +162,11 @@ impl AppBuilder {
 }
 
 /// Builder for creating Config test fixtures
-/// 
+///
 /// # Example
 /// ```
 /// use devcli_core::test_utils::{ConfigBuilder, AppBuilder};
-/// 
+///
 /// let config = ConfigBuilder::new()
 ///     .with_app("my-project", "api", AppBuilder::new("nodejs", "/tmp/api")
 ///         .with_local_command("start", "npm start")
@@ -209,11 +213,11 @@ impl Default for ConfigBuilder {
 }
 
 /// Builder for creating Preferences test fixtures
-/// 
+///
 /// # Example
 /// ```
 /// use devcli_core::test_utils::PreferencesBuilder;
-/// 
+///
 /// let prefs = PreferencesBuilder::new()
 ///     .with_default_env("docker")
 ///     .with_default_stage("qa")
@@ -308,11 +312,11 @@ pub fn mock_app_with_deps(path: &str, deps: Vec<(&str, &str)>) -> App {
     let mut builder = AppBuilder::new("nodejs", path)
         .with_local_command("start", "npm start")
         .with_local_default("start");
-    
+
     for (project, app) in deps {
         builder = builder.with_dependency(project, app);
     }
-    
+
     builder.build()
 }
 
@@ -323,7 +327,7 @@ mod tests {
     #[test]
     fn test_app_builder_minimal() {
         let app = AppBuilder::new("nodejs", "/tmp/app").build();
-        
+
         assert_eq!(app.app_type, "nodejs");
         assert_eq!(app.path, "/tmp/app");
         assert!(app.commands.local.is_none());
@@ -338,7 +342,7 @@ mod tests {
             .with_local_command("test", "npm test")
             .with_local_default("start")
             .build();
-        
+
         assert!(app.commands.local.is_some());
         let local = app.commands.local.unwrap();
         assert_eq!(local.get("start").unwrap(), "npm start");
@@ -352,7 +356,7 @@ mod tests {
             .with_app("project1", "app1", mock_nodejs_app("/tmp/app1"))
             .with_app("project1", "app2", mock_redis_app("/tmp/app2"))
             .build();
-        
+
         assert_eq!(config.projects.len(), 1);
         assert_eq!(config.projects.get("project1").unwrap().apps.len(), 2);
     }
@@ -364,7 +368,7 @@ mod tests {
             .with_default_stage("qa")
             .with_detached_mode(true)
             .build();
-        
+
         assert_eq!(prefs.default_env, "docker");
         assert_eq!(prefs.default_stage.unwrap(), "qa");
         assert!(prefs.detached_mode);
@@ -374,10 +378,10 @@ mod tests {
     fn test_mock_helpers() {
         let app = mock_nodejs_app("/tmp/app");
         assert_eq!(app.app_type, "nodejs");
-        
+
         let app = mock_redis_app("/tmp/redis");
         assert_eq!(app.app_type, "redis");
-        
+
         let app = mock_app_with_deps("/tmp/app", vec![("project", "dep1"), ("project", "dep2")]);
         assert_eq!(app.dependencies.len(), 2);
     }

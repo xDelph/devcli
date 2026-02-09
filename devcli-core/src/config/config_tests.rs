@@ -16,7 +16,7 @@ mod tests {
             .with_docker_command("run", "docker run redis")
             .with_docker_default("run")
             .build();
-        
+
         // Create api project that depends on redis
         let api = AppBuilder::new("nodejs", "/tmp/api")
             .with_local_command("start", "npm start")
@@ -24,7 +24,7 @@ mod tests {
             .with_local_default("start")
             .with_dependency("infrastructure", "redis")
             .build();
-        
+
         ConfigBuilder::new()
             .with_app("infrastructure", "redis", redis)
             .with_app("api-project", "api", api)
@@ -35,18 +35,18 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let config = create_test_config();
-        
+
         // Serialize to JSON
         let json = serde_json::to_string_pretty(&config).unwrap();
-        
+
         // Should contain expected keys
         assert!(json.contains("projects"));
         assert!(json.contains("infrastructure"));
         assert!(json.contains("redis"));
-        
+
         // Deserialize back
         let deserialized: Config = serde_json::from_str(&json).unwrap();
-        
+
         // Should have same structure
         assert_eq!(deserialized.projects.len(), 2);
         assert!(deserialized.projects.contains_key("infrastructure"));
@@ -63,16 +63,16 @@ mod tests {
             .with_k8s_command("delete", "kubectl delete -f k8s/")
             .with_k8s_default("apply")
             .build();
-        
+
         let config = ConfigBuilder::new()
             .with_app("web-project", "web", web)
             .build();
-        
+
         // Serialize and check
         let json = serde_json::to_string_pretty(&config).unwrap();
         assert!(json.contains("k8s"));
         assert!(json.contains("kubectl apply"));
-        
+
         // Deserialize and verify
         let deserialized: Config = serde_json::from_str(&json).unwrap();
         let web_app = &deserialized.projects["web-project"].apps["web"];
@@ -86,7 +86,7 @@ mod tests {
         let config = Config {
             projects: HashMap::new(),
         };
-        
+
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.projects.len(), 0);
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn test_app_with_no_commands() {
         let app = AppBuilder::new("nodejs", "/tmp/app").build();
-        
+
         // App should serialize/deserialize fine
         let json = serde_json::to_string(&app).unwrap();
         let _deserialized: App = serde_json::from_str(&json).unwrap();
@@ -122,7 +122,7 @@ mod tests {
             docker_platform: "linux/arm64".to_string(),
             default_stage: Some("qa".to_string()),
         };
-        
+
         let json = serde_json::to_string_pretty(&prefs).unwrap();
         let deserialized: Preferences = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.default_env, "docker");
@@ -145,7 +145,7 @@ mod tests {
             orbstack: None,
             k8s: None,
         };
-        
+
         let json = serde_json::to_string(&commands).unwrap();
         // Should only contain local, not docker/k8s (skip_serializing_if)
         assert!(json.contains("local"));
@@ -160,7 +160,7 @@ mod tests {
             project: "infra".to_string(),
             app: "database".to_string(),
         };
-        
+
         let json = serde_json::to_string(&dep).unwrap();
         let deserialized: Dependency = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.project, "infra");
@@ -180,7 +180,7 @@ mod tests {
                 app: "postgres".to_string(),
             },
         ];
-        
+
         let json = serde_json::to_vec(&deps).unwrap();
         let deserialized: Vec<Dependency> = serde_json::from_slice(&json).unwrap();
         assert_eq!(deserialized.len(), 2);
@@ -197,7 +197,7 @@ mod tests {
             orbstack: None,
             k8s: None,
         };
-        
+
         let json = serde_json::to_string(&defaults).unwrap();
         // Should skip None values
         assert!(json.contains("local"));
@@ -209,20 +209,23 @@ mod tests {
         let mut config = Config {
             projects: HashMap::new(),
         };
-        
+
         let app = AppBuilder::new("nodejs", "~/Projects/my app/with spaces")
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .build();
-        
-        config.projects.insert("test".to_string(), Project { 
-            apps: {
-                let mut apps = HashMap::new();
-                apps.insert("my-app".to_string(), app);
-                apps
-            }
-        });
-        
+
+        config.projects.insert(
+            "test".to_string(),
+            Project {
+                apps: {
+                    let mut apps = HashMap::new();
+                    apps.insert("my-app".to_string(), app);
+                    apps
+                },
+            },
+        );
+
         // Should serialize/deserialize with special chars
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
@@ -234,7 +237,7 @@ mod tests {
     #[test]
     fn test_large_config() {
         let mut builder = ConfigBuilder::new();
-        
+
         // Create 10 projects, each with 5 apps
         for i in 0..10 {
             for j in 0..5 {
@@ -245,9 +248,9 @@ mod tests {
                 builder = builder.with_app(&format!("project-{}", i), &format!("app-{}", j), app);
             }
         }
-        
+
         let config = builder.build();
-        
+
         // Should handle large configs
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
@@ -287,14 +290,13 @@ mod tests {
 
         // Should deserialize successfully
         let config: Config = serde_json::from_str(old_config_json).unwrap();
-        
+
         // Default stages should be None
         let app = &config.projects["my-project"].apps["api"];
         assert!(app.default_stages.is_none());
-        
+
         // Re-serialize and verify stage field is omitted
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("\"stage\""));
     }
-
 }

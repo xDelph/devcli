@@ -90,10 +90,7 @@ impl MainView {
 
                             let prefix = if is_selected { "   > " } else { "     " };
                             lines.push(Line::from(vec![
-                                Span::styled(
-                                    prefix.to_string(),
-                                    theme.style_text_primary(),
-                                ),
+                                Span::styled(prefix.to_string(), theme.style_text_primary()),
                                 Span::styled(
                                     format!("{}: ", context),
                                     Style::default().fg(theme.secondary),

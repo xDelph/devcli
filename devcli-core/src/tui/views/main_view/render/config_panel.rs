@@ -110,33 +110,18 @@ impl MainView {
                     if let Some(project) = config.projects.get(&app.project) {
                         if let Some(full_app) = project.apps.get(&app.name) {
                             lines.push(Line::from(vec![
-                                Span::styled(
-                                    "Project:     ".to_string(),
-                                    theme.style_text_dim(),
-                                ),
+                                Span::styled("Project:     ".to_string(), theme.style_text_dim()),
                                 Span::styled(app.project.clone(), theme.style_text()),
                             ]));
 
                             lines.push(Line::from(vec![
-                                Span::styled(
-                                    "Type:        ".to_string(),
-                                    theme.style_text_dim(),
-                                ),
-                                Span::styled(
-                                    full_app.app_type.clone(),
-                                    theme.style_text(),
-                                ),
+                                Span::styled("Type:        ".to_string(), theme.style_text_dim()),
+                                Span::styled(full_app.app_type.clone(), theme.style_text()),
                             ]));
 
                             lines.push(Line::from(vec![
-                                Span::styled(
-                                    "Path:        ".to_string(),
-                                    theme.style_text_dim(),
-                                ),
-                                Span::styled(
-                                    full_app.path.clone(),
-                                    theme.style_text(),
-                                ),
+                                Span::styled("Path:        ".to_string(), theme.style_text_dim()),
+                                Span::styled(full_app.path.clone(), theme.style_text()),
                             ]));
 
                             lines.push(Line::from(""));
@@ -217,10 +202,7 @@ impl MainView {
                                                 format!("{}: ", context),
                                                 theme.style_text_secondary(),
                                             ),
-                                            Span::styled(
-                                                file_path.clone(),
-                                                theme.style_text(),
-                                            ),
+                                            Span::styled(file_path.clone(), theme.style_text()),
                                         ]));
                                     }
                                 }
@@ -236,10 +218,7 @@ impl MainView {
                                 )));
                                 for dep in &full_app.dependencies {
                                     lines.push(Line::from(vec![
-                                        Span::styled(
-                                            "  • ".to_string(),
-                                            theme.style_text_dim(),
-                                        ),
+                                        Span::styled("  • ".to_string(), theme.style_text_dim()),
                                         Span::styled(
                                             format!("{}/{}", dep.project, dep.app),
                                             theme.style_text(),
@@ -262,17 +241,11 @@ impl MainView {
                             ]));
                             lines.push(Line::from(vec![
                                 Span::styled("  e", theme.style_text_primary()),
-                                Span::styled(
-                                    " - Edit selected command",
-                                    theme.style_text(),
-                                ),
+                                Span::styled(" - Edit selected command", theme.style_text()),
                             ]));
                             lines.push(Line::from(vec![
                                 Span::styled("  f", theme.style_text_primary()),
-                                Span::styled(
-                                    " - Edit environment files",
-                                    theme.style_text(),
-                                ),
+                                Span::styled(" - Edit environment files", theme.style_text()),
                             ]));
                             lines.push(Line::from(vec![
                                 Span::styled("  E", theme.style_text_primary()),
@@ -370,11 +343,7 @@ impl MainView {
                         theme.style_text_dim().bg(theme.selected_bg),
                     )
                 } else {
-                    (
-                        "  ",
-                        theme.style_text(),
-                        theme.style_text_dim(),
-                    )
+                    ("  ", theme.style_text(), theme.style_text_dim())
                 };
 
                 let mut spans = vec![
@@ -470,10 +439,7 @@ impl MainView {
                 spans.push(Span::styled("█", theme.style_text_primary()));
             }
         } else {
-            spans.push(Span::styled(
-                value.to_string(),
-                theme.style_text(),
-            ));
+            spans.push(Span::styled(value.to_string(), theme.style_text()));
         }
         lines.push(Line::from(spans));
     }

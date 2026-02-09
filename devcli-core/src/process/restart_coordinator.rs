@@ -20,7 +20,10 @@ impl Drop for RestartGuard {
     fn drop(&mut self) {
         // Release the lock synchronously
         // This is safe because we're using std::sync::Mutex
-        let mut locks = self.coordinator.locks.lock()
+        let mut locks = self
+            .coordinator
+            .locks
+            .lock()
             .expect("RestartCoordinator mutex poisoned");
         locks.remove(&self.app_key);
     }
@@ -42,7 +45,9 @@ impl RestartCoordinator {
     /// Try to acquire a restart lock for an app
     /// Returns Some(guard) if lock was acquired, None if restart already in progress
     pub async fn try_acquire_restart_lock(&self, app_key: &str) -> Option<RestartGuard> {
-        let mut locks = self.locks.lock()
+        let mut locks = self
+            .locks
+            .lock()
             .expect("RestartCoordinator mutex poisoned");
 
         // Check if restart already in progress
@@ -63,7 +68,9 @@ impl RestartCoordinator {
 
     /// Check if a restart is currently in progress for an app
     pub async fn is_restart_in_progress(&self, app_key: &str) -> bool {
-        let locks = self.locks.lock()
+        let locks = self
+            .locks
+            .lock()
             .expect("RestartCoordinator mutex poisoned");
         locks.contains_key(app_key)
     }
@@ -147,8 +154,7 @@ mod tests {
                 "test-app",
                 std::time::Duration::from_millis(10),
                 async move {
-                    let mut flag = executed_clone.lock()
-                        .expect("Test mutex poisoned");
+                    let mut flag = executed_clone.lock().expect("Test mutex poisoned");
                     *flag = true;
                     Ok(())
                 },
@@ -173,8 +179,7 @@ mod tests {
                 "test-app",
                 std::time::Duration::from_millis(10),
                 async move {
-                    let mut flag = executed_clone.lock()
-                        .expect("Test mutex poisoned");
+                    let mut flag = executed_clone.lock().expect("Test mutex poisoned");
                     *flag = true;
                     Ok(())
                 },

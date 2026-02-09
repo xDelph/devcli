@@ -31,15 +31,18 @@ mod tests {
     #[test]
     fn test_show_preview_displays_basic_info() {
         let app = create_test_app("nodejs", "test-app");
-        
+
         // Smoke test: verify show_preview doesn't panic with valid input
         // Since show_preview prints to stdout, we can't capture output in unit tests
         let result = std::panic::catch_unwind(|| {
             show_preview("test-project", "custom-name", &app);
         });
-        assert!(result.is_ok(), "show_preview should not panic with valid input");
+        assert!(
+            result.is_ok(),
+            "show_preview should not panic with valid input"
+        );
     }
-    
+
     #[test]
     fn test_show_preview_with_minimal_app() {
         let app = DetectedApp {
@@ -56,20 +59,29 @@ mod tests {
             dockerfile_path: None,
             env_files: None,
         };
-        
+
         // Smoke test: verify show_preview handles minimal app data without panicking
         let result = std::panic::catch_unwind(|| {
             show_preview("minimal-project", "minimal-app", &app);
         });
-        assert!(result.is_ok(), "show_preview should handle minimal app data without panicking");
+        assert!(
+            result.is_ok(),
+            "show_preview should handle minimal app data without panicking"
+        );
     }
-    
+
     #[test]
     fn test_show_preview_with_k8s_commands() {
         let mut k8s_commands = HashMap::new();
-        k8s_commands.insert("apply".to_string(), "kubectl apply -f deployment.yaml".to_string());
-        k8s_commands.insert("delete".to_string(), "kubectl delete -f deployment.yaml".to_string());
-        
+        k8s_commands.insert(
+            "apply".to_string(),
+            "kubectl apply -f deployment.yaml".to_string(),
+        );
+        k8s_commands.insert(
+            "delete".to_string(),
+            "kubectl delete -f deployment.yaml".to_string(),
+        );
+
         let app = DetectedApp {
             app_type: "nodejs".to_string(),
             app_name: "k8s-app".to_string(),
@@ -84,25 +96,28 @@ mod tests {
             dockerfile_path: None,
             env_files: None,
         };
-        
+
         // Smoke test: verify show_preview handles K8s commands without panicking
         let result = std::panic::catch_unwind(|| {
             show_preview("k8s-project", "k8s-app", &app);
         });
-        assert!(result.is_ok(), "show_preview should handle K8s commands without panicking");
+        assert!(
+            result.is_ok(),
+            "show_preview should handle K8s commands without panicking"
+        );
     }
-    
+
     #[test]
     fn test_show_preview_with_all_environments() {
         let mut local_commands = HashMap::new();
         local_commands.insert("start".to_string(), "npm start".to_string());
-        
+
         let mut docker_commands = HashMap::new();
         docker_commands.insert("up".to_string(), "docker-compose up".to_string());
-        
+
         let mut k8s_commands = HashMap::new();
         k8s_commands.insert("apply".to_string(), "kubectl apply -f .".to_string());
-        
+
         let app = DetectedApp {
             app_type: "nodejs".to_string(),
             app_name: "full-app".to_string(),
@@ -117,31 +132,37 @@ mod tests {
             dockerfile_path: None,
             env_files: None,
         };
-        
+
         // Smoke test: verify show_preview handles all environments without panicking
         let result = std::panic::catch_unwind(|| {
             show_preview("full-project", "full-app", &app);
         });
-        assert!(result.is_ok(), "show_preview should handle all environments without panicking");
+        assert!(
+            result.is_ok(),
+            "show_preview should handle all environments without panicking"
+        );
     }
-    
+
     #[test]
     fn test_show_preview_with_special_characters() {
         let app = create_test_app("nodejs", "app-with-special-chars");
-        
+
         // Smoke test: verify show_preview handles special characters without panicking
         let result1 = std::panic::catch_unwind(|| {
             show_preview("project-with-dashes", "app_with_underscores", &app);
         });
-        
+
         let result2 = std::panic::catch_unwind(|| {
             show_preview("project.with.dots", "app-name", &app);
         });
-        
-        assert!(result1.is_ok(), "show_preview should handle dashes and underscores");
+
+        assert!(
+            result1.is_ok(),
+            "show_preview should handle dashes and underscores"
+        );
         assert!(result2.is_ok(), "show_preview should handle dots in names");
     }
-    
+
     // Note: Testing the actual interactive prompts (prompt_project_selection, prompt_app_name, etc.)
     // would require mocking the inquire library or integration tests with actual user input.
     // These functions are primarily tested through integration tests or manual testing.

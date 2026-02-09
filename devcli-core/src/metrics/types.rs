@@ -27,7 +27,7 @@ pub struct ProcessMetrics {
     pub stopped_processes: usize,
     pub total_restarts: u64,
     pub restarts_last_hour: u64,
-    pub health_check_success_rate: f64, // 0.0-1.0
+    pub health_check_success_rate: f64,            // 0.0-1.0
     pub exit_code_distribution: HashMap<i32, u64>, // exit_code -> count
     pub apps: Vec<AppMetrics>,
 }

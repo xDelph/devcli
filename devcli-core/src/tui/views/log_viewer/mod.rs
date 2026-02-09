@@ -2,7 +2,6 @@
 // Provides scrolling, JSON prettification, syntax highlighting, and search functionality
 // Implements lazy loading for efficient handling of large log files
 
-
 pub mod app_color_manager;
 pub mod file_loader;
 pub mod json_formatter;
@@ -90,12 +89,12 @@ impl LogViewerView {
     pub fn new(log_paths: Vec<PathBuf>) -> Result<Self> {
         let mut color_manager = AppColorManager::new();
         let mut panels = Vec::new();
-        
+
         for path in log_paths {
             // Extract app name and assign color
             let app_name = AppColorManager::extract_app_name_from_path(&path);
             let app_color = color_manager.get_color_for_app(&app_name);
-            
+
             panels.push(SingleLogView::new(path, app_name, app_color)?);
         }
 
@@ -307,20 +306,20 @@ impl LogViewerView {
                     if self.active_panel_idx >= self.panels.len() {
                         self.active_panel_idx = self.panels.len().saturating_sub(1);
                     }
-                    
+
                     // Reset viewport state for remaining panels to handle layout change
                     // When going from multi-panel to single-panel, the viewport needs adjustment
                     for panel in &mut self.panels {
                         // Reset the visual scroll offset so it recalculates for the new layout
                         panel.viewport.last_visual_scroll = 0;
-                        
+
                         // If the cursor was at the bottom, keep it at the bottom
                         // This maintains the "follow latest logs" behavior
                         if panel.viewport.cursor_line + 1 >= panel.total_lines {
                             panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
                         }
                     }
-                    
+
                     return Ok(LogInputResult::Handled);
                 }
                 // If only 1 panel, let standard Esc handle exit
@@ -342,8 +341,9 @@ impl LogViewerView {
             // Extract app name and assign color
             let app_name = AppColorManager::extract_app_name_from_path(&path);
             let app_color = self.color_manager.get_color_for_app(&app_name);
-            
-            self.panels.push(SingleLogView::new(path, app_name, app_color)?);
+
+            self.panels
+                .push(SingleLogView::new(path, app_name, app_color)?);
             // Switch focus to new panel
             self.active_panel_idx = self.panels.len() - 1;
         }
@@ -356,7 +356,7 @@ impl LogViewerView {
             // Extract app name and assign color
             let app_name = AppColorManager::extract_app_name_from_path(&path);
             let app_color = self.color_manager.get_color_for_app(&app_name);
-            
+
             self.panels[index] = SingleLogView::new(path, app_name, app_color)?;
         }
         Ok(())
@@ -499,7 +499,7 @@ pub struct SingleLogView {
 impl SingleLogView {
     /// Creates a new log viewer for the specified file
     /// Loads the file content and prepares it for display
-    /// 
+    ///
     /// # Arguments
     /// * `log_path` - Path to the log file
     /// * `app_name` - Name of the app (extracted from file path)
@@ -507,7 +507,9 @@ impl SingleLogView {
     pub fn new(log_path: PathBuf, app_name: String, app_color: Color) -> Result<Self> {
         crate::debug!(
             "[LogViewer] SingleLogView::new() called for path: {:?}, app: {}, color: {:?}",
-            log_path, app_name, app_color
+            log_path,
+            app_name,
+            app_color
         );
         let highlighter = SyntaxHighlighter::new();
 
@@ -610,10 +612,7 @@ impl SingleLogView {
 
         // Create title with colored app name
         let title_spans = vec![
-            Span::styled(
-                format!("{} - ", project),
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(format!("{} - ", project), Style::default().fg(Color::White)),
             Span::styled(
                 format!("[{}]", self.app_name),
                 Style::default()
@@ -621,7 +620,10 @@ impl SingleLogView {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" {} (Line {}/{})", context_date, current_line, self.total_lines),
+                format!(
+                    " {} (Line {}/{})",
+                    context_date, current_line, self.total_lines
+                ),
                 Style::default().fg(Color::White),
             ),
         ];
@@ -664,13 +666,13 @@ impl SingleLogView {
 
     /// Applies search highlighting to formatted spans
     /// Highlights matched text with bright background colors
-    /// 
+    ///
     /// # Arguments
     /// * `formatted_spans` - The original formatted spans from the log line
     /// * `match_ranges` - Character ranges within the line that match the search query
     /// * `bg_color` - Background color to apply to non-highlighted text
     /// * `is_current_result` - Whether this is the currently selected search result
-    /// 
+    ///
     /// # Returns
     /// Vector of spans with search highlighting applied
     fn apply_search_highlighting(
@@ -682,17 +684,17 @@ impl SingleLogView {
     ) -> Vec<Span<'static>> {
         let mut result_spans = Vec::new();
         let mut char_pos = 0;
-        
+
         for span in formatted_spans {
             let span_start = char_pos;
             let span_end = char_pos + span.content.chars().count(); // Use char count, not byte length
-            
+
             // Find matches that overlap with this span
             let overlapping_matches: Vec<_> = match_ranges
                 .iter()
                 .filter(|m| m.start < span_end && m.end > span_start)
                 .collect();
-            
+
             if overlapping_matches.is_empty() {
                 // No matches in this span, just apply background
                 let mut style = span.style;
@@ -702,38 +704,43 @@ impl SingleLogView {
                 // Split span to highlight matches
                 let mut current_pos = 0;
                 let span_chars: Vec<char> = span.content.chars().collect();
-                
+
                 for &match_range in &overlapping_matches {
                     let match_start_in_span = match_range.start.saturating_sub(span_start);
-                    let match_end_in_span = (match_range.end.saturating_sub(span_start)).min(span_chars.len());
-                    
+                    let match_end_in_span =
+                        (match_range.end.saturating_sub(span_start)).min(span_chars.len());
+
                     // Add text before match
                     if current_pos < match_start_in_span {
-                        let before_text: String = span_chars[current_pos..match_start_in_span].iter().collect();
+                        let before_text: String = span_chars[current_pos..match_start_in_span]
+                            .iter()
+                            .collect();
                         let mut style = span.style;
                         style.bg = Some(bg_color);
                         result_spans.push(Span::styled(before_text, style));
                     }
-                    
+
                     // Add highlighted match
                     if match_start_in_span < match_end_in_span {
-                        let match_text: String = span_chars[match_start_in_span..match_end_in_span].iter().collect();
+                        let match_text: String = span_chars[match_start_in_span..match_end_in_span]
+                            .iter()
+                            .collect();
                         let highlight_color = if is_current_result {
                             Color::Rgb(255, 255, 0) // Bright yellow for current result
                         } else {
                             Color::Rgb(200, 200, 100) // Dimmer yellow for other matches
                         };
-                        
+
                         let mut style = span.style;
                         style.bg = Some(highlight_color);
                         style.fg = Some(Color::Black); // Black text on yellow background
                         style = style.add_modifier(Modifier::BOLD);
                         result_spans.push(Span::styled(match_text, style));
                     }
-                    
+
                     current_pos = match_end_in_span;
                 }
-                
+
                 // Add remaining text after last match
                 if current_pos < span_chars.len() {
                     let after_text: String = span_chars[current_pos..].iter().collect();
@@ -742,10 +749,10 @@ impl SingleLogView {
                     result_spans.push(Span::styled(after_text, style));
                 }
             }
-            
+
             char_pos = span_end;
         }
-        
+
         result_spans
     }
 
@@ -833,7 +840,7 @@ impl SingleLogView {
 
             let mut spans = vec![line_num_span];
 
-            // Add colored app name prefix: [appName] 
+            // Add colored app name prefix: [appName]
             let app_name_span = Span::styled(
                 format!("[{}] ", self.app_name),
                 Style::default()
@@ -845,7 +852,12 @@ impl SingleLogView {
 
             // Apply search highlighting if this line has matches
             let content_spans = if let Some(match_ranges) = self.search.get_match_ranges(i) {
-                self.apply_search_highlighting(&log_line.formatted, match_ranges, bg_color, self.search.is_current_result(i))
+                self.apply_search_highlighting(
+                    &log_line.formatted,
+                    match_ranges,
+                    bg_color,
+                    self.search.is_current_result(i),
+                )
             } else {
                 // No search matches, just apply background color
                 log_line
@@ -858,13 +870,13 @@ impl SingleLogView {
                     })
                     .collect()
             };
-            
+
             spans.extend(content_spans);
 
             // Calculate the current line width to add padding for full-width background
             let current_width: usize = spans.iter().map(|span| span.content.len()).sum();
             let remaining_width = available_width.saturating_sub(current_width);
-            
+
             // Add padding span to fill the remaining width with background color
             if remaining_width > 0 {
                 spans.push(Span::styled(

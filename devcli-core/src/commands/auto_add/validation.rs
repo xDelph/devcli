@@ -10,16 +10,16 @@ pub fn validate_app_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("App name cannot be empty. Please try again.");
     }
-    
+
     if name.contains(' ') {
         anyhow::bail!("App name cannot contain spaces. Use dashes or underscores instead.");
     }
-    
+
     // Additional validation: check for other problematic characters
     if name.contains('/') || name.contains('\\') {
         anyhow::bail!("App name cannot contain path separators.");
     }
-    
+
     Ok(())
 }
 

@@ -7,8 +7,8 @@ use crate::Result;
 use std::collections::HashMap;
 
 use super::interactive::{
-    prompt_project_selection, prompt_app_name, show_preview, confirm_default_yes,
-    interactive_nx_app_selection
+    confirm_default_yes, interactive_nx_app_selection, prompt_app_name, prompt_project_selection,
+    show_preview,
 };
 
 // Handle detection and addition of apps in an Nx monorepo
@@ -17,52 +17,57 @@ use super::interactive::{
 pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
     // Use the detection module to find all apps in apps/ and packages/ directories
     let detected_apps = crate::detection::detect_nx_apps(workspace_root)?;
-    
+
     // Display detected apps count
     println!("✓ Detected Nx monorepo with {} apps", detected_apps.len());
-    
+
     // Use interactive multi-select for app selection
     let selected_indices = interactive_nx_app_selection(&detected_apps)?;
-    
+
     if selected_indices.is_empty() {
         println!("No apps selected.");
         return Ok(());
     }
-    
+
     // Load existing config or create a new empty one
     let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
         projects: HashMap::new(),
     });
-    
+
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
-    
-    println!("\nProcessing {} selected app(s) for project '{}'...\n", selected_indices.len(), project_name);
-    
+
+    println!(
+        "\nProcessing {} selected app(s) for project '{}'...\n",
+        selected_indices.len(),
+        project_name
+    );
+
     // Process each selected app with confirmation
     for &idx in &selected_indices {
         let detected = &detected_apps[idx];
-        
+
         // Skip apps with no commands - they can't be run
-        if detected.local_commands.is_none() 
-            && detected.docker_commands.is_none() 
-            && detected.k8s_commands.is_none() {
+        if detected.local_commands.is_none()
+            && detected.docker_commands.is_none()
+            && detected.k8s_commands.is_none()
+        {
             println!("⚠ Skipping {} - no commands detected", detected.app_name);
             continue;
         }
-        
+
         // Prompt for app name (allow user to customize)
         let app_name = prompt_app_name(&detected.app_name)?;
-        
+
         // Show preview of what will be added
         show_preview(&project_name, &app_name, detected);
-        
+
         // Confirm this specific app (default to yes)
         if !confirm_default_yes(&format!("Add {} to config?", app_name))? {
             println!("Skipped {}.\n", app_name);
             continue;
         }
-        
+
         // Re-detect env files with interactive prompts for unspecified contexts
         let mut available_envs = Vec::new();
         if detected.local_commands.is_some() {
@@ -75,15 +80,17 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         if detected.k8s_commands.is_some() {
             available_envs.push("k8s");
         }
-        
+
         let env_files = if !available_envs.is_empty() {
             let app_path = std::path::Path::new(&detected.path);
-            if let Ok(detected_env_files) = crate::detection::detect_env_files(
-                app_path,
-                detected.dockerfile_path.as_deref()
-            ) {
+            if let Ok(detected_env_files) =
+                crate::detection::detect_env_files(app_path, detected.dockerfile_path.as_deref())
+            {
                 if !detected_env_files.is_empty() {
-                    match crate::detection::build_env_files_map_interactive(&detected_env_files, &available_envs) {
+                    match crate::detection::build_env_files_map_interactive(
+                        &detected_env_files,
+                        &available_envs,
+                    ) {
                         Ok(map) if !map.is_empty() => Some(map),
                         _ => None,
                     }
@@ -96,7 +103,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         } else {
             None
         };
-        
+
         // Build the App struct from detected data
         let app = App {
             app_type: detected.app_type.clone(),
@@ -112,15 +119,18 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
                 orbstack: detected.suggested_orbstack_default.clone(),
-                k8s: detected.k8s_commands.as_ref().and_then(|cmds| cmds.keys().next().cloned()),
+                k8s: detected
+                    .k8s_commands
+                    .as_ref()
+                    .and_then(|cmds| cmds.keys().next().cloned()),
             },
             dockerfile_path: detected.dockerfile_path.clone(),
-            env_files, // Interactive env files with user-selected environments
+            env_files,            // Interactive env files with user-selected environments
             default_stages: None, // Will be set by user via preferences or explicit command
             health_check: None,
             restart_policy: None,
         };
-        
+
         // Insert the app into the config
         // This creates the project if it doesn't exist, then adds the app
         config
@@ -131,14 +141,14 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             })
             .apps
             .insert(app_name.clone(), app);
-        
+
         println!("✓ Added {}\n", app_name);
     }
-    
+
     // Save the updated config to disk
     save_config(&config)?;
     println!("✓ All apps added successfully!");
-    
+
     Ok(())
 }
 

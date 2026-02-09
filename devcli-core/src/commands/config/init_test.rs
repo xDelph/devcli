@@ -10,14 +10,21 @@ mod init_tests {
   "projects": {}
 }
 "#;
-        
+
         // Verify empty config is valid JSON
-        let parsed: serde_json::Value = serde_json::from_str(empty_config)
-            .expect("Empty config should be valid JSON");
-        
+        let parsed: serde_json::Value =
+            serde_json::from_str(empty_config).expect("Empty config should be valid JSON");
+
         // Verify structure - should have empty projects object
-        assert!(parsed["projects"].is_object(), "Should have projects object");
-        assert_eq!(parsed["projects"].as_object().unwrap().len(), 0, "Projects should be empty");
+        assert!(
+            parsed["projects"].is_object(),
+            "Should have projects object"
+        );
+        assert_eq!(
+            parsed["projects"].as_object().unwrap().len(),
+            0,
+            "Projects should be empty"
+        );
     }
 
     #[test]
@@ -52,15 +59,24 @@ mod init_tests {
   }
 }
 "#;
-        
+
         // Verify example template is valid JSON
-        let parsed: serde_json::Value = serde_json::from_str(example_template)
-            .expect("Example template should be valid JSON");
-        
+        let parsed: serde_json::Value =
+            serde_json::from_str(example_template).expect("Example template should be valid JSON");
+
         // Verify structure
-        assert!(parsed["projects"].is_object(), "Should have projects object");
-        assert!(parsed["projects"]["example"].is_object(), "Should have example project");
-        assert!(parsed["projects"]["example"]["apps"]["my-app"].is_object(), "Should have example app");
+        assert!(
+            parsed["projects"].is_object(),
+            "Should have projects object"
+        );
+        assert!(
+            parsed["projects"]["example"].is_object(),
+            "Should have example project"
+        );
+        assert!(
+            parsed["projects"]["example"]["apps"]["my-app"].is_object(),
+            "Should have example app"
+        );
         let app = &parsed["projects"]["example"]["apps"]["my-app"];
         assert_eq!(app["type"], "nodejs");
         assert_eq!(app["path"], "~/Projects/my-app");

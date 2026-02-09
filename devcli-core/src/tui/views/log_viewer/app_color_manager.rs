@@ -1,5 +1,5 @@
 /// App Color Manager - Assigns and tracks colors for app names in log viewer
-/// 
+///
 /// This module manages color assignment for app names displayed in log views.
 /// It ensures consistent colors across multiple panels and provides a good
 /// visual distinction between different apps when viewing logs simultaneously.
@@ -7,7 +7,7 @@ use ratatui::style::Color;
 use std::collections::HashMap;
 
 /// Manages color assignment for app names in log viewer
-/// 
+///
 /// Provides consistent color assignment across multiple log panels,
 /// ensuring the same app always gets the same color regardless of
 /// which panel it appears in or when it's loaded.
@@ -23,7 +23,7 @@ pub struct AppColorManager {
 
 impl AppColorManager {
     /// Creates a new color manager with predefined color palette
-    /// 
+    ///
     /// The color palette is chosen to provide good contrast and
     /// visual distinction in terminal environments.
     pub fn new() -> Self {
@@ -48,10 +48,10 @@ impl AppColorManager {
     }
 
     /// Gets the color for an app name, assigning one if not already assigned
-    /// 
+    ///
     /// # Arguments
     /// * `app_name` - The name of the app to get color for
-    /// 
+    ///
     /// # Returns
     /// The color assigned to this app name
     pub fn get_color_for_app(&mut self, app_name: &str) -> Color {
@@ -62,25 +62,25 @@ impl AppColorManager {
             // Assign a new color to this app
             let color = self.available_colors[self.next_color_index];
             self.app_colors.insert(app_name.to_string(), color);
-            
+
             // Move to next color, cycling back to start if needed
             self.next_color_index = (self.next_color_index + 1) % self.available_colors.len();
-            
+
             color
         }
     }
 
     /// Extracts app name from log file path
-    /// 
+    ///
     /// Log files follow the pattern: `{project}_{app}_{context}_{date}.log`
     /// This function extracts the app name (second component) from the filename.
-    /// 
+    ///
     /// # Arguments
     /// * `log_path` - Path to the log file
-    /// 
+    ///
     /// # Returns
     /// The extracted app name, or "unknown" if parsing fails
-    /// 
+    ///
     /// # Examples
     /// ```
     /// // For file: "myproject_redis_start_20241210.log"
@@ -93,7 +93,7 @@ impl AppColorManager {
             .and_then(|filename| {
                 // Remove .log extension
                 let name_without_ext = filename.strip_suffix(".log").unwrap_or(filename);
-                
+
                 // Split by underscore and get the second part (app name)
                 // We need at least 4 parts for the expected format: project_app_context_date
                 let parts: Vec<&str> = name_without_ext.split('_').collect();
@@ -107,9 +107,9 @@ impl AppColorManager {
     }
 
     /// Gets all currently assigned app colors
-    /// 
+    ///
     /// Useful for debugging or displaying color assignments to users.
-    /// 
+    ///
     /// # Returns
     /// A reference to the internal color mapping
     pub fn get_all_assignments(&self) -> &HashMap<String, Color> {
@@ -117,7 +117,7 @@ impl AppColorManager {
     }
 
     /// Clears all color assignments
-    /// 
+    ///
     /// Resets the color manager to initial state. Useful when starting
     /// a fresh log viewing session.
     pub fn clear_assignments(&mut self) {
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn test_color_assignment_consistency() {
         let mut manager = AppColorManager::new();
-        
+
         // Same app should always get same color
         let color1 = manager.get_color_for_app("redis");
         let color2 = manager.get_color_for_app("redis");
@@ -175,7 +175,7 @@ mod tests {
     fn test_color_cycling() {
         let mut manager = AppColorManager::new();
         let total_colors = manager.available_colors.len();
-        
+
         // Assign colors to more apps than available colors
         let mut assigned_colors = Vec::new();
         for i in 0..total_colors + 2 {
@@ -183,7 +183,7 @@ mod tests {
             let color = manager.get_color_for_app(&app_name);
             assigned_colors.push(color);
         }
-        
+
         // Should cycle back to first colors
         assert_eq!(assigned_colors[0], assigned_colors[total_colors]);
         assert_eq!(assigned_colors[1], assigned_colors[total_colors + 1]);

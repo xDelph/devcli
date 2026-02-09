@@ -5,7 +5,9 @@
 use crate::config::{load_config, Config};
 use crate::logging::MonitorLogger;
 use crate::metrics::{start_metrics_server, MetricsCollector};
-use crate::process::{HealthCheckEngine, ProcessInfo, ProcessTracker, RestartCoordinator, RestartReason};
+use crate::process::{
+    HealthCheckEngine, ProcessInfo, ProcessTracker, RestartCoordinator, RestartReason,
+};
 use crate::Result;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -97,7 +99,10 @@ impl MonitorState {
 
             // Get app configuration
             let project = process.project.as_deref().unwrap_or("unknown");
-            let app_name = process.app_config_name.as_deref().unwrap_or(&process.app_name);
+            let app_name = process
+                .app_config_name
+                .as_deref()
+                .unwrap_or(&process.app_name);
 
             let Some(project_config) = self.config.projects.get(project) else {
                 continue;
@@ -118,7 +123,10 @@ impl MonitorState {
                     // Health check passed - reset failure count
                     if process.health_check_failures > 0 {
                         // Log recovery
-                        let _ = self.logger.log_health_check_recovered(project, app_name).await;
+                        let _ = self
+                            .logger
+                            .log_health_check_recovered(project, app_name)
+                            .await;
 
                         let mut updated_process = process.clone();
                         updated_process.health_check_failures = 0;
@@ -134,12 +142,15 @@ impl MonitorState {
 
                     // Log health check failure
                     let check_type = format!("{:?}", health_check);
-                    let _ = self.logger.log_health_check_failure(
-                        project,
-                        app_name,
-                        &check_type,
-                        &format!("failure #{}", updated_process.health_check_failures),
-                    ).await;
+                    let _ = self
+                        .logger
+                        .log_health_check_failure(
+                            project,
+                            app_name,
+                            &check_type,
+                            &format!("failure #{}", updated_process.health_check_failures),
+                        )
+                        .await;
 
                     // If multiple failures, trigger restart
                     // TODO: Make threshold configurable (currently hardcoded to 3)
@@ -180,13 +191,14 @@ impl MonitorState {
 
                     let error_msg = format!("{}", e);
                     let check_type = format!("{:?}", health_check);
-                    let _ = self.logger.log_health_check_failure(
-                        project,
-                        app_name,
-                        &check_type,
-                        &error_msg,
-                    ).await;
-                    eprintln!("Error performing health check for {}/{}: {}", project, app_name, e);
+                    let _ = self
+                        .logger
+                        .log_health_check_failure(project, app_name, &check_type, &error_msg)
+                        .await;
+                    eprintln!(
+                        "Error performing health check for {}/{}: {}",
+                        project, app_name, e
+                    );
                 }
             }
         }
@@ -217,7 +229,10 @@ impl MonitorState {
 
             // Get app configuration
             let project = process.project.as_deref().unwrap_or("unknown");
-            let app_name = process.app_config_name.as_deref().unwrap_or(&process.app_name);
+            let app_name = process
+                .app_config_name
+                .as_deref()
+                .unwrap_or(&process.app_name);
 
             let Some(project_config) = self.config.projects.get(project) else {
                 continue;
@@ -235,13 +250,18 @@ impl MonitorState {
             // Check if we should restart
             if !process.should_restart(restart_policy) {
                 // Max restarts reached or other policy violation
-                if restart_policy.max_restarts > 0 && process.restart_count >= restart_policy.max_restarts {
-                    let _ = self.logger.log_max_restarts_reached(
-                        project,
-                        app_name,
-                        restart_policy.max_restarts,
-                        restart_policy.restart_window_secs,
-                    ).await;
+                if restart_policy.max_restarts > 0
+                    && process.restart_count >= restart_policy.max_restarts
+                {
+                    let _ = self
+                        .logger
+                        .log_max_restarts_reached(
+                            project,
+                            app_name,
+                            restart_policy.max_restarts,
+                            restart_policy.restart_window_secs,
+                        )
+                        .await;
                 }
                 continue;
             }
@@ -251,16 +271,24 @@ impl MonitorState {
 
             // Log restart trigger
             let reason = RestartReason::Crash { exit_code };
-            let _ = self.logger.log_restart_triggered(
-                project,
-                app_name,
-                &reason,
-                backoff.as_secs(),
-                process.restart_count + 1,
-            ).await;
+            let _ = self
+                .logger
+                .log_restart_triggered(
+                    project,
+                    app_name,
+                    &reason,
+                    backoff.as_secs(),
+                    process.restart_count + 1,
+                )
+                .await;
 
             // Trigger restart via coordinator
-            let app_key = format!("{}:{}:{}", project, app_name, process.environment.as_deref().unwrap_or("local"));
+            let app_key = format!(
+                "{}:{}:{}",
+                project,
+                app_name,
+                process.environment.as_deref().unwrap_or("local")
+            );
 
             tracing::warn!(
                 project = %project,
@@ -278,10 +306,9 @@ impl MonitorState {
 
             // Execute restart (this will be implemented in a future commit)
             // For now, just log that we would restart
-            let _result = self.restart_coordinator.execute_restart_if_allowed(
-                &app_key,
-                backoff,
-                async {
+            let _result = self
+                .restart_coordinator
+                .execute_restart_if_allowed(&app_key, backoff, async {
                     // TODO: Implement actual restart logic
                     // This should call the restart command with proper arguments
                     tracing::info!(
@@ -291,9 +318,8 @@ impl MonitorState {
                     );
                     eprintln!("TODO: Execute restart for {}/{}", project, app_name);
                     Ok(())
-                },
-            )
-            .await;
+                })
+                .await;
         }
 
         Ok(())
@@ -301,7 +327,10 @@ impl MonitorState {
 
     /// Cleanup and exit
     async fn cleanup_and_exit(&mut self) -> Result<()> {
-        let _ = self.logger.log_monitor_stopped("no processes remaining").await;
+        let _ = self
+            .logger
+            .log_monitor_stopped("no processes remaining")
+            .await;
         self.tracker.remove_process("unknown", ".monitor", None)?;
         Ok(())
     }

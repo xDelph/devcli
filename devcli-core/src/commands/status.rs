@@ -33,10 +33,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     // Returns Vec<ProcessInfo> with all process metadata
     let mut processes = tracker.list_processes()?;
 
-    tracing::debug!(
-        total_processes = processes.len(),
-        "Retrieved process list"
-    );
+    tracing::debug!(total_processes = processes.len(), "Retrieved process list");
 
     // Step 4: Filter by project if requested
     // Example: devcli status --project qm
@@ -72,10 +69,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    tracing::info!(
-        process_count = processes.len(),
-        "Displaying process status"
-    );
+    tracing::info!(process_count = processes.len(), "Displaying process status");
 
     // Step 7: Handle special case - show dependencies for a specific app
     // Example: devcli status api-private --deps

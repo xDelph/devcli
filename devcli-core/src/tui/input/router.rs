@@ -40,7 +40,9 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     // If there's an error message, any key dismisses it
     // This allows users to acknowledge and clear error messages
     {
-        let mut state = app.state.lock()
+        let mut state = app
+            .state
+            .lock()
             .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
         if state.error_message.is_some() {
             state.error_message = None;
@@ -50,7 +52,9 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
 
     // Get current view type by locking state briefly
     let current_view = {
-        let state = app.state.lock()
+        let state = app
+            .state
+            .lock()
             .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
         state.current_view.clone()
     };

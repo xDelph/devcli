@@ -14,14 +14,14 @@ mod tests {
             .with_local_command("start", "redis-server")
             .with_local_default("start")
             .build();
-        
+
         // Project 2: api (depends on redis)
         let api = AppBuilder::new("nodejs", "/tmp/api")
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .with_dependency("infrastructure", "redis")
             .build();
-        
+
         ConfigBuilder::new()
             .with_app("infrastructure", "redis", redis)
             .with_app("api-project", "api", api)
@@ -34,7 +34,7 @@ mod tests {
         let config = create_multi_project_config();
         let result = get_app_by_project(&config, "infrastructure", "redis");
         assert!(result.is_ok());
-        
+
         let resolved = result.unwrap();
         assert_eq!(resolved.project, "infrastructure");
         assert_eq!(resolved.app_name, "redis");
@@ -55,7 +55,7 @@ mod tests {
         let config = create_multi_project_config();
         let result = resolve_app(&config, "nonexistent", None);
         assert!(result.is_err());
-        
+
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("not found in config"));
     }
@@ -67,7 +67,7 @@ mod tests {
         let mut config = Config {
             projects: HashMap::new(),
         };
-        
+
         // Create "api" in two different projects
         for project_name in &["project1", "project2"] {
             let mut apps = HashMap::new();
@@ -100,16 +100,18 @@ mod tests {
                     restart_policy: None,
                 },
             );
-            config.projects.insert(project_name.to_string(), Project { apps });
+            config
+                .projects
+                .insert(project_name.to_string(), Project { apps });
         }
-        
+
         // Should work with project specified for project1
         let result = resolve_app(&config, "api", Some("project1"));
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(resolved.project, "project1");
         assert_eq!(resolved.app_name, "api");
-        
+
         // Should work with project specified for project2
         let result = resolve_app(&config, "api", Some("project2"));
         assert!(result.is_ok());
@@ -122,10 +124,10 @@ mod tests {
     fn test_list_all_apps() {
         let config = create_multi_project_config();
         let apps = list_all_apps(&config);
-        
+
         // Should have 2 apps total
         assert_eq!(apps.len(), 2);
-        
+
         // Should contain both apps (tuple is: project_name, app_name, app)
         let app_names: Vec<&str> = apps.iter().map(|(_, name, _)| name.as_str()).collect();
         assert!(app_names.contains(&"redis"));

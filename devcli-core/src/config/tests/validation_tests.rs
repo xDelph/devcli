@@ -17,28 +17,28 @@ mod tests {
             .with_local_default("start")
             .with_dependency("test", "b")
             .build();
-        
+
         // B depends on A (circular!)
         let app_b = AppBuilder::new("nodejs", "/tmp/b")
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .with_dependency("test", "a")
             .build();
-        
+
         let config = ConfigBuilder::new()
             .with_app("test", "a", app_a)
             .with_app("test", "b", app_b)
             .build();
-        
+
         // Current implementation handles this gracefully (no infinite loop)
         // It returns both A and B in the dependency chain
         let a_app = resolve_app(&config, "a", None).unwrap();
         let result = dependencies::resolve_dependency_chain(&config, &a_app);
-        
+
         // Should succeed (visited set prevents infinite loop)
         assert!(result.is_ok());
         let deps = result.unwrap();
-        
+
         // Should have B in the chain
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].app_name, "b");
@@ -54,32 +54,32 @@ mod tests {
             .with_local_default("start")
             .with_dependency("test", "b")
             .build();
-        
+
         // B depends on C
         let app_b = AppBuilder::new("nodejs", "/tmp/b")
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .with_dependency("test", "c")
             .build();
-        
+
         // C depends on A (circular!)
         let app_c = AppBuilder::new("nodejs", "/tmp/c")
             .with_local_command("start", "npm start")
             .with_local_default("start")
             .with_dependency("test", "a")
             .build();
-        
+
         let config = ConfigBuilder::new()
             .with_app("test", "a", app_a)
             .with_app("test", "b", app_b)
             .with_app("test", "c", app_c)
             .build();
-        
+
         // Should handle gracefully (visited set prevents infinite loop)
         let a_app = resolve_app(&config, "a", None).unwrap();
         let result = dependencies::resolve_dependency_chain(&config, &a_app);
         assert!(result.is_ok());
-        
+
         let deps = result.unwrap();
         // Should have B and C in the chain
         assert_eq!(deps.len(), 2);
@@ -94,11 +94,9 @@ mod tests {
             .with_local_default("start")
             .with_dependency("test", "nonexistent")
             .build();
-        
-        let config = ConfigBuilder::new()
-            .with_app("test", "app", app)
-            .build();
-        
+
+        let config = ConfigBuilder::new().with_app("test", "app", app).build();
+
         // Should fail when resolving dependency chain
         let app = resolve_app(&config, "app", None).unwrap();
         let result = dependencies::resolve_dependency_chain(&config, &app);

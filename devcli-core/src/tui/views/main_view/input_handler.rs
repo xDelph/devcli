@@ -14,7 +14,8 @@ impl MainView {
     /// Returns true if the event was handled, false otherwise
     pub fn handle_input(&mut self, key: KeyEvent, state: &Arc<Mutex<AppState>>) -> Result<bool> {
         // Lock the state for modification
-        let mut state = state.lock()
+        let mut state = state
+            .lock()
             .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
 
         // Handle delete confirmation mode
@@ -450,12 +451,9 @@ impl NavigationHandler for MainView {
                     // Ensure we have a current project and app selected
                     if let (Some(curr_proj), Some(curr_app)) = (curr_proj, curr_app) {
                         // Lock will be released when function returns
-                        if let Err(e) = self.add_dependency(
-                            curr_proj,
-                            curr_app,
-                            &proj_name,
-                            &app_name,
-                        ) {
+                        if let Err(e) =
+                            self.add_dependency(curr_proj, curr_app, &proj_name, &app_name)
+                        {
                             eprintln!("Error adding dependency: {}", e);
                         } else {
                             // Reset state and return to dependencies list

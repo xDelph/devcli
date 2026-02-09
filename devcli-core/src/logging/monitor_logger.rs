@@ -8,9 +8,9 @@
 // This module is kept temporarily for backwards compatibility but will be removed
 // in a future release once all usages are migrated to tracing.
 
+use crate::process::RestartReason;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use crate::process::RestartReason;
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -115,10 +115,7 @@ impl MonitorLogger {
         app: &str,
         new_pid: u32,
     ) -> Result<()> {
-        let message = format!(
-            "RESTART_SUCCESS: {}/{} - new_pid={}",
-            project, app, new_pid
-        );
+        let message = format!("RESTART_SUCCESS: {}/{} - new_pid={}", project, app, new_pid);
         self.write_log(&message).await
     }
 
@@ -129,10 +126,7 @@ impl MonitorLogger {
         app: &str,
         error: &str,
     ) -> Result<()> {
-        let message = format!(
-            "RESTART_FAILED: {}/{} - error={}",
-            project, app, error
-        );
+        let message = format!("RESTART_FAILED: {}/{} - error={}", project, app, error);
         self.write_log(&message).await
     }
 
@@ -152,11 +146,7 @@ impl MonitorLogger {
     }
 
     /// Log health check success (recovery from failure state)
-    pub async fn log_health_check_recovered(
-        &mut self,
-        project: &str,
-        app: &str,
-    ) -> Result<()> {
+    pub async fn log_health_check_recovered(&mut self, project: &str, app: &str) -> Result<()> {
         let message = format!(
             "HEALTH_CHECK_RECOVERED: {}/{} - health checks now passing",
             project, app

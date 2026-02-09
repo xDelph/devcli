@@ -142,7 +142,10 @@ impl MetricsCollector {
             };
 
             app_metrics.push(AppMetrics {
-                project: process.project.clone().unwrap_or_else(|| "unknown".to_string()),
+                project: process
+                    .project
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 name: process.app_name.clone(),
                 status: if is_running { "running" } else { "stopped" }.to_string(),
                 uptime_seconds,

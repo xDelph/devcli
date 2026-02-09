@@ -14,7 +14,7 @@ mod tests {
         assert!(validate_app_name("app123").is_ok());
         assert!(validate_app_name("simple").is_ok());
     }
-    
+
     #[test]
     fn test_validate_app_name_empty_name() {
         // Test that empty names are rejected
@@ -22,26 +22,32 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
-    
+
     #[test]
     fn test_validate_app_name_spaces() {
         // Test that names with spaces are rejected
         let result = validate_app_name("invalid app name");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot contain spaces"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot contain spaces"));
     }
-    
+
     #[test]
     fn test_validate_app_name_path_separators() {
         // Test that names with path separators are rejected
         let result = validate_app_name("invalid/app");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot contain path separators"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot contain path separators"));
+
         let result = validate_app_name("invalid\\app");
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_validate_app_name_edge_cases() {
         // Test edge cases
@@ -49,7 +55,7 @@ mod tests {
         assert!(validate_app_name("app-with-many-dashes").is_ok());
         assert!(validate_app_name("app_with_underscores").is_ok());
         assert!(validate_app_name("app.with.dots").is_ok());
-        
+
         // Multiple spaces should be rejected
         let result = validate_app_name("app  with  spaces");
         assert!(result.is_err());

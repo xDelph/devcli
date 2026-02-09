@@ -23,10 +23,7 @@ pub async fn setup_log_monitoring(started_apps: &[String], silent: bool) -> Resu
             println!("\nRunning in background (detached mode, no terminal output)");
         }
     } else {
-        tracing::info!(
-            app_count = started_apps.len(),
-            "Setting up log monitoring"
-        );
+        tracing::info!(app_count = started_apps.len(), "Setting up log monitoring");
         // In non-detached mode, keep the main process alive to show logs
         if !silent {
             println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");

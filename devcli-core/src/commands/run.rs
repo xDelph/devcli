@@ -240,7 +240,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         app_config_name: Some(resolved_app.app_name.clone()),
         environment: Some(environment.clone()),
         command_variant: Some(args.command_variant.clone()), // Store the variant!
-        stage: None,                                          // Stage tracking will be added in future task
+        stage: None, // Stage tracking will be added in future task
         restart_count: 0,
         restart_history: Vec::new(),
         last_exit_code: None,

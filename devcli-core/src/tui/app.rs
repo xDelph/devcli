@@ -532,7 +532,9 @@ impl TuiApp {
     /// - Returns to main view to allow user to continue
     fn check_log_viewer_creation(&mut self) -> Result<()> {
         let current_view = {
-            let state = self.state.lock()
+            let state = self
+                .state
+                .lock()
                 .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             state.current_view.clone()
         };
@@ -554,7 +556,9 @@ impl TuiApp {
                     Err(e) => {
                         // Failed to create viewer - set error and go back to main view
                         // This is a non-blocking error - user can dismiss and continue
-                        let mut state = self.state.lock()
+                        let mut state = self
+                            .state
+                            .lock()
                             .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                         state.error_message = Some(format!("Failed to open log files: {}", e));
                         state.current_view = ViewType::Main;
@@ -589,7 +593,9 @@ impl TuiApp {
     /// Checks if status was updated by background polling and triggers redraw
     fn check_status_update(&mut self) -> Result<()> {
         let (status_updated, app_status) = {
-            let mut state = self.state.lock()
+            let mut state = self
+                .state
+                .lock()
                 .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
             let updated = state.status_updated;
             if updated {

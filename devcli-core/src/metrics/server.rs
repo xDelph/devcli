@@ -68,32 +68,30 @@ pub async fn start_metrics_server(collector: Arc<MetricsCollector>) -> Result<()
 }
 
 /// Handle GET /metrics request
-async fn handle_metrics_request(socket: &mut tokio::net::TcpStream, collector: Arc<MetricsCollector>) {
+async fn handle_metrics_request(
+    socket: &mut tokio::net::TcpStream,
+    collector: Arc<MetricsCollector>,
+) {
     match collector.collect_all().await {
-        Ok(metrics) => {
-            match serde_json::to_string_pretty(&metrics) {
-                Ok(json) => {
-                    tracing::debug!(
-                        size_bytes = json.len(),
-                        "Sending metrics response"
-                    );
+        Ok(metrics) => match serde_json::to_string_pretty(&metrics) {
+            Ok(json) => {
+                tracing::debug!(size_bytes = json.len(), "Sending metrics response");
 
-                    let response = format!(
+                let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
                         json.len(),
                         json
                     );
 
-                    if let Err(e) = socket.write_all(response.as_bytes()).await {
-                        tracing::error!(error = %e, "Failed to write response");
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to serialize metrics");
-                    send_error_response(socket, 500, "Internal Server Error").await;
+                if let Err(e) = socket.write_all(response.as_bytes()).await {
+                    tracing::error!(error = %e, "Failed to write response");
                 }
             }
-        }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to serialize metrics");
+                send_error_response(socket, 500, "Internal Server Error").await;
+            }
+        },
         Err(e) => {
             tracing::error!(error = %e, "Failed to collect metrics");
             send_error_response(socket, 500, "Internal Server Error").await;

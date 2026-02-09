@@ -280,7 +280,8 @@ pub fn build_env_files_map_interactive(
             map.insert(stage_key.clone(), HashMap::new());
         }
 
-        let stage_map = map.get_mut(&stage_key)
+        let stage_map = map
+            .get_mut(&stage_key)
             .expect("stage_key should exist after insertion");
 
         println!(
@@ -352,7 +353,8 @@ pub fn build_env_files_map(
             map.insert(stage_key.clone(), HashMap::new());
         }
 
-        let stage_map = map.get_mut(&stage_key)
+        let stage_map = map
+            .get_mut(&stage_key)
             .expect("stage_key should exist after insertion");
 
         // Insert the file for its detected context

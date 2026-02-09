@@ -30,22 +30,30 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         app = %resolved.app_name,
         "Checking health of application"
     );
-    println!("Checking health of: {}/{}", resolved.project, resolved.app_name);
+    println!(
+        "Checking health of: {}/{}",
+        resolved.project, resolved.app_name
+    );
 
     // Get app configuration
-    let project_config = config.projects.get(&resolved.project)
+    let project_config = config
+        .projects
+        .get(&resolved.project)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved.project))?;
 
-    let app_config = project_config.apps.get(&resolved.app_name)
+    let app_config = project_config
+        .apps
+        .get(&resolved.app_name)
         .ok_or_else(|| anyhow::anyhow!("App '{}' not found", resolved.app_name))?;
 
     // Check if health check is configured
-    let health_check = app_config.health_check.as_ref()
-        .ok_or_else(|| anyhow::anyhow!(
+    let health_check = app_config.health_check.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
             "No health check configured for {}/{}",
             resolved.project,
             resolved.app_name
-        ))?;
+        )
+    })?;
 
     // Check if process is running
     let tracker = ProcessTracker::new()?;

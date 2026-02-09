@@ -36,7 +36,8 @@ pub fn detect_orbstack_commands(
     // Use directory name as the image name
     let app_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("app");
 
-    let dockerfile_path = dockerfile.as_ref()
+    let dockerfile_path = dockerfile
+        .as_ref()
         .expect("dockerfile should be Some after is_none check");
 
     // Check if this is a multi-stage build

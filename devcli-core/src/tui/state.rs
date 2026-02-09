@@ -63,7 +63,10 @@ impl AppState {
                 let active_stage = process_info.as_ref().and_then(|info| info.stage.clone());
 
                 // Extract restart count and exit code
-                let restart_count = process_info.as_ref().map(|info| info.restart_count).unwrap_or(0);
+                let restart_count = process_info
+                    .as_ref()
+                    .map(|info| info.restart_count)
+                    .unwrap_or(0);
                 let last_exit_code = process_info.as_ref().and_then(|info| info.last_exit_code);
 
                 // Determine health status

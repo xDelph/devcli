@@ -411,7 +411,9 @@ impl App {
             self.env_files = Some(HashMap::new());
         }
 
-        let env_files = self.env_files.as_mut()
+        let env_files = self
+            .env_files
+            .as_mut()
             .expect("env_files should be Some after initialization");
         if !env_files.contains_key(stage) {
             env_files.insert(stage.to_string(), HashMap::new());
@@ -566,7 +568,9 @@ impl HealthCheck {
     /// Validate health check configuration
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            HealthCheck::Http { url, timeout_secs, .. } => {
+            HealthCheck::Http {
+                url, timeout_secs, ..
+            } => {
                 if url.is_empty() {
                     return Err("HTTP health check URL cannot be empty".to_string());
                 }
@@ -574,7 +578,11 @@ impl HealthCheck {
                     return Err("HTTP health check timeout must be greater than 0".to_string());
                 }
             }
-            HealthCheck::Tcp { host, port, timeout_secs } => {
+            HealthCheck::Tcp {
+                host,
+                port,
+                timeout_secs,
+            } => {
                 if host.is_empty() {
                     return Err("TCP health check host cannot be empty".to_string());
                 }
@@ -585,7 +593,11 @@ impl HealthCheck {
                     return Err("TCP health check timeout must be greater than 0".to_string());
                 }
             }
-            HealthCheck::Command { command, timeout_secs, .. } => {
+            HealthCheck::Command {
+                command,
+                timeout_secs,
+                ..
+            } => {
                 if command.is_empty() {
                     return Err("Command health check command cannot be empty".to_string());
                 }
