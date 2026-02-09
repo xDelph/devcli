@@ -1,0 +1,34 @@
+# <type>(<scope>): <subject>
+# |<----  Using a Maximum Of 50 Characters  ---->|
+
+# Explain why this change is being made
+# |<----   Try To Limit Each Line to a Maximum Of 72 Characters   ---->|
+
+# Provide links or keys to any relevant tickets, articles or other resources
+# Example: Fixes #23
+
+# --- COMMIT END ---
+# Type can be:
+#    feat     (new feature)
+#    fix      (bug fix)
+#    perf     (performance improvement)
+#    docs     (documentation)
+#    style    (formatting, missing semi colons, etc; no code change)
+#    refactor (refactoring production code)
+#    test     (adding tests, refactoring test; no production code change)
+#    build    (updating build system, dependencies, etc; no production code change)
+#    ci       (updating CI configuration; no production code change)
+#    chore    (updating grunt tasks etc; no production code change)
+#    revert   (reverting a previous commit)
+# --------------------
+# Scope is optional but recommended (config, tui, monitor, process, metrics, cli)
+# --------------------
+# Breaking changes:
+#   - Add ! after type: feat(config)!: ...
+#   - Or add footer: BREAKING CHANGE: description
+# --------------------
+# Remember:
+#   * Use the imperative, present tense: "change" not "changed" nor "changes"
+#   * Don't capitalize the first letter of subject line
+#   * No dot (.) at the end of subject line
+# --------------------

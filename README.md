@@ -1,51 +1,120 @@
 # devcli
+[![CI](https://github.com/xdelph/devcli-private/workflows/CI/badge.svg)](https://github.com/xdelph/devcli-private/actions)
+[![Release](https://github.com/xdelph/devcli-private/workflows/Release/badge.svg)](https://github.com/xdelph/devcli-private/actions)
+[![License: PolyForm](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+[![Commercial License](https://img.shields.io/badge/Commercial-License%20Available-green.svg)](LICENSE-COMMERCIAL.md)
 
 A powerful command-line interface for managing spawned processes with config-based management, dependency resolution, and advanced process tracking.
 
 ## Overview
 
-devcli is a modular process management tool that allows you to:
-- Manage processes through a centralized configuration file
-- Define and resolve process dependencies automatically
-- Run processes in local or Docker environments
-- Track running processes with persistent state
-- Access detailed logs for all spawned processes
-- Monitor process status and uptime grouped by project
+devcli is a powerful process management tool that allows you to:
+
+- **Manage processes** through a centralized YAML configuration
+- **Auto-start dependencies** in the correct order
+- **Run in multiple environments** (local, Docker, Kubernetes)
+- **Monitor health** and automatically restart crashed processes
+- **View logs** in a beautiful terminal UI
+- **Track metrics** for all your running processes
+- **Scale from single app to complex microservices**
+
+Perfect for microservices development, monorepo projects, and complex local development setups.
+
+## Features
+
+- ✅ **Config-based management** - Define once, run anywhere
+- ✅ **Smart dependency resolution** - Automatic topological sorting
+- ✅ **Multi-environment support** - Local, Docker, K8s, OrbStack
+- ✅ **Health monitoring** - HTTP, TCP, and command-based checks
+- ✅ **Auto-restart** - Configurable restart policies with exponential backoff
+- ✅ **Real-time metrics** - HTTP API + CLI for insights
+- ✅ **Structured logging** - JSON logs with spans and context
+- ✅ **Beautiful TUI** - Interactive log viewer with syntax highlighting
+- ✅ **Auto-detection** - Discover and configure apps automatically
+- ✅ **Environment management** - Stage-based env file support
 
 ## Installation
 
-### Prerequisites
+### Quick Install (Recommended)
 
-Ensure you have Rust installed on your system. On macOS with Homebrew:
-
+**macOS and Linux:**
 ```bash
-brew install rustup-init
-rustup-init
-source ~/.cargo/env
+curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/develop/install.sh | sh
 ```
 
-Verify the installation:
+This script will:
+- Detect your platform automatically
+- Download the latest version
+- Install to `~/.devcli/bin`
+- Add to your PATH
+- No sudo required
+
+### Homebrew (macOS/Linux)
 
 ```bash
-rustc --version
-cargo --version
+brew tap xDelph/devcli
+brew install devcli
+```
+
+**Update:**
+```bash
+brew upgrade devcli
+```
+
+### Manual Installation
+
+Download the binary for your platform from the [Releases page](https://github.com/xDelph/devcli/releases).
+
+**macOS (Apple Silicon M1/M2/M3):**
+```bash
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-aarch64-apple-darwin.tar.gz | tar xz
+chmod +x devcli
+mv devcli ~/.devcli/bin/  # or /usr/local/bin with sudo
+```
+
+**macOS (Intel):**
+```bash
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-x86_64-apple-darwin.tar.gz | tar xz
+chmod +x devcli
+mv devcli ~/.devcli/bin/
+```
+
+**Linux (x64):**
+```bash
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
+chmod +x devcli
+mv devcli ~/.devcli/bin/
+```
+
+**Linux (ARM64):**
+```bash
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-aarch64-unknown-linux-gnu.tar.gz | tar xz
+chmod +x devcli
+mv devcli ~/.devcli/bin/
+```
+
+### Verify Installation
+
+```bash
+devcli --version
+devcli --help
 ```
 
 ### Building from Source
 
-Clone this repository and build the project:
+If you prefer to build from source:
 
+**Prerequisites:**
 ```bash
-cd devcli
-cargo build --release
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 ```
 
-The binary will be available at `target/release/devcli`.
-
-Optionally, install it globally:
-
+**Build:**
 ```bash
-cargo install --path devcli
+# Note: Source code is in private repository
+# Contact thomas.delalonde@example.com for source access
 ```
 
 ## Getting Started
@@ -290,6 +359,27 @@ This includes:
 - Environment type (local/docker)
 - Command variant used
 
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+### 📚 Documentation
+
+- **[Getting Started](./docs/getting-started.md)** - Quick start guide with examples (5-minute setup)
+- **[Configuration Reference](./docs/configuration-reference.md)** - Complete config file documentation
+- **[Commands Reference](./docs/commands-reference.md)** - All CLI commands with examples
+- **[Advanced Features](./docs/advanced-features.md)** - Health checks, metrics, logging, dependencies
+- **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
+
+### Quick Links
+
+- **Installation**: See [Getting Started](./docs/getting-started.md#installation)
+- **Config Format**: See [Configuration Reference](./docs/configuration-reference.md#file-structure)
+- **All Commands**: See [Commands Reference](./docs/commands-reference.md)
+- **Health Checks**: See [Advanced Features](./docs/advanced-features.md#health-checks)
+- **Metrics**: See [Advanced Features](./docs/advanced-features.md#metrics--monitoring)
+- **Help**: See [Troubleshooting](./docs/troubleshooting.md)
+
 ## Architecture
 
 devcli uses a modular workspace structure:
@@ -330,7 +420,3 @@ Upcoming features include:
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for development guidelines and architecture details.
-
-## License
-
-MIT

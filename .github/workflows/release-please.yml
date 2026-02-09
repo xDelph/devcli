@@ -1,0 +1,49 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - develop  # or 'main' if that's your main branch
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        id: release
+        with:
+          # Release type for Rust projects
+          release-type: rust
+
+          # Which package to release (for workspace)
+          package-name: devcli
+
+          # Changelog sections
+          changelog-types: |
+            [
+              {"type":"feat","section":"Features","hidden":false},
+              {"type":"fix","section":"Bug Fixes","hidden":false},
+              {"type":"perf","section":"Performance","hidden":false},
+              {"type":"deps","section":"Dependencies","hidden":false},
+              {"type":"revert","section":"Reverts","hidden":false},
+              {"type":"docs","section":"Documentation","hidden":false},
+              {"type":"style","section":"Styles","hidden":true},
+              {"type":"chore","section":"Miscellaneous","hidden":true},
+              {"type":"refactor","section":"Code Refactoring","hidden":false},
+              {"type":"test","section":"Tests","hidden":true},
+              {"type":"build","section":"Build System","hidden":true},
+              {"type":"ci","section":"CI/CD","hidden":true}
+            ]
+
+      # Output the release information
+      - name: Show release info
+        if: steps.release.outputs.release_created
+        run: |
+          echo "🎉 Release created!"
+          echo "Tag: ${{ steps.release.outputs.tag_name }}"
+          echo "Version: ${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}"
+          echo "Release PR: ${{ steps.release.outputs.pr }}"
