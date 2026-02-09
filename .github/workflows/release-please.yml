@@ -1,9 +1,7 @@
 name: Release Please
 
 on:
-  push:
-    branches:
-      - develop  # or 'main' if that's your main branch
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,7 +11,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: google-github-actions/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         id: release
         with:
           # Release type for Rust projects

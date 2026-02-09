@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2025"
+edition = "2021"
 authors = ["Thomas Delalonde"]
 license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/xDelph/devcli"

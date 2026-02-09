@@ -158,7 +158,7 @@ LICENSE (MIT) ✅ Already created
 ```toml
 [workspace.package]
 version = "0.1.0"
-edition = "2025"
+edition = "2021"
 authors = ["Thomas Delalonde"]
 license = "MIT"  # ← For the binaries distributed
 ```
