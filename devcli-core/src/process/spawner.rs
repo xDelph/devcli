@@ -41,6 +41,7 @@ pub struct SpawnedProcess {
 // Arc<Mutex<T>> is Rust's way of sharing data safely across async tasks:
 //   - Arc: allows multiple owners (reference counting)
 //   - Mutex: ensures only one task can access data at a time
+#[allow(deprecated)]
 pub async fn spawn_process(
     options: ProcessOptions,
     log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
@@ -239,6 +240,7 @@ pub async fn spawn_process(
 /// * `show_output` - Whether to print to terminal (stdout/stderr)
 /// * `log_writer` - Shared logger instance
 /// * `output_tx` - Optional channel to send output to TUI
+#[allow(deprecated)]
 fn handle_output_stream<R>(
     stream: R,
     stream_type: &'static str,

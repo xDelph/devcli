@@ -6,6 +6,8 @@
 //! - Process validation and tracking
 //! - Internal app starting for dependencies
 
+#![allow(deprecated)]
+
 use super::resolver::{AppToStart, StartCommandArgs};
 use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},

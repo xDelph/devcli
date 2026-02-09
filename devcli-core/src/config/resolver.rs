@@ -226,8 +226,8 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     // Initialize first row: distance from empty string to prefixes of s2
     // matrix[0][j] = j (need j insertions)
-    for j in 0..=len2 {
-        matrix[0][j] = j;
+    for (j, row) in matrix[0].iter_mut().enumerate().take(len2 + 1) {
+        *row = j;
     }
 
     // Fill in the rest of the matrix

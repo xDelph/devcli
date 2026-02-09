@@ -201,6 +201,6 @@ mod tests {
     #[test]
     fn test_metrics_command_exists() {
         // Basic compilation test
-        assert!(true);
+        // No assertions needed - if this compiles, the test passes
     }
 }

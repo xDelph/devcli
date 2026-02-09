@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn test_multiple_apps_to_start() {
-        let apps_to_start = vec![
+        let apps_to_start = [
             create_test_app_to_start("app1", "project1"),
             create_test_app_to_start("app2", "project2"),
         ];

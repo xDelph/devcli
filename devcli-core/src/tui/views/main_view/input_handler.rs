@@ -319,7 +319,6 @@ impl NavigationHandler for MainView {
     }
 
     /// Handles scrolling for the detail panel
-
     fn toggle_panel_focus(&mut self) {
         self.focus = match self.focus {
             PanelFocus::AppList => PanelFocus::DetailPanel,
@@ -341,9 +340,9 @@ impl NavigationHandler for MainView {
                 }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
-                    self.handle_detail_scroll(-10, state);
-                } else if self.active_tab == MainTab::Status {
+                if (self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View)
+                    || self.active_tab == MainTab::Status
+                {
                     self.handle_detail_scroll(-10, state);
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_sub(10);
@@ -366,9 +365,9 @@ impl NavigationHandler for MainView {
                 }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
-                    self.handle_detail_scroll(10, state);
-                } else if self.active_tab == MainTab::Status {
+                if (self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View)
+                    || self.active_tab == MainTab::Status
+                {
                     self.handle_detail_scroll(10, state);
                 } else if let Some(app) = state.selected_app() {
                     let total_commands = Self::count_total_commands(app);
@@ -395,9 +394,9 @@ impl NavigationHandler for MainView {
                 }
             }
             PanelFocus::DetailPanel => {
-                if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
-                    self.handle_detail_scroll(-1, state);
-                } else if self.active_tab == MainTab::Status {
+                if (self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View)
+                    || self.active_tab == MainTab::Status
+                {
                     self.handle_detail_scroll(-1, state);
                 } else {
                     self.detail_scroll = self.detail_scroll.saturating_sub(1);

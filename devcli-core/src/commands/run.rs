@@ -4,6 +4,8 @@
 // Example: devcli run api-private build:production
 // This runs the "build:production" command instead of the default
 
+#![allow(deprecated)]
+
 use crate::config::{load_config, load_preferences, resolve_app};
 use crate::logging::FileLogger;
 use crate::process::{spawn_process, ProcessInfo, ProcessOptions, ProcessTracker};

@@ -7,6 +7,8 @@ pub mod tracing_setup; // Contains tracing initialization with structured loggin
 // Re-export FileLogger so users can import it directly
 // use devcli_core::logging::FileLogger; instead of
 // use devcli_core::logging::file_logger::FileLogger;
+#[allow(deprecated)]
 pub use file_logger::FileLogger;
+#[allow(deprecated)]
 pub use monitor_logger::MonitorLogger;
 pub use tracing_setup::init_tracing;

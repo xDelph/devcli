@@ -26,6 +26,7 @@ pub struct FileLogger {
     log_path: PathBuf, // Path to the log file (for reference)
 }
 
+#[allow(deprecated)]
 impl FileLogger {
     // Create a new FileLogger for an app
     // This is async because file operations are async

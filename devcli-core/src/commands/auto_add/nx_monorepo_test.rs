@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_multiple_nx_apps() {
-        let apps = vec![
+        let apps = [
             create_nx_test_app("frontend", true),
             create_nx_test_app("backend", true),
             create_nx_test_app("shared-lib", false),

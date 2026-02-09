@@ -2,6 +2,8 @@
 // Runs continuously in the background, checking process status
 // Automatically exits when no processes are being tracked
 
+#![allow(deprecated)]
+
 use crate::config::{load_config, Config};
 use crate::logging::MonitorLogger;
 use crate::metrics::{start_metrics_server, MetricsCollector};

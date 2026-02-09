@@ -26,6 +26,7 @@ pub struct MonitorLogger {
     log_path: PathBuf,
 }
 
+#[allow(deprecated)]
 impl MonitorLogger {
     /// Create a new MonitorLogger
     /// Creates/opens ~/.devcli/logs/monitor.log
@@ -173,6 +174,7 @@ impl MonitorLogger {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
