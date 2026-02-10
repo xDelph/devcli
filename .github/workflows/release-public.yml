@@ -12,97 +12,6 @@ env:
   PUBLIC_REPO_NAME: devcli
 
 jobs:
-  create-release:
-    name: Create Release in Public Repo
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.get_version.outputs.version }}
-
-    steps:
-      - name: Checkout private repo
-        uses: actions/checkout@v4
-
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          # Extract the changelog section for this version
-          VERSION="${{ steps.get_version.outputs.version }}"
-
-          # Get changelog content between this version and next version heading
-          CHANGELOG_CONTENT=$(awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | sed '1d;$d' || echo "")
-
-          # If empty, use a default message
-          if [ -z "$CHANGELOG_CONTENT" ]; then
-            CHANGELOG_CONTENT="See [CHANGELOG.md](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md) for details."
-          fi
-
-          # Save to file for multi-line handling
-          echo "$CHANGELOG_CONTENT" > /tmp/changelog_content.txt
-
-      - name: Create release in public repo
-        env:
-          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
-        run: |
-          # Read changelog content
-          CHANGELOG_CONTENT=$(cat /tmp/changelog_content.txt)
-
-          # Create release with changelog
-          gh release create ${{ github.ref_name }} \
-            --repo ${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }} \
-            --title "Release ${{ github.ref_name }}" \
-            --notes "$(cat <<EOF
-          ${CHANGELOG_CONTENT}
-
-          ## Installation
-
-          **Recommended**: Install script
-          \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/develop/install.sh | sh
-          \`\`\`
-
-          **Manual**: Download binary for your platform
-
-          ### macOS (Apple Silicon)
-          \`\`\`bash
-          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-apple-darwin.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
-          \`\`\`
-
-          ### macOS (Intel)
-          \`\`\`bash
-          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-apple-darwin.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
-          \`\`\`
-
-          ### Linux (x64)
-          \`\`\`bash
-          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
-          \`\`\`
-
-          ### Linux (ARM64)
-          \`\`\`bash
-          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-unknown-linux-gnu.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
-          \`\`\`
-
-          ### Verify Checksums
-          \`\`\`bash
-          shasum -a 256 -c devcli-<platform>.tar.gz.sha256
-          \`\`\`
-
-          ## Documentation
-
-          - 📖 [Getting Started](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/docs/getting-started.md)
-          - 📚 [Full Documentation](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/tree/develop/docs)
-          - 📝 [CHANGELOG](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md)
-          EOF
-          )"
-
   build-release:
     name: Build ${{ matrix.target }}
     needs: create-release
@@ -291,3 +200,124 @@ jobs:
             git push
             echo "✅ Documentation pushed to public repo"
           fi
+
+  create-release:
+    name: Create Release in Public Repo
+    needs: [build-release, sync-documentation]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract the changelog section for this version
+          VERSION="${{ steps.get_version.outputs.version }}"
+
+          # Get changelog content between this version and next version heading
+          CHANGELOG_CONTENT=$(awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | sed '1d;$d' || echo "")
+
+          # If empty, use a default message
+          if [ -z "$CHANGELOG_CONTENT" ]; then
+            CHANGELOG_CONTENT="See [CHANGELOG.md](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md) for details."
+          fi
+
+          # Save to file for multi-line handling
+          echo "$CHANGELOG_CONTENT" > /tmp/changelog_content.txt
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: xDelph/homebrew-devcli
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      - name: Download binaries and calculate checksums
+        run: |
+          VERSION="${{ github.ref_name }}"
+
+          # Download all binaries
+          platforms=(
+            "aarch64-apple-darwin"
+            "x86_64-apple-darwin"
+            "aarch64-unknown-linux-gnu"
+            "x86_64-unknown-linux-gnu"
+          )
+
+          for platform in "${platforms[@]}"; do
+            url="https://github.com/xDelph/devcli/releases/download/${VERSION}/devcli-${platform}.tar.gz"
+            echo "Downloading ${platform}..."
+
+            curl -fsSL "$url" -o "/tmp/devcli-${platform}.tar.gz"
+            checksum=$(sha256sum "/tmp/devcli-${platform}.tar.gz" | awk '{print $1}')
+
+            # Store checksums as environment variables
+            echo "${platform//-/_}_SHA=${checksum}" >> $GITHUB_ENV
+            echo "  ${platform}: ${checksum}"
+          done
+
+      - name: Create release in public repo
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          # Read changelog content
+          CHANGELOG_CONTENT=$(cat /tmp/changelog_content.txt)
+
+          # Create release with changelog
+          gh release create ${{ github.ref_name }} \
+            --repo ${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }} \
+            --title "Release ${{ github.ref_name }}" \
+            --notes "$(cat <<EOF
+          ${CHANGELOG_CONTENT}
+
+          ## Installation
+
+          **Recommended**: Install script
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/develop/install.sh | sh
+          \`\`\`
+
+          **Manual**: Download binary for your platform
+
+          ### macOS (Apple Silicon)
+          \`\`\`bash
+          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-apple-darwin.tar.gz | tar xz
+          chmod +x devcli && mv devcli ~/.devcli/bin/
+          \`\`\`
+
+          ### macOS (Intel)
+          \`\`\`bash
+          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-apple-darwin.tar.gz | tar xz
+          chmod +x devcli && mv devcli ~/.devcli/bin/
+          \`\`\`
+
+          ### Linux (x64)
+          \`\`\`bash
+          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          chmod +x devcli && mv devcli ~/.devcli/bin/
+          \`\`\`
+
+          ### Linux (ARM64)
+          \`\`\`bash
+          curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-unknown-linux-gnu.tar.gz | tar xz
+          chmod +x devcli && mv devcli ~/.devcli/bin/
+          \`\`\`
+
+          ### Verify Checksums
+          \`\`\`bash
+          shasum -a 256 -c devcli-<platform>.tar.gz.sha256
+          \`\`\`
+
+          ## Documentation
+
+          - 📖 [Getting Started](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/docs/getting-started.md)
+          - 📚 [Full Documentation](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/tree/develop/docs)
+          - 📝 [CHANGELOG](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md)
+          EOF
+          )"
