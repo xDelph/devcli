@@ -2,10 +2,7 @@
 // Runs continuously in the background, checking process status
 // Automatically exits when no processes are being tracked
 
-#![allow(deprecated)]
-
 use crate::config::{load_config, Config};
-use crate::logging::MonitorLogger;
 use crate::metrics::{start_metrics_server, MetricsCollector};
 use crate::process::{
     HealthCheckEngine, ProcessInfo, ProcessTracker, RestartCoordinator, RestartReason,
@@ -49,25 +46,22 @@ struct MonitorState {
     config: Config,
     health_check_engine: HealthCheckEngine,
     restart_coordinator: RestartCoordinator,
-    logger: MonitorLogger,
     metrics: Arc<MetricsCollector>,
 }
 
 impl MonitorState {
     /// Create new monitor state
-    async fn new(metrics: Arc<MetricsCollector>) -> Result<Self> {
+    fn new(metrics: Arc<MetricsCollector>) -> Result<Self> {
         let tracker = ProcessTracker::new()?;
         let config = load_config()?;
         let health_check_engine = HealthCheckEngine::new();
         let restart_coordinator = RestartCoordinator::new();
-        let logger = MonitorLogger::new().await?;
 
         Ok(Self {
             tracker,
             config,
             health_check_engine,
             restart_coordinator,
-            logger,
             metrics,
         })
     }
@@ -125,10 +119,11 @@ impl MonitorState {
                     // Health check passed - reset failure count
                     if process.health_check_failures > 0 {
                         // Log recovery
-                        let _ = self
-                            .logger
-                            .log_health_check_recovered(project, app_name)
-                            .await;
+                        tracing::info!(
+                            project = %project,
+                            app = %app_name,
+                            "Health check recovered"
+                        );
 
                         let mut updated_process = process.clone();
                         updated_process.health_check_failures = 0;
@@ -144,15 +139,13 @@ impl MonitorState {
 
                     // Log health check failure
                     let check_type = format!("{:?}", health_check);
-                    let _ = self
-                        .logger
-                        .log_health_check_failure(
-                            project,
-                            app_name,
-                            &check_type,
-                            &format!("failure #{}", updated_process.health_check_failures),
-                        )
-                        .await;
+                    tracing::warn!(
+                        project = %project,
+                        app = %app_name,
+                        check_type = %check_type,
+                        failures = updated_process.health_check_failures,
+                        "Health check failed"
+                    );
 
                     // If multiple failures, trigger restart
                     // TODO: Make threshold configurable (currently hardcoded to 3)
@@ -184,19 +177,15 @@ impl MonitorState {
                     let _ = self.tracker.register_process(updated_process);
                 }
                 Err(e) => {
+                    let check_type = format!("{:?}", health_check);
                     tracing::error!(
                         project = %project,
                         app = %app_name,
+                        check_type = %check_type,
                         error = %e,
                         "Error performing health check"
                     );
 
-                    let error_msg = format!("{}", e);
-                    let check_type = format!("{:?}", health_check);
-                    let _ = self
-                        .logger
-                        .log_health_check_failure(project, app_name, &check_type, &error_msg)
-                        .await;
                     eprintln!(
                         "Error performing health check for {}/{}: {}",
                         project, app_name, e
@@ -255,15 +244,13 @@ impl MonitorState {
                 if restart_policy.max_restarts > 0
                     && process.restart_count >= restart_policy.max_restarts
                 {
-                    let _ = self
-                        .logger
-                        .log_max_restarts_reached(
-                            project,
-                            app_name,
-                            restart_policy.max_restarts,
-                            restart_policy.restart_window_secs,
-                        )
-                        .await;
+                    tracing::warn!(
+                        project = %project,
+                        app = %app_name,
+                        max_restarts = restart_policy.max_restarts,
+                        window_secs = restart_policy.restart_window_secs,
+                        "Max restarts reached, auto-restart disabled"
+                    );
                 }
                 continue;
             }
@@ -273,16 +260,14 @@ impl MonitorState {
 
             // Log restart trigger
             let reason = RestartReason::Crash { exit_code };
-            let _ = self
-                .logger
-                .log_restart_triggered(
-                    project,
-                    app_name,
-                    &reason,
-                    backoff.as_secs(),
-                    process.restart_count + 1,
-                )
-                .await;
+            tracing::warn!(
+                project = %project,
+                app = %app_name,
+                reason = ?reason,
+                backoff_secs = backoff.as_secs(),
+                restart_count = process.restart_count + 1,
+                "Restart triggered"
+            );
 
             // Trigger restart via coordinator
             let app_key = format!(
@@ -328,11 +313,8 @@ impl MonitorState {
     }
 
     /// Cleanup and exit
-    async fn cleanup_and_exit(&mut self) -> Result<()> {
-        let _ = self
-            .logger
-            .log_monitor_stopped("no processes remaining")
-            .await;
+    fn cleanup_and_exit(&mut self) -> Result<()> {
+        tracing::info!("Monitor stopped: no processes remaining");
         self.tracker.remove_process("unknown", ".monitor", None)?;
         Ok(())
     }
@@ -355,13 +337,10 @@ async fn run_daemon_loop() -> Result<()> {
         }
     });
 
-    let mut state = MonitorState::new(metrics.clone()).await?;
+    let mut state = MonitorState::new(metrics.clone())?;
     let tracker = &state.tracker;
 
     tracing::info!("Monitor daemon starting");
-
-    // Log monitor startup
-    let _ = state.logger.log_monitor_started().await;
 
     // Register the monitor itself as a tracked process
     // This allows other parts of the system to check if the monitor is running
@@ -398,7 +377,7 @@ async fn run_daemon_loop() -> Result<()> {
 
         // 2. Exit if no processes left
         if state.should_exit()? {
-            state.cleanup_and_exit().await?;
+            state.cleanup_and_exit()?;
             break;
         }
 

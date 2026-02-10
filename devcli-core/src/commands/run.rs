@@ -4,17 +4,13 @@
 // Example: devcli run api-private build:production
 // This runs the "build:production" command instead of the default
 
-#![allow(deprecated)]
-
 use crate::config::{load_config, load_preferences, resolve_app};
-use crate::logging::FileLogger;
 use crate::process::{spawn_process, ProcessInfo, ProcessOptions, ProcessTracker};
 use crate::utils::path::expand_path;
 use crate::Result;
+use anyhow::Context;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // Arguments for the run command
 pub struct RunCommandArgs {
@@ -137,15 +133,19 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         );
     }
 
-    // Create log file using the full process name (includes variant)
-    let log_writer = Arc::new(Mutex::new(
-        FileLogger::new(&resolved_app.project, &args.app_name, &environment, true).await?,
-    ));
+    // Create log file path using the full process name (includes variant)
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let log_dir = home.join(".devcli").join("logs");
+    tokio::fs::create_dir_all(&log_dir)
+        .await
+        .context("Failed to create log directory")?;
 
-    let log_path = {
-        let writer = log_writer.lock().await;
-        writer.log_path().clone()
-    };
+    let date = Utc::now().format("%Y%m%d");
+    let filename = format!(
+        "{}_{}_{}_{}.log",
+        resolved_app.project, args.app_name, environment, date
+    );
+    let log_path = log_dir.join(filename);
 
     // Determine which stage to use for env file resolution
     // Priority: app default_stages > preferences default_stage > None
@@ -198,7 +198,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     println!("Log file: {}", log_path.display());
 
     // Spawn the process
-    let spawned = spawn_process(options, log_writer.clone(), None).await?;
+    let spawned = spawn_process(options, log_path.clone(), None).await?;
 
     // Wait a moment to check if the process completed or crashed
     // For build commands, completing quickly is expected behavior

@@ -6,21 +6,16 @@
 //! - Process validation and tracking
 //! - Internal app starting for dependencies
 
-#![allow(deprecated)]
-
 use super::resolver::{AppToStart, StartCommandArgs};
 use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},
     load_config, load_preferences, resolve_app,
 };
-use crate::logging::FileLogger;
 use crate::process::ProcessTracker;
 use crate::utils::path::expand_path;
 use crate::Result;
 use anyhow::Context;
-
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use chrono::Utc;
 
 /// Start all apps in parallel
 ///
@@ -189,16 +184,19 @@ async fn start_single_app_process(
         );
     }
 
-    // Step 2: Create a log file for this process
-    let log_writer = Arc::new(Mutex::new(
-        FileLogger::new(&resolved_app.project, &app_name, &environment, true).await?,
-    ));
+    // Step 2: Create log file path for this process
+    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let log_dir = home.join(".devcli").join("logs");
+    tokio::fs::create_dir_all(&log_dir)
+        .await
+        .context("Failed to create log directory")?;
 
-    // Get the log file path for display
-    let log_path = {
-        let writer = log_writer.lock().await;
-        writer.log_path().clone()
-    };
+    let date = Utc::now().format("%Y%m%d");
+    let filename = format!(
+        "{}_{}_{}_{}.log",
+        resolved_app.project, app_name, environment, date
+    );
+    let log_path = log_dir.join(filename);
 
     // Step 3: Prepare command and environment variables
     let prepared = crate::commands::prepare::prepare_command(

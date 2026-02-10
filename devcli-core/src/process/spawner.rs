@@ -1,10 +1,11 @@
 // Import statements bring external functionality into this file
 use anyhow::{Context, Result}; // Error handling utilities
+use chrono::Utc; // For timestamps
 use colored::Colorize; // For colored terminal output
 use std::collections::HashMap; // Hash map for key-value pairs (env vars)
 use std::path::PathBuf; // Cross-platform file path handling
 use std::process::Stdio; // For spawning processes
-use tokio::io::{AsyncBufReadExt, BufReader}; // Async I/O for reading process output
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader}; // Async I/O for reading process output
 use tokio::process::Child; // Represents a running child process
 
 // #[derive(...)] automatically implements common traits:
@@ -38,13 +39,9 @@ pub struct SpawnedProcess {
 // Main function to spawn a new process
 // 'pub async fn' means this is a public asynchronous function
 // async functions can use 'await' to wait for operations without blocking
-// Arc<Mutex<T>> is Rust's way of sharing data safely across async tasks:
-//   - Arc: allows multiple owners (reference counting)
-//   - Mutex: ensures only one task can access data at a time
-#[allow(deprecated)]
 pub async fn spawn_process(
     options: ProcessOptions,
-    log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
+    log_file_path: PathBuf,
     output_tx: Option<OutputSender>,
 ) -> Result<SpawnedProcess> {
     let command_parts: Vec<&str> = options.command.split_whitespace().collect();
@@ -114,7 +111,7 @@ pub async fn spawn_process(
             "stdout",
             app_name.clone(),
             show_output,
-            log_writer.clone(),
+            log_file_path.clone(),
             output_tx.clone(),
         );
 
@@ -123,7 +120,7 @@ pub async fn spawn_process(
             "stderr",
             app_name.clone(),
             show_output,
-            log_writer.clone(),
+            log_file_path.clone(),
             output_tx.clone(),
         );
 
@@ -203,7 +200,7 @@ pub async fn spawn_process(
             "stdout",
             app_name.clone(),
             true, // Always show output in attached mode
-            log_writer.clone(),
+            log_file_path.clone(),
             output_tx.clone(),
         );
 
@@ -212,7 +209,7 @@ pub async fn spawn_process(
             "stderr",
             app_name.clone(),
             true, // Always show output in attached mode
-            log_writer.clone(),
+            log_file_path.clone(),
             output_tx.clone(),
         );
 
@@ -231,28 +228,46 @@ pub async fn spawn_process(
 /// 1. Read lines from the provided stream
 /// 2. Print them to the terminal if `show_output` is true
 /// 3. Send them to the TUI via `output_tx` if provided
-/// 4. Write them to the log file via `log_writer`
+/// 4. Write them to the log file
 ///
 /// # Arguments
 /// * `stream` - The async stream to read from (stdout or stderr)
 /// * `stream_type` - Label for the stream ("stdout" or "stderr")
 /// * `app_name` - Name of the app for logging context
 /// * `show_output` - Whether to print to terminal (stdout/stderr)
-/// * `log_writer` - Shared logger instance
+/// * `log_file_path` - Path to the log file
 /// * `output_tx` - Optional channel to send output to TUI
-#[allow(deprecated)]
 fn handle_output_stream<R>(
     stream: R,
     stream_type: &'static str,
     app_name: String,
     show_output: bool,
-    log_writer: std::sync::Arc<tokio::sync::Mutex<crate::logging::FileLogger>>,
+    log_file_path: PathBuf,
     output_tx: Option<OutputSender>,
 ) -> tokio::task::JoinHandle<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
+        // Open log file for appending
+        let log_file = match tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+            .await
+        {
+            Ok(file) => Some(std::sync::Arc::new(tokio::sync::Mutex::new(file))),
+            Err(e) => {
+                tracing::error!(
+                    app = %app_name,
+                    log_file = %log_file_path.display(),
+                    error = %e,
+                    "Failed to open log file"
+                );
+                None
+            }
+        };
+
         // Use a buffered reader for efficient line-by-line reading
         let mut reader = BufReader::new(stream).lines();
         let mut stream_alive = true;
@@ -302,8 +317,17 @@ where
 
             // 3. Always write to log file
             // This ensures we have a permanent record even if terminal/TUI are closed
-            let mut writer = log_writer.lock().await;
-            let _ = writer.write_log(&line).await;
+            if let Some(ref log_file) = log_file {
+                let mut file = log_file.lock().await;
+                let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S.%3f");
+                let log_line = if stream_type == "stderr" {
+                    format!("[{}] [STDERR] {}\n", timestamp, line)
+                } else {
+                    format!("[{}] {}\n", timestamp, line)
+                };
+                let _ = file.write_all(log_line.as_bytes()).await;
+                let _ = file.flush().await;
+            }
         }
     })
 }
