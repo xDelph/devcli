@@ -37,7 +37,7 @@ jobs:
 
           # If empty, use a default message
           if [ -z "$CHANGELOG_CONTENT" ]; then
-            CHANGELOG_CONTENT="See [CHANGELOG.md](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/main/CHANGELOG.md) for details."
+            CHANGELOG_CONTENT="See [CHANGELOG.md](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md) for details."
           fi
 
           # Save to file for multi-line handling
@@ -61,7 +61,7 @@ jobs:
 
           **Recommended**: Install script
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/develop/install.sh | sh
           \`\`\`
 
           **Manual**: Download binary for your platform
@@ -97,9 +97,9 @@ jobs:
 
           ## Documentation
 
-          - 📖 [Getting Started](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/main/docs/getting-started.md)
-          - 📚 [Full Documentation](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/tree/main/docs)
-          - 📝 [CHANGELOG](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/main/CHANGELOG.md)
+          - 📖 [Getting Started](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/docs/getting-started.md)
+          - 📚 [Full Documentation](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/tree/develop/docs)
+          - 📝 [CHANGELOG](https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/blob/develop/CHANGELOG.md)
           EOF
           )"
 
