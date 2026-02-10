@@ -171,7 +171,8 @@ jobs:
           fi
 
       - name: Strip binary
-        run: strip target/${{ matrix.target }}/release/devcli
+        if: ${{ !matrix.use_cross }}
+        run: strip target/${{ matrix.target }}/release/devcli || true
 
       - name: Create archive
         run: |
@@ -226,10 +227,33 @@ jobs:
         run: |
           echo "📄 Syncing documentation files..."
 
-          # Core files
-          cp private/README.md public/README.md
-          cp private/LICENSE public/LICENSE
-          cp private/LICENSE-COMMERCIAL.md public/LICENSE-COMMERCIAL.md
+          # README - merge private content into public template
+          if [ -f "public/README.template.md" ] && [ -f "private/README.md" ]; then
+            echo "📄 Syncing README content..."
+
+            # Extract content from private README (everything except frontmatter)
+            PRIVATE_CONTENT=$(cat private/README.md)
+
+            # Read template and replace marked section
+            awk -v content="$PRIVATE_CONTENT" '
+              /<!-- BEGIN_SYNC_FROM_PRIVATE -->/ {
+                print;
+                print content;
+                skip=1;
+                next
+              }
+              /<!-- END_SYNC_FROM_PRIVATE -->/ {
+                print;
+                skip=0;
+                next
+              }
+              !skip { print }
+            ' public/README.template.md > public/README.md
+
+            echo "✅ README synced from template"
+          else
+            echo "⚠️  README.template.md or private README.md not found, skipping README sync"
+          fi
 
           # Docs folder (user-facing documentation)
           if [ -d "private/docs" ]; then
@@ -242,13 +266,6 @@ jobs:
           if [ -f "private/CHANGELOG.md" ]; then
             echo "📝 Syncing CHANGELOG.md..."
             cp private/CHANGELOG.md public/CHANGELOG.md
-          fi
-
-          # Install script (once created)
-          if [ -f "private/install.sh" ]; then
-            echo "🚀 Syncing install.sh..."
-            cp private/install.sh public/install.sh
-            chmod +x public/install.sh
           fi
 
           echo "✅ Documentation sync complete"
