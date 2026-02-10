@@ -1,8 +1,4 @@
-# devcli
-
-[![CI](https://github.com/xdelph/devcli/workflows/CI/badge.svg)](https://github.com/xdelph/devcli/actions)
-[![Release](https://github.com/xdelph/devcli/workflows/Release/badge.svg)](https://github.com/xdelph/devcli/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+# DEVCLI
 
 A powerful command-line interface for managing spawned processes with config-based management, dependency resolution, and advanced process tracking.
 
@@ -35,62 +31,23 @@ Perfect for microservices development, monorepo projects, and complex local deve
 
 ## Installation
 
-### Pre-built Binaries (Recommended)
-
-Download the latest release for your platform from the [Releases page](https://github.com/xdelph/devcli/releases).
-
-**macOS (Apple Silicon M1/M2/M3):**
+### Quick Install (Recommended)
 ```bash
-curl -L https://github.com/xdelph/devcli/releases/latest/download/devcli-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/main/install.sh | sh
 ```
 
-**macOS (Intel):**
+### Homebrew (macOS/Linux)
 ```bash
-curl -L https://github.com/xdelph/devcli/releases/latest/download/devcli-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
+brew tap xDelph/devcli
+brew install devcli
 ```
 
-**Linux (x64):**
-```bash
-curl -L https://github.com/xdelph/devcli/releases/latest/download/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
-```
+## License
 
-**Linux (ARM64):**
-```bash
-curl -L https://github.com/xdelph/devcli/releases/latest/download/devcli-aarch64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
-```
+See [LICENSE](LICENSE) and [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
 
-### Building from Source
 
-If you prefer to build from source or need the latest development version:
-
-**Prerequisites:**
-```bash
-# macOS with Homebrew
-brew install rustup-init
-rustup-init
-source ~/.cargo/env
-
-# Verify installation
-rustc --version
-cargo --version
-```
-
-**Build:**
-```bash
-git clone https://github.com/xdelph/devcli.git
-cd devcli
-cargo build --release
-
-# Install globally
-cargo install --path devcli
-```
-
-The binary will be available at `target/release/devcli`.
-
+<!-- BEGIN_SYNC_FROM_PRIVATE -->
 ## Getting Started
 
 ### 1. Initialize Configuration
@@ -337,19 +294,13 @@ This includes:
 
 Comprehensive documentation is available in the `docs/` directory:
 
-### 📚 User Guides
+### 📚 Documentation
 
 - **[Getting Started](./docs/getting-started.md)** - Quick start guide with examples (5-minute setup)
 - **[Configuration Reference](./docs/configuration-reference.md)** - Complete config file documentation
 - **[Commands Reference](./docs/commands-reference.md)** - All CLI commands with examples
 - **[Advanced Features](./docs/advanced-features.md)** - Health checks, metrics, logging, dependencies
 - **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
-
-### 🔧 Developer Guides
-
-- **[Release Process](./docs/release-process.md)** - How to create releases
-- **[GitHub Actions Setup](./docs/github-actions-setup.md)** - CI/CD configuration
-- **[Metrics Implementation](./docs/metrics-implementation-summary.md)** - Metrics system details
 
 ### Quick Links
 
@@ -359,76 +310,4 @@ Comprehensive documentation is available in the `docs/` directory:
 - **Health Checks**: See [Advanced Features](./docs/advanced-features.md#health-checks)
 - **Metrics**: See [Advanced Features](./docs/advanced-features.md#metrics--monitoring)
 - **Help**: See [Troubleshooting](./docs/troubleshooting.md)
-
-## Architecture
-
-devcli uses a modular workspace structure:
-
-### Workspace Structure
-
-```
-devcli/
-├── devcli/           # Binary crate (CLI entry point)
-│   └── src/main.rs     # Command routing and argument parsing
-└── devcli-core/      # Library crate (core functionality)
-    └── src/
-        ├── config/     # Configuration management
-        ├── process/    # Process spawning and tracking
-        ├── logging/    # Log file management
-        ├── commands/   # Command implementations
-        └── utils/      # Utility functions (path expansion)
-```
-
-### Core Modules
-
-- **Config Manager**: Loads and validates configuration files
-- **Dependency Resolver**: Resolves and checks app dependencies
-- **Process Spawner**: Handles process creation with configurable options
-- **Process Tracker**: Manages PID tracking and process state persistence
-- **File Logger**: Manages log files with timestamps
-- **Commands**: Implements start, run, status, config, and pref commands
-
-## Future Roadmap
-
-Upcoming features include:
-- **Process Control**: `stop`, `restart`, and `kill` commands
-- **Enhanced Monitoring**: CPU/memory usage tracking
-- **Log Visualization**: Interactive log viewer and search
-- **Terminal Dashboard**: Real-time process monitoring UI
-- **Multi-app Management**: Start/stop multiple apps as groups with one command
-
-## Development
-
-See [DEVELOPMENT.md](DEVELOPMENT.md) for development guidelines and architecture details.
-
-## License
-
-devcli is dual-licensed:
-
-### Free for Noncommercial Use
-
-**PolyForm Noncommercial License 1.0.0** - Free for:
-- ✅ Personal use, hobby projects
-- ✅ Research and education
-- ✅ Non-profit organizations
-- ✅ Government institutions
-- ✅ Educational institutions
-- ✅ Open source projects
-
-See [LICENSE](./LICENSE) for full terms.
-
-### Commercial Use
-
-**32-day evaluation period** available for commercial use.
-
-After evaluation, commercial license required for:
-- For-profit businesses and companies
-- Commercial products or services
-- Commercial consulting/client work
-- Any use generating revenue or commercial advantage
-
-**Pricing**: Starting at $99/year per developer
-
-See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) for details and pricing.
-
-**Contact**: devcli@delalonde.dev for commercial licensing
+<!-- END_SYNC_FROM_PRIVATE -->
