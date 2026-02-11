@@ -90,6 +90,7 @@ impl AppState {
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
+                    alternative_name: app_config.alternative_name.clone(),
                     project: project_name.clone(),
                     app_type: app_config.app_type.clone(),
                     status,
@@ -122,6 +123,7 @@ impl AppState {
 
             projects.push(ProjectState {
                 name: project_name.clone(),
+                alternative_name: project_config.alternative_name.clone(),
                 apps,
                 expanded: true, // Start with all projects expanded
             });
@@ -328,6 +330,8 @@ impl HealthStatus {
 pub struct ProjectState {
     /// Name of the project
     pub name: String,
+    /// Alternative display name for privacy
+    pub alternative_name: Option<String>,
     /// List of applications in this project
     pub apps: Vec<AppStateData>,
     /// Whether the project is expanded in the UI
@@ -339,6 +343,8 @@ pub struct ProjectState {
 pub struct AppStateData {
     /// Name of the application
     pub name: String,
+    /// Alternative display name for privacy
+    pub alternative_name: Option<String>,
     /// Project this app belongs to
     pub project: String,
     /// Type of application (nodejs, python, etc.)

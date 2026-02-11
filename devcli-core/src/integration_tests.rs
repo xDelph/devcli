@@ -56,7 +56,13 @@ mod tests {
                 .build(),
         );
 
-        projects.insert("test-project".to_string(), Project { apps });
+        projects.insert(
+            "test-project".to_string(),
+            Project {
+                apps,
+                alternative_name: None,
+            },
+        );
 
         Config { projects }
     }
@@ -204,7 +210,13 @@ mod tests {
                 .build(),
         );
 
-        config.projects.insert("test".to_string(), Project { apps });
+        config.projects.insert(
+            "test".to_string(),
+            Project {
+                apps,
+                alternative_name: None,
+            },
+        );
 
         // Step 1: Resolve frontend app
         let frontend = resolve_app(&config, "frontend", None).unwrap();
@@ -358,9 +370,13 @@ CMD ["node", "server.js"]
                         .build(),
                 );
             }
-            config
-                .projects
-                .insert(format!("project-{}", i), Project { apps });
+            config.projects.insert(
+                format!("project-{}", i),
+                Project {
+                    apps,
+                    alternative_name: None,
+                },
+            );
         }
 
         // Step 1: List all apps

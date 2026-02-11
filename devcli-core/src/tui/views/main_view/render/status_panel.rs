@@ -32,7 +32,7 @@ impl MainView {
 
         // --- Render Status Section ---
         let content = if let Some(app) = state.selected_app() {
-            self.build_status_content(app, theme)
+            self.build_status_content(app, state, theme)
         } else {
             vec![Line::from(Span::styled(
                 "No app selected",
@@ -158,13 +158,19 @@ impl MainView {
     }
 
     /// Builds the content for the status panel
-    fn build_status_content<'a>(&self, app: &'a AppStateData, theme: &'a Theme) -> Vec<Line<'a>> {
+    fn build_status_content<'a>(
+        &self,
+        app: &'a AppStateData,
+        state: &'a AppState,
+        theme: &'a Theme,
+    ) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
+        let app_display_name = app.alternative_name.as_ref().unwrap_or(&app.name);
         lines.push(Line::from(vec![
             Span::styled("─ ", Style::default().fg(theme.border)),
             Span::styled(
-                app.name.clone(),
+                app_display_name.clone(),
                 Style::default()
                     .fg(theme.primary)
                     .add_modifier(Modifier::BOLD),
@@ -204,9 +210,17 @@ impl MainView {
             Span::styled(app.app_type.clone(), theme.style_text()),
         ]));
 
+        // Find the project to get its alternative_name
+        let project_display_name = state
+            .projects
+            .iter()
+            .find(|p| p.name == app.project)
+            .and_then(|p| p.alternative_name.as_ref())
+            .unwrap_or(&app.project);
+
         lines.push(Line::from(vec![
             Span::styled("Project:     ", theme.style_text_dim()),
-            Span::styled(app.project.clone(), theme.style_text()),
+            Span::styled(project_display_name.clone(), theme.style_text()),
         ]));
 
         // Show stage information

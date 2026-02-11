@@ -139,6 +139,12 @@ pub struct Config {
 pub struct Project {
     // String = app name, App = app configuration
     pub apps: HashMap<String, App>,
+
+    // Alternative display name for privacy in screenshots or logs
+    // When present, this name is shown in TUI and config commands
+    // OPTIONAL: If not set, the actual project name is used
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative_name: Option<String>,
 }
 
 // App configuration for a single application
@@ -149,6 +155,12 @@ pub struct App {
     // #[serde(rename = "type")] tells serde to map "type" in JSON to app_type in Rust
     #[serde(rename = "type")]
     pub app_type: String, // e.g., "nodejs", "nx", "redis", etc.
+
+    // Alternative display name for privacy in screenshots or logs
+    // When present, this name is shown in TUI and can be used in commands
+    // OPTIONAL: If not set, the actual app name is used
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative_name: Option<String>,
 
     // Working directory where the app lives
     // Supports ~ expansion (e.g., "~/Projects/my-app")

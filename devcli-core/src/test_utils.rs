@@ -155,6 +155,7 @@ impl AppBuilder {
             dockerfile_path: self.dockerfile_path,
             env_files: None,      // Test utils don't set env_files by default
             default_stages: None, // Test utils don't set default_stages by default
+            alternative_name: None,
             health_check: None,
             restart_policy: None,
         }
@@ -200,7 +201,15 @@ impl ConfigBuilder {
             projects: self
                 .projects
                 .into_iter()
-                .map(|(name, apps)| (name, Project { apps }))
+                .map(|(name, apps)| {
+                    (
+                        name,
+                        Project {
+                            apps,
+                            alternative_name: None,
+                        },
+                    )
+                })
                 .collect(),
         }
     }

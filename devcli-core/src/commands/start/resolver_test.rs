@@ -53,6 +53,7 @@ mod tests {
             app_type: "nodejs".to_string(),
             dockerfile_path: None,
             env_files: None,
+            alternative_name: None,
             health_check: None,
             restart_policy: None,
         };

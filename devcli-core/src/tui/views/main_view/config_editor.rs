@@ -140,6 +140,7 @@ impl MainView {
             .entry(self.config_form.project_name.content().to_string())
             .or_insert_with(|| Project {
                 apps: HashMap::new(),
+                alternative_name: None,
             });
 
         project
@@ -335,6 +336,7 @@ impl MainView {
             dockerfile_path: None,
             env_files: None, // No env files configured in TUI editor (will be added in future task)
             default_stages: None, // No default stages configured in TUI editor
+            alternative_name: None,
             health_check: None,
             restart_policy: None,
         }

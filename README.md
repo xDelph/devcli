@@ -24,9 +24,11 @@ Example configuration structure:
 {
   "projects": {
     "my-project": {
+      "alternative_name": "ProjectX",
       "apps": {
         "api": {
           "type": "nodejs",
+          "alternative_name": "Backend",
           "path": "~/Projects/my-project/api",
           "commands": {
             "local": {
@@ -87,6 +89,12 @@ If app names are ambiguous across projects, specify the project:
 
 ```bash
 devcli start api --project my-project
+```
+
+You can also use alternative names (configured via `alternative_name` field):
+
+```bash
+devcli start Backend  # Uses alternative_name instead of real name
 ```
 
 ### Running Specific Commands
@@ -214,6 +222,29 @@ Set your preferred environment once, or override per command.
 ### Project Grouping
 
 Status command groups processes by project for better organization. Processes without config metadata are shown in "UNGROUPED" section.
+
+### Privacy & Alternative Names
+
+Use `alternative_name` for projects and apps to:
+- Hide real names in screenshots and demos
+- Use privacy-friendly names in TUI
+- Start/stop apps using alternative names
+- Share configuration examples publicly
+
+```json
+{
+  "projects": {
+    "internal-project": {
+      "alternative_name": "ProjectX",
+      "apps": {
+        "sensitive-api": {
+          "alternative_name": "Backend"
+        }
+      }
+    }
+  }
+}
+```
 
 ### Log Management
 

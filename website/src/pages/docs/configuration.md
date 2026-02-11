@@ -33,6 +33,7 @@ projects:
 ```yaml
 projects:
   awesome-monorepo:
+    alternative_name: ProjectA  # Optional: Privacy-friendly name for screenshots
     apps:
       database:
         app_type: docker
@@ -52,6 +53,7 @@ projects:
 
       api:
         app_type: nodejs
+        alternative_name: Backend  # Optional: Privacy-friendly name for screenshots
         path: ~/code/awesome-monorepo/apps/api
         commands:
           local:
@@ -194,6 +196,59 @@ commands:
 ```
 
 ### Optional Fields
+
+#### `alternative_name`
+**Type**: String
+**Default**: None
+**Description**: Privacy-friendly display name for screenshots or sharing
+**Applies to**: Both projects and apps
+
+**Features**:
+- Displayed in TUI by default when present
+- Can be used in commands (start/stop/restart)
+- Shown as `actualName(alternativeName)` in terminal commands
+- Hides real names in screenshots and demonstrations
+
+**Example (Project)**:
+```yaml
+projects:
+  my-company-internal-project:
+    alternative_name: ProjectX
+    apps:
+      internal-api:
+        alternative_name: API
+        # ... rest of config
+```
+
+**Example (App)**:
+```yaml
+apps:
+  sensitive-app-name:
+    alternative_name: MyApp
+    app_type: nodejs
+    path: ~/code/sensitive-app-name
+    # ... rest of config
+```
+
+**Usage**:
+```bash
+# Start using alternative name
+devcli start MyApp
+
+# TUI displays "MyApp" instead of "sensitive-app-name"
+devcli ui
+
+# Config commands show both
+devcli config show sensitive-app-name
+# Output: App: sensitive-app-name(MyApp)
+#         Project: my-company-internal-project(ProjectX)
+```
+
+**Use Cases**:
+- Recording screencasts without revealing internal names
+- Sharing configuration examples publicly
+- Presentations and demos
+- Training materials
 
 #### `dependencies`
 **Type**: Array of strings

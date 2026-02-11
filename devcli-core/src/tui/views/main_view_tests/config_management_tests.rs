@@ -59,7 +59,10 @@ fn create_test_config() -> Config {
             dockerfile_path: None,
         },
     );
-    projects.insert("test-project".to_string(), Project { apps });
+    projects.insert("test-project".to_string(), Project {
+        apps,
+        alternative_name: None,
+    });
     Config { projects }
 fn create_test_state_arc(config: &Config) -> Arc<Mutex<AppState>> {
     let tracker = ProcessTracker::new().unwrap();

@@ -223,6 +223,7 @@ mod tests {
                     apps.insert("my-app".to_string(), app);
                     apps
                 },
+                alternative_name: None,
             },
         );
 

@@ -92,11 +92,12 @@ impl MainView {
         let mut lines = Vec::new();
 
         if let Some(app) = state.selected_app() {
+            let app_display_name = app.alternative_name.as_ref().unwrap_or(&app.name);
             lines.push(Line::from(vec![
                 Span::styled("─ ", Style::default().fg(theme.border)),
                 Span::styled("● ", theme.style_text_primary()),
                 Span::styled(
-                    format!("{} Configuration", app.name),
+                    format!("{} Configuration", app_display_name),
                     Style::default()
                         .fg(theme.primary)
                         .add_modifier(Modifier::BOLD),
@@ -109,9 +110,12 @@ impl MainView {
                 Ok(config) => {
                     if let Some(project) = config.projects.get(&app.project) {
                         if let Some(full_app) = project.apps.get(&app.name) {
+                            // Get project alternative_name if present
+                            let project_display_name =
+                                project.alternative_name.as_ref().unwrap_or(&app.project);
                             lines.push(Line::from(vec![
                                 Span::styled("Project:     ".to_string(), theme.style_text_dim()),
-                                Span::styled(app.project.clone(), theme.style_text()),
+                                Span::styled(project_display_name.clone(), theme.style_text()),
                             ]));
 
                             lines.push(Line::from(vec![

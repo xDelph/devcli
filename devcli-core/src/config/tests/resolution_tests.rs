@@ -96,13 +96,18 @@ mod tests {
                     dockerfile_path: None,
                     env_files: None,
                     default_stages: None,
+                    alternative_name: None,
                     health_check: None,
                     restart_policy: None,
                 },
             );
-            config
-                .projects
-                .insert(project_name.to_string(), Project { apps });
+            config.projects.insert(
+                project_name.to_string(),
+                Project {
+                    apps,
+                    alternative_name: None,
+                },
+            );
         }
 
         // Should work with project specified for project1

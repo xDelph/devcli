@@ -54,13 +54,23 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                 }
             }
 
-            // Display project header
-            println!("PROJECT: {}", project_name);
+            // Display project header (with alternative name if present)
+            let project_display_name = if let Some(ref alt_name) = project.alternative_name {
+                format!("{}({})", project_name, alt_name)
+            } else {
+                project_name.clone()
+            };
+            println!("PROJECT: {}", project_display_name);
 
             // Display each app in this project
             for (app_name, app) in &project.apps {
-                // Show app name and type
-                println!("  [{}] ({})", app_name, app.app_type);
+                // Show app name (and alternative name if present) and type
+                let display_name = if let Some(ref alt_name) = app.alternative_name {
+                    format!("{}({})", app_name, alt_name)
+                } else {
+                    app_name.clone()
+                };
+                println!("  [{}] ({})", display_name, app.app_type);
 
                 // Show path
                 println!("    Path: {}", app.path);
@@ -156,9 +166,24 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     // .as_deref() converts Option<String> to Option<&str>
     let resolved = resolve_app(&config, &app_name, project.as_deref())?;
 
-    // Display basic info
-    println!("App: {}", resolved.app_name);
-    println!("Project: {}", resolved.project);
+    // Get the project config for alternative name
+    let project_config = config.projects.get(&resolved.project).unwrap();
+
+    // Display basic info (with alternative name if present)
+    let display_name = if let Some(ref alt_name) = resolved.app.alternative_name {
+        format!("{}({})", resolved.app_name, alt_name)
+    } else {
+        resolved.app_name.clone()
+    };
+    println!("App: {}", display_name);
+
+    // Display project name (with alternative name if present)
+    let project_display_name = if let Some(ref alt_name) = project_config.alternative_name {
+        format!("{}({})", resolved.project, alt_name)
+    } else {
+        resolved.project.clone()
+    };
+    println!("Project: {}", project_display_name);
     println!("Type: {}", resolved.app.app_type);
     println!("Path: {}", resolved.app.path);
 
@@ -290,22 +315,35 @@ pub async fn config_list_commands(
         }
     }
 
-    // Get the app
-    let app = config
+    // Get the project and app
+    let project_config = config
         .projects
         .get(&resolved_project)
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?
-        .apps
-        .get(&resolved_app_name)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "App '{}' not found in project '{}'",
-                resolved_app_name,
-                resolved_project
-            )
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved_project))?;
 
-    println!("Commands for {}/{}", resolved_project, resolved_app_name);
+    let app = project_config.apps.get(&resolved_app_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "App '{}' not found in project '{}'",
+            resolved_app_name,
+            resolved_project
+        )
+    })?;
+
+    // Display project name (with alternative name if present)
+    let project_display_name = if let Some(ref alt_name) = project_config.alternative_name {
+        format!("{}({})", resolved_project, alt_name)
+    } else {
+        resolved_project.clone()
+    };
+
+    // Display app name (with alternative name if present)
+    let app_display_name = if let Some(ref alt_name) = app.alternative_name {
+        format!("{}({})", resolved_app_name, alt_name)
+    } else {
+        resolved_app_name.clone()
+    };
+
+    println!("Commands for {}/{}", project_display_name, app_display_name);
 
     // Helper function to display commands for an environment
     let display_env_commands =

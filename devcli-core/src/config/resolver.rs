@@ -26,7 +26,7 @@ pub fn resolve_app(
     app_name: &str,
     project_filter: Option<&str>,
 ) -> Result<ResolvedApp> {
-    // Vec to collect all matches (project_name, app_config)
+    // Vec to collect all matches (project_name, actual_app_name, app_config)
     let mut matches = Vec::new();
 
     // Search through all projects
@@ -39,14 +39,18 @@ pub fn resolve_app(
             }
         }
 
-        // Try to get the app from this project's apps HashMap
-        // .get(app_name) returns Option<&App>
-        // - Some(&app) if the app exists
-        // - None if it doesn't exist
-        if let Some(app) = project.apps.get(app_name) {
-            // Found it! Add to matches
-            // .clone() creates a copy of the app
-            matches.push((project_name.clone(), app.clone()));
+        // Search by actual app name first, then by alternative_name
+        for (actual_app_name, app) in &project.apps {
+            // Match by actual app name
+            if actual_app_name == app_name {
+                matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
+            }
+            // Match by alternative_name if it exists
+            else if let Some(ref alt_name) = app.alternative_name {
+                if alt_name == app_name {
+                    matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
+                }
+            }
         }
     }
 
@@ -75,15 +79,15 @@ pub fn resolve_app(
             // Extract the single match from the vector
             // .into_iter() converts Vec into an iterator that takes ownership
             // .next() gets the first item
-            let (project, app) = matches
+            let (project, actual_app_name, app) = matches
                 .into_iter()
                 .next()
                 .expect("BUG: matches should have exactly 1 element after len check");
 
-            // Return the resolved app with full context
+            // Return the resolved app with full context (using actual app name, not the search term)
             Ok(ResolvedApp {
                 project,
-                app_name: app_name.to_string(),
+                app_name: actual_app_name,
                 app,
             })
         }
@@ -92,9 +96,9 @@ pub fn resolve_app(
         _ => {
             // Build a list of project names where we found the app
             // .iter() = iterate over matches
-            // .map(|(p, _)| p.clone()) = extract just the project name
+            // .map(|(p, _, _)| p.clone()) = extract just the project name
             // .collect() = gather into a Vec<String>
-            let project_list: Vec<String> = matches.iter().map(|(p, _)| p.clone()).collect();
+            let project_list: Vec<String> = matches.iter().map(|(p, _, _)| p.clone()).collect();
 
             // Instead of just throwing an error, prompt the user to select
             let prompt_message = format!(
@@ -108,14 +112,14 @@ pub fn resolve_app(
             match selection {
                 Ok(selected_project) => {
                     // User selected a project, find and return that app
-                    let (project, app) = matches
+                    let (project, actual_app_name, app) = matches
                         .into_iter()
-                        .find(|(p, _)| p == &selected_project)
+                        .find(|(p, _, _)| p == &selected_project)
                         .expect("BUG: selected project should exist in matches");
 
                     Ok(ResolvedApp {
                         project,
-                        app_name: app_name.to_string(),
+                        app_name: actual_app_name,
                         app,
                     })
                 }

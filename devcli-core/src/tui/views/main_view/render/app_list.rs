@@ -21,7 +21,8 @@ impl MainView {
 
         for (proj_idx, project) in state.projects.iter().enumerate() {
             let expansion_icon = if project.expanded { "▼" } else { "▶" };
-            let project_line = format!("{} {}", expansion_icon, project.name);
+            let project_display_name = project.alternative_name.as_ref().unwrap_or(&project.name);
+            let project_line = format!("{} {}", expansion_icon, project_display_name);
 
             let is_project_selected = proj_idx == state.selected_project_idx;
 
@@ -171,7 +172,10 @@ impl MainView {
                     theme.style_text_stopped()
                 },
             ),
-            Span::styled(format!(" {}", app.name), text_style),
+            Span::styled(
+                format!(" {}", app.alternative_name.as_ref().unwrap_or(&app.name)),
+                text_style,
+            ),
             Span::styled(stage_indicator, stage_style),
         ];
 
