@@ -27,8 +27,6 @@ pub async fn start_metrics_server(collector: Arc<MetricsCollector>) -> Result<()
         "Metrics API server started"
     );
 
-    println!("Metrics API listening on http://{}/metrics", addr);
-
     loop {
         let (mut socket, remote_addr) = listener.accept().await?;
         let collector = collector.clone();

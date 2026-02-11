@@ -96,7 +96,6 @@ impl HealthCheckEngine {
                     error = %e,
                     "HTTP health check failed"
                 );
-                eprintln!("HTTP health check failed for {}: {}", url, e);
                 Ok(false)
             }
         }
@@ -126,7 +125,6 @@ impl HealthCheckEngine {
                     error = %e,
                     "TCP health check failed"
                 );
-                eprintln!("TCP health check failed for {}: {}", addr, e);
                 Ok(false)
             }
             Err(_) => {
@@ -136,7 +134,6 @@ impl HealthCheckEngine {
                     timeout_secs = timeout_secs,
                     "TCP health check timed out"
                 );
-                eprintln!("TCP health check timed out for {}", addr);
                 Ok(false)
             }
         }
@@ -180,10 +177,6 @@ impl HealthCheckEngine {
                         expected = expected_exit_code,
                         "Command health check failed - exit code mismatch"
                     );
-                    eprintln!(
-                        "Command health check failed: expected exit code {}, got {}",
-                        expected_exit_code, exit_code
-                    );
                     Ok(false)
                 }
             }
@@ -194,7 +187,6 @@ impl HealthCheckEngine {
                     error = %e,
                     "Command health check failed to execute"
                 );
-                eprintln!("Command health check failed to execute: {}", e);
                 Ok(false)
             }
             Err(_) => {
@@ -205,7 +197,6 @@ impl HealthCheckEngine {
                     timeout_secs = timeout_secs,
                     "Command health check timed out"
                 );
-                eprintln!("Command health check timed out: {}", command);
                 Ok(false)
             }
         }

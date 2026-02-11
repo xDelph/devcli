@@ -157,11 +157,6 @@ impl MonitorState {
                             "Health check threshold reached, will attempt restart"
                         );
 
-                        eprintln!(
-                            "Health check failed {} times for {}/{}, will attempt restart",
-                            updated_process.health_check_failures, project, app_name
-                        );
-
                         // Record restart reason
                         updated_process.record_restart(
                             None,
@@ -184,11 +179,6 @@ impl MonitorState {
                         check_type = %check_type,
                         error = %e,
                         "Error performing health check"
-                    );
-
-                    eprintln!(
-                        "Error performing health check for {}/{}: {}",
-                        project, app_name, e
                     );
                 }
             }
@@ -286,11 +276,6 @@ impl MonitorState {
                 "Process crashed, triggering restart"
             );
 
-            eprintln!(
-                "Process {}/{} crashed with exit code {}. Restarting after {:?}...",
-                project, app_name, exit_code, backoff
-            );
-
             // Execute restart (this will be implemented in a future commit)
             // For now, just log that we would restart
             let _result = self
@@ -303,7 +288,6 @@ impl MonitorState {
                         app = %app_name,
                         "Executing restart (TODO: implement)"
                     );
-                    eprintln!("TODO: Execute restart for {}/{}", project, app_name);
                     Ok(())
                 })
                 .await;
@@ -333,7 +317,6 @@ async fn run_daemon_loop() -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = start_metrics_server(metrics_clone).await {
             tracing::error!(error = %e, "Metrics server error");
-            eprintln!("Metrics server error: {}", e);
         }
     });
 
@@ -384,13 +367,11 @@ async fn run_daemon_loop() -> Result<()> {
         // 3. Perform health checks on running processes
         if let Err(e) = state.perform_health_checks().await {
             tracing::error!(error = %e, "Error performing health checks");
-            eprintln!("Error performing health checks: {}", e);
         }
 
         // 4. Handle crashed processes and trigger restarts
         if let Err(e) = state.handle_crashed_processes().await {
             tracing::error!(error = %e, "Error handling crashed processes");
-            eprintln!("Error handling crashed processes: {}", e);
         }
 
         // 5. Sleep for 3 seconds before next iteration
