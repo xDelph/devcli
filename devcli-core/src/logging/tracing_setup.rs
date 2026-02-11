@@ -4,6 +4,16 @@ use tracing_appender::rolling;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Initialize tracing with JSON file output and console output
+///
+/// Log level can be controlled via environment variable:
+/// - `LOG_LEVEL=off` - Disable all logging
+/// - `LOG_LEVEL=error` - Only errors
+/// - `LOG_LEVEL=warn` - Warnings and errors
+/// - `LOG_LEVEL=info` - Info, warnings, and errors (default)
+/// - `LOG_LEVEL=debug` - Debug and above
+/// - `LOG_LEVEL=trace` - All logs including trace
+///
+/// Example: `LOG_LEVEL=error devcli start my-app`
 pub fn init_tracing() -> crate::Result<()> {
     let log_dir = dirs::home_dir()
         .context("No home directory found")?
@@ -21,8 +31,27 @@ pub fn init_tracing() -> crate::Result<()> {
     // Console layer - human-readable format for stderr
     let console_layer = fmt::layer().compact().with_writer(std::io::stderr);
 
-    // Environment-based filtering (RUST_LOG=debug for verbose logging)
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // Parse log level from LOG_LEVEL environment variable
+    // Falls back to INFO if not set or invalid
+    let log_level = std::env::var("LOG_LEVEL")
+        .unwrap_or_else(|_| "info".to_string())
+        .to_lowercase();
+
+    let filter = match log_level.as_str() {
+        "off" => EnvFilter::new("off"),
+        "error" => EnvFilter::new("error"),
+        "warn" => EnvFilter::new("warn"),
+        "info" => EnvFilter::new("info"),
+        "debug" => EnvFilter::new("debug"),
+        "trace" => EnvFilter::new("trace"),
+        _ => {
+            eprintln!(
+                "Warning: Invalid LOG_LEVEL '{}'. Valid values: off, error, warn, info, debug, trace. Using 'info' as default.",
+                log_level
+            );
+            EnvFilter::new("info")
+        }
+    };
 
     tracing_subscriber::registry()
         .with(filter)
