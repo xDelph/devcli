@@ -63,9 +63,40 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         handle_dependencies(&apps_refs, &environment, silent).await?;
     }
 
-    // Step 3: Start all apps in parallel
-    let started_apps =
-        start_apps_in_parallel(apps_to_start, &environment, silent, args.stage.clone()).await?;
+    // Step 2.5: Filter out apps that are now running (started as dependencies)
+    let tracker = crate::process::ProcessTracker::new()?;
+    let mut apps_to_start_filtered = Vec::new();
+    for app in apps_to_start {
+        let app_name = &app.resolved_app.app_name;
+        if let Some(existing) =
+            tracker.get_process(&app.resolved_app.project, app_name, Some(&environment))?
+        {
+            if tracker.is_running(existing.pid) {
+                tracing::info!(
+                    app = %app_name,
+                    pid = existing.pid,
+                    "App already running (started as dependency), skipping"
+                );
+                if !silent {
+                    println!(
+                        "⚠ Process '{}' is already running with PID {}, skipping",
+                        app_name, existing.pid
+                    );
+                }
+                continue;
+            }
+        }
+        apps_to_start_filtered.push(app);
+    }
+
+    // Step 3: Start all remaining apps in parallel
+    let started_apps = start_apps_in_parallel(
+        apps_to_start_filtered,
+        &environment,
+        silent,
+        args.stage.clone(),
+    )
+    .await?;
 
     // Step 4: Handle different modes and keep process alive for log viewing
     setup_log_monitoring(&started_apps, silent).await?;
