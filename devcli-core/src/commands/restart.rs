@@ -31,12 +31,14 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         "Restart command initiated"
     );
 
-    // Step 0: Load config and resolve app to get project name
+    // Step 0: Load config and resolve app to get project name and actual app name
     // We need the project name to find the PID file
+    // We also need the actual app name (in case user provided alternative_name)
     let config = crate::config::load_config()?;
     let resolved_app =
         crate::config::resolve_app(&config, &args.app_name, args.project.as_deref())?;
     let project_name = resolved_app.project.clone();
+    let actual_app_name = resolved_app.app_name.clone();
 
     // Step 1: Get the process tracker and clean up dead processes
     let tracker = ProcessTracker::new()?;
@@ -44,7 +46,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     // Step 2: Check if the process is currently running
     let existing_process = if let Some(process) =
-        tracker.get_process(&project_name, &args.app_name, args.env.as_deref())?
+        tracker.get_process(&project_name, &actual_app_name, args.env.as_deref())?
     {
         // Check if process is still actually running
         if tracker.is_running(process.pid) {
@@ -53,7 +55,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             // Process died but we have PID file - clean it up
             tracker.remove_process(
                 &project_name,
-                &args.app_name,
+                &actual_app_name,
                 process.environment.as_deref(),
             )?;
             if !silent {

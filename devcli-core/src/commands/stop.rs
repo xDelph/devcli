@@ -39,8 +39,23 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     // Get all running processes
     let mut processes = tracker.list_processes()?;
 
+    // Resolve alternative_name to actual app name if provided
+    let actual_app_name = if let Some(ref app_name) = args.app_name {
+        let config = crate::config::load_config()?;
+        match crate::config::resolve_app(&config, app_name, args.project.as_deref()) {
+            Ok(resolved) => Some(resolved.app_name),
+            Err(_) => {
+                // If resolution fails, use the provided name as-is
+                // (might be an app name that's not in config anymore)
+                Some(app_name.clone())
+            }
+        }
+    } else {
+        None
+    };
+
     // Filter processes based on arguments
-    let processes_to_stop = filter_processes(&args, &mut processes, &tracker)?;
+    let processes_to_stop = filter_processes(&args, &actual_app_name, &mut processes, &tracker)?;
 
     if processes_to_stop.is_empty() {
         tracing::info!("No processes found to stop");
@@ -137,6 +152,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
 // Filter processes based on command arguments
 fn filter_processes(
     args: &StopCommandArgs,
+    actual_app_name: &Option<String>,
     processes: &mut Vec<crate::process::ProcessInfo>,
     tracker: &ProcessTracker,
 ) -> Result<Vec<crate::process::ProcessInfo>> {
@@ -148,8 +164,8 @@ fn filter_processes(
     if args.all {
         // Stop all running processes
         filtered.extend(processes.clone());
-    } else if let Some(ref app_name) = args.app_name {
-        // Stop specific app
+    } else if let Some(ref app_name) = actual_app_name {
+        // Stop specific app (already resolved from alternative_name if needed)
         let mut found = false;
         for process in processes.iter() {
             if &process.app_name == app_name || process.app_config_name.as_ref() == Some(app_name) {
