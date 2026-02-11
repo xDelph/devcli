@@ -3,5 +3,6 @@ Cargo.lock
 **/*.rs.bk
 *.pdb
 .DS_Store
+/test-cli
 
 tui-debug.log
