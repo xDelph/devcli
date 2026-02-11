@@ -170,6 +170,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Build process options
     let options = ProcessOptions {
         app_name: process_name.clone(),
+        alternative_name: resolved_app.app.alternative_name.clone(),
         working_dir: working_dir.clone(),
         command: final_command.clone(),
         env_vars,

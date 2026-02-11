@@ -6,6 +6,7 @@
 //! - `path`: Path manipulation and expansion
 
 pub mod app;
+pub mod colors;
 pub mod command;
 pub mod path;
 

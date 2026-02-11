@@ -1,7 +1,6 @@
 // Import statements bring external functionality into this file
 use anyhow::{Context, Result}; // Error handling utilities
 use chrono::Utc; // For timestamps
-use colored::Colorize; // For colored terminal output
 use std::collections::HashMap; // Hash map for key-value pairs (env vars)
 use std::path::PathBuf; // Cross-platform file path handling
 use std::process::Stdio; // For spawning processes
@@ -16,6 +15,7 @@ use tokio::process::Child; // Represents a running child process
 #[derive(Debug, Clone)]
 pub struct ProcessOptions {
     pub app_name: String,                  // Name to identify this process
+    pub alternative_name: Option<String>,  // Optional privacy-friendly name for stdout
     pub working_dir: PathBuf,              // Directory where process should run
     pub command: String,                   // Command to execute (e.g., "node server.js")
     pub env_vars: HashMap<String, String>, // Environment variables (KEY=VALUE pairs)
@@ -102,6 +102,7 @@ pub async fn spawn_process(
         let stderr = child.stderr.take().context("Failed to capture stderr")?;
 
         let app_name = options.app_name.clone();
+        let alternative_name = options.alternative_name.clone();
         let show_output = options.show_output;
 
         // Spawn background tasks to handle output streams
@@ -110,6 +111,7 @@ pub async fn spawn_process(
             stdout,
             "stdout",
             app_name.clone(),
+            alternative_name.clone(),
             show_output,
             log_file_path.clone(),
             output_tx.clone(),
@@ -119,12 +121,17 @@ pub async fn spawn_process(
             stderr,
             "stderr",
             app_name.clone(),
+            alternative_name.clone(),
             show_output,
             log_file_path.clone(),
             output_tx.clone(),
         );
 
-        let app_name_for_wait = options.app_name.clone();
+        let display_name_for_wait = options
+            .alternative_name
+            .clone()
+            .unwrap_or_else(|| options.app_name.clone());
+        let colored_name_for_wait = crate::utils::colors::colorize_app_name(&display_name_for_wait);
         tokio::spawn(async move {
             match child.wait().await {
                 Ok(status) => {
@@ -132,16 +139,12 @@ pub async fn spawn_process(
 
                     if status.success() {
                         if show_output {
-                            println!(
-                                "[{}] Process exited successfully",
-                                app_name_for_wait.cyan().bold()
-                            );
+                            println!("[{}] Process exited successfully", colored_name_for_wait);
                         }
                     } else if show_output {
                         eprintln!(
                             "[{}] Process exited with status: {}",
-                            app_name_for_wait.cyan().bold(),
-                            status
+                            colored_name_for_wait, status
                         );
                     }
                 }
@@ -149,8 +152,7 @@ pub async fn spawn_process(
                     if show_output {
                         eprintln!(
                             "[{}] Error waiting for process: {}",
-                            app_name_for_wait.cyan().bold(),
-                            e
+                            colored_name_for_wait, e
                         );
                     }
                 }
@@ -192,6 +194,7 @@ pub async fn spawn_process(
         let stderr = child.stderr.take().context("Failed to capture stderr")?;
 
         let app_name = options.app_name.clone();
+        let alternative_name = options.alternative_name.clone();
 
         // In attached mode, we always show output to the terminal
         // We reuse the same helper function to handle logging and TUI updates
@@ -199,6 +202,7 @@ pub async fn spawn_process(
             stdout,
             "stdout",
             app_name.clone(),
+            alternative_name.clone(),
             true, // Always show output in attached mode
             log_file_path.clone(),
             output_tx.clone(),
@@ -208,6 +212,7 @@ pub async fn spawn_process(
             stderr,
             "stderr",
             app_name.clone(),
+            alternative_name.clone(),
             true, // Always show output in attached mode
             log_file_path.clone(),
             output_tx.clone(),
@@ -233,7 +238,8 @@ pub async fn spawn_process(
 /// # Arguments
 /// * `stream` - The async stream to read from (stdout or stderr)
 /// * `stream_type` - Label for the stream ("stdout" or "stderr")
-/// * `app_name` - Name of the app for logging context
+/// * `app_name` - Name of the app for logging context (used in log files)
+/// * `alternative_name` - Optional privacy-friendly name for stdout display
 /// * `show_output` - Whether to print to terminal (stdout/stderr)
 /// * `log_file_path` - Path to the log file
 /// * `output_tx` - Optional channel to send output to TUI
@@ -241,6 +247,7 @@ fn handle_output_stream<R>(
     stream: R,
     stream_type: &'static str,
     app_name: String,
+    alternative_name: Option<String>,
     show_output: bool,
     log_file_path: PathBuf,
     output_tx: Option<OutputSender>,
@@ -272,17 +279,22 @@ where
         let mut reader = BufReader::new(stream).lines();
         let mut stream_alive = true;
 
+        // Use alternative_name for display if present, otherwise use app_name
+        let display_name = alternative_name.as_ref().unwrap_or(&app_name);
+        let colored_name = crate::utils::colors::colorize_app_name(display_name);
+
         while let Ok(Some(line)) = reader.next_line().await {
             // 1. Show output in terminal if requested (and stream is still writable)
             if show_output && stream_alive {
                 use std::io::Write;
 
                 // Write to appropriate standard stream based on type
+                // Note: display_name is used for stdout, but app_name is still used in log files
                 let result = if stream_type == "stderr" {
                     writeln!(
                         std::io::stderr(),
                         "[{}][{}] {}",
-                        app_name.cyan().bold(),
+                        colored_name,
                         stream_type,
                         line
                     )
@@ -290,7 +302,7 @@ where
                     writeln!(
                         std::io::stdout(),
                         "[{}][{}] {}",
-                        app_name.cyan().bold(),
+                        colored_name,
                         stream_type,
                         line
                     )

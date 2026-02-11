@@ -238,6 +238,7 @@ async fn start_single_app_process(
     use crate::commands::internal_spawner::SpawnerPayload;
     let payload = SpawnerPayload {
         app_name: app_name.clone(),
+        alternative_name: resolved_app.app.alternative_name.clone(),
         command: final_command.clone(),
         working_dir: working_dir.clone(),
         env_vars,
@@ -323,26 +324,32 @@ async fn start_single_app_process(
     if show_output {
         use tokio::io::{AsyncBufReadExt, BufReader};
 
+        // Use alternative_name for display if present
+        let display_name = resolved_app
+            .app
+            .alternative_name
+            .clone()
+            .unwrap_or_else(|| app_name.clone());
+        let colored_name = crate::utils::colors::colorize_app_name(&display_name);
+
         // Capture stdout
         if let Some(stdout) = spawner_child.stdout.take() {
-            let app_name_clone = app_name.clone();
+            let colored_name_clone = colored_name.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    use colored::Colorize;
-                    println!("[{}] {}", app_name_clone.cyan().bold(), line);
+                    println!("[{}] {}", colored_name_clone, line);
                 }
             });
         }
 
         // Capture stderr
         if let Some(stderr) = spawner_child.stderr.take() {
-            let app_name_clone = app_name.clone();
+            let colored_name_clone = colored_name.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    use colored::Colorize;
-                    eprintln!("[{}] {}", app_name_clone.cyan().bold(), line);
+                    eprintln!("[{}] {}", colored_name_clone, line);
                 }
             });
         }
