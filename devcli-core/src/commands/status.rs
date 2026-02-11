@@ -29,13 +29,35 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     // This keeps our status display accurate
     tracker.cleanup_dead()?;
 
-    // Step 3: Get all tracked processes from PID files
+    // Step 3: Load the current config to filter processes
+    let config = load_config()?;
+
+    // Step 4: Get all tracked processes from PID files
     // Returns Vec<ProcessInfo> with all process metadata
     let mut processes = tracker.list_processes()?;
 
     tracing::debug!(total_processes = processes.len(), "Retrieved process list");
 
-    // Step 4: Filter by project if requested
+    // Step 5: Filter to only show processes defined in the current config
+    // This ensures we only see apps from the active config (local or global)
+    processes.retain(|p| {
+        // Check if this process exists in the current config
+        if let Some(ref project_name) = p.project {
+            if let Some(project) = config.projects.get(project_name) {
+                // Check if the app exists in this project
+                return project.apps.contains_key(&p.app_name);
+            }
+        }
+        // Keep processes without project metadata (ungrouped/legacy)
+        false
+    });
+
+    tracing::debug!(
+        filtered_processes = processes.len(),
+        "Filtered to config-defined apps"
+    );
+
+    // Step 7: Filter by project if requested
     // Example: devcli status --project qm
     if let Some(ref project_filter) = args.project {
         // .retain() keeps only items that match the condition
@@ -52,7 +74,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         });
     }
 
-    // Step 5: Filter by app name if requested
+    // Step 8: Filter by app name if requested
     // Example: devcli status api-private
     if let Some(ref app_filter) = args.app_name {
         processes.retain(|p| {
@@ -62,7 +84,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         });
     }
 
-    // Step 6: Check if we have any processes to display
+    // Step 9: Check if we have any processes to display
     if processes.is_empty() {
         tracing::info!("No processes found matching filters");
         println!("No processes are currently tracked");
@@ -71,7 +93,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
     tracing::info!(process_count = processes.len(), "Displaying process status");
 
-    // Step 7: Handle special case - show dependencies for a specific app
+    // Step 10: Handle special case - show dependencies for a specific app
     // Example: devcli status api-private --deps
     if args.show_deps {
         if let Some(app_name) = args.app_name {
@@ -80,7 +102,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         }
     }
 
-    // Step 8: Group processes by project
+    // Step 11: Group processes by project
     // We'll build two collections:
     // - grouped: HashMap of project_name -> Vec<ProcessInfo>
     // - ungrouped: Vec of processes without project metadata
@@ -104,7 +126,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         }
     }
 
-    // Step 9: Display grouped processes (by project)
+    // Step 12: Display grouped processes (by project)
     // First, sort the project names alphabetically for consistent display
     let mut project_names: Vec<_> = grouped.keys().cloned().collect();
     project_names.sort();
@@ -175,7 +197,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         }
     }
 
-    // Step 10: Display ungrouped processes
+    // Step 13: Display ungrouped processes
     // These are processes without project metadata (legacy or manual)
     if !ungrouped.is_empty() {
         println!("\nUNGROUPED:");
