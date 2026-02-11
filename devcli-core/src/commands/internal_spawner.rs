@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SpawnerPayload {
     pub app_name: String,
+    pub alternative_name: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
     pub env_vars: HashMap<String, String>,
@@ -95,21 +96,40 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Check if child is still running (hasn't exited immediately due to spawn failure)
+    // Note: Some processes (like redis-server, nginx, etc.) fork/daemonize themselves,
+    // so the parent may exit immediately while the child continues running. We only
+    // treat this as a failure if the exit code indicates a real error (e.g., command not found).
     match child.try_wait() {
         Ok(Some(exit_status)) => {
-            // Child has already exited - this indicates a spawn failure
             let exit_code = exit_status.code().unwrap_or(-1);
-            tracing::error!(
-                app = %payload.app_name,
-                child_pid = child_pid,
-                exit_code = exit_code,
-                "Child process failed to start"
-            );
-            anyhow::bail!(
-                "Application process '{}' failed to start (exit code: {}). Check if the command exists and is executable.",
-                payload.app_name,
-                exit_code
-            );
+
+            // Exit codes that indicate actual failures (not just daemon forking):
+            // - 127: command not found (shell)
+            // - 126: command found but not executable
+            // - negative codes: killed by signal
+            let is_fatal_error = exit_code == 127 || exit_code == 126 || exit_code < 0;
+
+            if is_fatal_error {
+                tracing::error!(
+                    app = %payload.app_name,
+                    child_pid = child_pid,
+                    exit_code = exit_code,
+                    "Child process failed to start"
+                );
+                anyhow::bail!(
+                    "Application process '{}' failed to start (exit code: {}). Check if the command exists and is executable.",
+                    payload.app_name,
+                    exit_code
+                );
+            } else {
+                // Process exited with non-fatal code - likely daemonized or short-lived
+                tracing::info!(
+                    app = %payload.app_name,
+                    child_pid = child_pid,
+                    exit_code = exit_code,
+                    "Process exited early (likely daemonized or completed quickly)"
+                );
+            }
         }
         Ok(None) => {
             // Child is still running - good!
