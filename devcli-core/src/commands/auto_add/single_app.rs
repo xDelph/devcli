@@ -418,6 +418,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             dockerfile_path: detected.dockerfile_path.clone(),
             env_files,            // Interactive env files with user-selected environments
             default_stages: None, // Will be set by user via preferences or explicit command
+            alternative_name: None,
             health_check: None,
             restart_policy: None,
         };
@@ -428,6 +429,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             .entry(project_name.clone())
             .or_insert_with(|| Project {
                 apps: HashMap::new(),
+                alternative_name: None,
             })
             .apps
             .insert(app_name.clone(), app);
@@ -540,6 +542,7 @@ fn add_to_config(
         dockerfile_path: detected.dockerfile_path,
         env_files,            // Interactive env files with user-selected environments
         default_stages: None, // Will be set by user via preferences or explicit command
+        alternative_name: None,
         health_check: None,
         restart_policy: None,
     };
@@ -551,6 +554,7 @@ fn add_to_config(
         .entry(project_name)
         .or_insert_with(|| Project {
             apps: HashMap::new(),
+            alternative_name: None,
         })
         .apps
         .insert(app_name, app);

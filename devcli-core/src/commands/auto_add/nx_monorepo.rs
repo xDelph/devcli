@@ -127,6 +127,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             dockerfile_path: detected.dockerfile_path.clone(),
             env_files,            // Interactive env files with user-selected environments
             default_stages: None, // Will be set by user via preferences or explicit command
+            alternative_name: None,
             health_check: None,
             restart_policy: None,
         };
@@ -138,6 +139,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             .entry(project_name.clone())
             .or_insert_with(|| Project {
                 apps: HashMap::new(),
+                alternative_name: None,
             })
             .apps
             .insert(app_name.clone(), app);

@@ -134,14 +134,14 @@ pub fn prepare_command(
 
                     if show_output {
                         println!("  Using env file: {}", env_file_path);
-                        println!("  Loaded env vars:");
-                        let mut sorted_keys: Vec<_> = file_vars.keys().collect();
-                        sorted_keys.sort();
-                        for key in sorted_keys {
-                            if let Some(val) = file_vars.get(key) {
-                                println!("    {}={}", key, val);
-                            }
-                        }
+                        // println!("  Loaded env vars:");
+                        // let mut sorted_keys: Vec<_> = file_vars.keys().collect();
+                        // sorted_keys.sort();
+                        // for key in sorted_keys {
+                        //     if let Some(val) = file_vars.get(key) {
+                        //         println!("    {}={}", key, val);
+                        //     }
+                        // }
                     }
                 }
             }
