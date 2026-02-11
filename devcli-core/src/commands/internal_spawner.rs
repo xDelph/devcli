@@ -195,10 +195,13 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     let stdout_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            // Print to stdout for parent process to capture
-            println!("{}", line);
+            // Try to print to stdout for parent process to capture
+            // Ignore errors if stdout is closed (parent exited)
+            let _ =
+                std::io::Write::write_all(&mut std::io::stdout(), format!("{}\n", line).as_bytes());
+            let _ = std::io::Write::flush(&mut std::io::stdout());
 
-            // Write to log file
+            // Write to log file (this is the important part)
             let mut w = writer_stdout.lock().await;
             use tokio::io::AsyncWriteExt;
             let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S.%3f");
@@ -212,10 +215,13 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            // Print to stderr for parent process to capture
-            eprintln!("{}", line);
+            // Try to print to stderr for parent process to capture
+            // Ignore errors if stderr is closed (parent exited)
+            let _ =
+                std::io::Write::write_all(&mut std::io::stderr(), format!("{}\n", line).as_bytes());
+            let _ = std::io::Write::flush(&mut std::io::stderr());
 
-            // Write to log file
+            // Write to log file (this is the important part)
             let mut w = writer_stderr.lock().await;
             use tokio::io::AsyncWriteExt;
             let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S.%3f");
@@ -228,33 +234,45 @@ pub async fn internal_spawner_command(payload_base64: String) -> Result<()> {
 
     // 7. Handle Signals (Forwarding)
     // We need to listen for SIGINT/SIGTERM and forward to child
+    // SIGHUP should be ignored (parent terminal closed, but we continue running)
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
 
     // Capture exit code for restart logic
-    let exit_code = tokio::select! {
-        result = child.wait() => {
-            // Child exited naturally
-            match result {
-                Ok(status) => status.code().unwrap_or(-1),
-                Err(_) => -1,
+    let exit_code = loop {
+        tokio::select! {
+            result = child.wait() => {
+                // Child exited naturally
+                break match result {
+                    Ok(status) => status.code().unwrap_or(-1),
+                    Err(_) => -1,
+                };
             }
-        }
-        _ = sigint.recv() => {
-            // Received SIGINT, kill child
-            // We use libc::kill to send signal to child PID
-            unsafe { libc::kill(child_pid as i32, libc::SIGINT) };
-            match child.wait().await {
-                Ok(status) => status.code().unwrap_or(-1),
-                Err(_) => -1,
+            _ = sigint.recv() => {
+                // Received SIGINT, kill child
+                // We use libc::kill to send signal to child PID
+                tracing::info!(app = %payload.app_name, "Received SIGINT, forwarding to child");
+                unsafe { libc::kill(child_pid as i32, libc::SIGINT) };
+                break match child.wait().await {
+                    Ok(status) => status.code().unwrap_or(-1),
+                    Err(_) => -1,
+                };
             }
-        }
-        _ = sigterm.recv() => {
-            // Received SIGTERM, kill child
-            unsafe { libc::kill(child_pid as i32, libc::SIGTERM) };
-            match child.wait().await {
-                Ok(status) => status.code().unwrap_or(-1),
-                Err(_) => -1,
+            _ = sigterm.recv() => {
+                // Received SIGTERM, kill child
+                tracing::info!(app = %payload.app_name, "Received SIGTERM, forwarding to child");
+                unsafe { libc::kill(child_pid as i32, libc::SIGTERM) };
+                break match child.wait().await {
+                    Ok(status) => status.code().unwrap_or(-1),
+                    Err(_) => -1,
+                };
+            }
+            _ = sighup.recv() => {
+                // Received SIGHUP (parent terminal closed)
+                // Ignore it - we want to keep running as a daemon
+                tracing::debug!(app = %payload.app_name, "Received SIGHUP, ignoring (continuing as daemon)");
+                // Don't break, continue the loop
             }
         }
     };
