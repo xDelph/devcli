@@ -9,8 +9,8 @@ use std::fs;
 use std::path::PathBuf;
 
 // Get the full path to the config file
-// Returns: ~/.devcli/config.json
-// For testing: Can be overridden with devcli_CONFIG_DIR environment variable
+// Returns: ./.devcli/config.json (current dir) or ~/.devcli/config.json (home dir)
+// Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_config_path() -> Result<PathBuf> {
     // Check for test override first
     if let Ok(config_dir) = env::var("devcli_CONFIG_DIR") {
@@ -22,18 +22,21 @@ pub fn get_config_path() -> Result<PathBuf> {
         return Ok(path);
     }
 
-    // env::var("HOME") gets the HOME environment variable
-    // ? operator returns early if there's an error
-    let home = env::var("HOME")?;
+    // Check current directory for .devcli/config.json
+    let current_dir = env::current_dir()?;
+    let local_config = current_dir.join(".devcli").join("config.json");
+    if local_config.exists() {
+        return Ok(local_config);
+    }
 
-    // Build the path: ~/.devcli/config.json
-    // .join() appends path segments in a platform-independent way
+    // Fall back to home directory ~/.devcli/config.json
+    let home = env::var("HOME")?;
     Ok(PathBuf::from(home).join(".devcli").join("config.json"))
 }
 
 // Get the full path to the preferences file
-// Returns: ~/.devcli/preferences.json
-// For testing: Can be overridden with devcli_CONFIG_DIR environment variable
+// Returns: ./.devcli/preferences.json (current dir) or ~/.devcli/preferences.json (home dir)
+// Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_preferences_path() -> Result<PathBuf> {
     // Check for test override first
     if let Ok(config_dir) = env::var("devcli_CONFIG_DIR") {
@@ -45,6 +48,14 @@ pub fn get_preferences_path() -> Result<PathBuf> {
         return Ok(path);
     }
 
+    // Check current directory for .devcli/preferences.json
+    let current_dir = env::current_dir()?;
+    let local_prefs = current_dir.join(".devcli").join("preferences.json");
+    if local_prefs.exists() {
+        return Ok(local_prefs);
+    }
+
+    // Fall back to home directory ~/.devcli/preferences.json
     let home = env::var("HOME")?;
     Ok(PathBuf::from(home).join(".devcli").join("preferences.json"))
 }
