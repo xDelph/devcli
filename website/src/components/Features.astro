@@ -1,0 +1,95 @@
+---
+const features = [
+  {
+    icon: '🚀',
+    title: 'Auto-Restart Policies',
+    description: 'Configurable restart on crash with exponential backoff, max restart limits, and smart failure detection.',
+    gradient: 'from-blue-500 to-cyan-500'
+  },
+  {
+    icon: '💚',
+    title: 'Health Checks',
+    description: 'HTTP, TCP, and command-based health monitoring with automatic restart on failure detection.',
+    gradient: 'from-green-500 to-emerald-500'
+  },
+  {
+    icon: '📊',
+    title: 'Built-in TUI',
+    description: 'Real-time dashboard with live logs, process status, and interactive management. No external tools needed.',
+    gradient: 'from-purple-500 to-pink-500'
+  },
+  {
+    icon: '🔄',
+    title: 'Dependencies',
+    description: 'Smart dependency resolution with automatic startup ordering and cascading restarts.',
+    gradient: 'from-orange-500 to-red-500'
+  },
+  {
+    icon: '📝',
+    title: 'Metrics & Logging',
+    description: 'JSON structured logs, process metrics, performance tracking, and HTTP metrics API endpoint.',
+    gradient: 'from-cyan-500 to-blue-500'
+  },
+  {
+    icon: '🐳',
+    title: 'Docker & OrbStack',
+    description: 'Native Docker support with env injection, multi-stage builds, and OrbStack optimizations.',
+    gradient: 'from-indigo-500 to-purple-500'
+  }
+];
+---
+
+<section id="features" class="relative py-32 px-4">
+  <!-- Background decoration -->
+  <div class="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-950/5 to-transparent"></div>
+
+  <div class="relative max-w-7xl mx-auto">
+    <!-- Section header -->
+    <div class="text-center mb-20">
+      <h2 class="text-5xl md:text-6xl font-black mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+        Packed with Power
+      </h2>
+      <p class="text-xl text-slate-400 max-w-2xl mx-auto">
+        Everything you need to manage complex development environments with ease
+      </p>
+    </div>
+
+    <!-- Features grid -->
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+      {features.map((feature, index) => (
+        <div
+          class="group bg-slate-900/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-cyan-500/10"
+          style={`animation-delay: ${index * 0.1}s;`}
+        >
+          <!-- Icon with gradient -->
+          <div class={`inline-flex items-center justify-center w-16 h-16 rounded-xl bg-gradient-to-br ${feature.gradient} mb-6 text-3xl group-hover:scale-110 transition-transform duration-300`}>
+            {feature.icon}
+          </div>
+
+          <!-- Title -->
+          <h3 class="text-2xl font-bold mb-4 text-white group-hover:text-cyan-400 transition-colors">
+            {feature.title}
+          </h3>
+
+          <!-- Description -->
+          <p class="text-slate-400 leading-relaxed">
+            {feature.description}
+          </p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Additional highlight -->
+    <div class="mt-20 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 rounded-3xl p-12 border border-cyan-500/20">
+      <div class="max-w-4xl mx-auto text-center">
+        <h3 class="text-3xl font-bold mb-4 text-white">
+          And that's just the beginning...
+        </h3>
+        <p class="text-slate-300 text-lg leading-relaxed">
+          Multi-environment configuration, stage support, Nx monorepo detection,
+          environment variable management, and much more. DevCLI grows with your needs.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,141 @@
+---
+import Layout from './Layout.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+
+const navItems = [
+  { title: 'Getting Started', href: '/docs/getting-started' },
+  { title: 'Configuration', href: '/docs/configuration' },
+  { title: 'Commands', href: '/docs/commands' },
+  { title: 'Advanced Features', href: '/docs/advanced' },
+  { title: 'Troubleshooting', href: '/docs/troubleshooting' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<Layout title={`${title} - DevCLI Documentation`} description={description}>
+  <div class="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950">
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-950/50 backdrop-blur-xl sticky top-0 z-50">
+      <div class="max-w-7xl mx-auto px-6 py-4">
+        <div class="flex items-center justify-between">
+          <a href="/" class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+            DevCLI
+          </a>
+          <nav class="hidden md:flex gap-6">
+            <a href="/#features" class="text-slate-300 hover:text-white transition-colors">Features</a>
+            <a href="/docs/getting-started" class="text-blue-400 hover:text-blue-300 transition-colors">Docs</a>
+            <a href="https://github.com/xDelph/devcli" target="_blank" class="text-slate-300 hover:text-white transition-colors">GitHub</a>
+          </nav>
+        </div>
+      </div>
+    </header>
+
+    <div class="max-w-7xl mx-auto px-6 py-12 grid md:grid-cols-[250px,1fr] gap-12">
+      <!-- Sidebar Navigation -->
+      <aside class="hidden md:block">
+        <div class="sticky top-24">
+          <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Documentation</h3>
+          <nav class="space-y-2">
+            {navItems.map(item => (
+              <a
+                href={item.href}
+                class={`block px-3 py-2 rounded-lg transition-all ${
+                  currentPath === item.href
+                    ? 'bg-blue-500/10 text-blue-400 border-l-2 border-blue-400 pl-[10px]'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                {item.title}
+              </a>
+            ))}
+          </nav>
+
+          <!-- Back to Home -->
+          <div class="mt-8 pt-8 border-t border-slate-800">
+            <a href="/" class="text-sm text-slate-400 hover:text-white flex items-center gap-2 transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+              </svg>
+              Back to Home
+            </a>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Mobile Navigation -->
+      <div class="md:hidden mb-8">
+        <select
+          onchange="window.location.href = this.value"
+          class="w-full bg-slate-800 text-white rounded-lg px-4 py-3 border border-slate-700"
+        >
+          {navItems.map(item => (
+            <option value={item.href} selected={currentPath === item.href}>
+              {item.title}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <!-- Main Content -->
+      <main class="prose prose-invert prose-slate max-w-none
+        prose-headings:font-bold
+        prose-h1:text-4xl prose-h1:mb-8 prose-h1:bg-gradient-to-r prose-h1:from-blue-400 prose-h1:to-cyan-400 prose-h1:bg-clip-text prose-h1:text-transparent
+        prose-h2:text-2xl prose-h2:mt-12 prose-h2:mb-4 prose-h2:text-white prose-h2:border-b prose-h2:border-slate-800 prose-h2:pb-2
+        prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3 prose-h3:text-blue-400
+        prose-h4:text-lg prose-h4:mt-6 prose-h4:mb-2 prose-h4:text-cyan-400
+        prose-p:text-slate-300 prose-p:leading-relaxed
+        prose-a:text-blue-400 prose-a:no-underline hover:prose-a:text-blue-300 hover:prose-a:underline
+        prose-code:text-cyan-400 prose-code:bg-slate-800/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+        prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-pre:shadow-xl
+        prose-strong:text-white prose-strong:font-semibold
+        prose-ul:text-slate-300
+        prose-ol:text-slate-300
+        prose-li:text-slate-300
+        prose-blockquote:border-l-blue-500 prose-blockquote:text-slate-400
+        prose-table:border prose-table:border-slate-800
+        prose-thead:bg-slate-800/50
+        prose-th:text-blue-400
+        prose-td:border-slate-800
+      ">
+        <slot />
+      </main>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  /* Smooth scroll */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Code block improvements */
+  pre {
+    padding: 1.5rem !important;
+    overflow-x: auto;
+  }
+
+  /* Table improvements */
+  table {
+    width: 100%;
+  }
+
+  /* Link improvements */
+  a[href^="http"]::after {
+    content: " ↗";
+    font-size: 0.8em;
+    opacity: 0.7;
+  }
+
+  /* Anchor links for headings */
+  h2, h3, h4 {
+    scroll-margin-top: 6rem;
+  }
+</style>
