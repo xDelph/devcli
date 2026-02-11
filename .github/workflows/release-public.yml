@@ -14,7 +14,6 @@ env:
 jobs:
   build-release:
     name: Build ${{ matrix.target }}
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -116,7 +115,6 @@ jobs:
 
   sync-documentation:
     name: Sync Documentation to Public Repo
-    needs: create-release
     runs-on: ubuntu-latest
 
     steps:
