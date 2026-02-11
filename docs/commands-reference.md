@@ -224,12 +224,14 @@ commands:
 
 ### `status`
 
-Show status of running processes.
+Show status of running processes **defined in the current config**.
 
 **Usage**:
 ```bash
 devcli status [app-name] [OPTIONS]
 ```
+
+> **Note**: The status command only displays processes that are defined in the currently loaded config file (either local `./.devcli/config.json` or global `~/.devcli/config.json`). This ensures you only see relevant processes for your current context.
 
 **Arguments**:
 - `[app-name]` - Optional app name to filter
