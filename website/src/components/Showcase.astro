@@ -2,6 +2,11 @@
 import Section from './ui/Section.astro';
 import SectionHeader from './ui/SectionHeader.astro';
 import Card from './ui/Card.astro';
+import { Image } from 'astro:assets';
+import tuiDashboard from '../assets/images/tui-dashboard.png';
+import tuiLogs from '../assets/images/tui-logs.png';
+import terminalStatus from '../assets/images/terminal-status.png';
+import tuiConfig from '../assets/images/tui-config.png';
 ---
 
 <Section background="dark">
@@ -15,11 +20,10 @@ import Card from './ui/Card.astro';
   <div class="mb-16 md:mb-32">
     <Card hoverable={false} class="p-1 md:p-2">
       <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
-        <img
-          src="/tui-dashboard.png"
+        <Image
+          src={tuiDashboard}
           alt="DevCLI TUI Dashboard showing process list and status"
           class="rounded-lg md:rounded-xl w-full h-auto shadow-xl"
-          loading="lazy"
         />
       </div>
     </Card>
@@ -40,11 +44,10 @@ import Card from './ui/Card.astro';
     <div>
       <Card hoverable={false} class="p-1 md:p-2">
         <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
-          <img
-            src="/tui-logs.png"
+          <Image
+            src={tuiLogs}
             alt="DevCLI TUI log viewer with multi-app streaming"
             class="rounded-lg w-full h-auto shadow-xl"
-            loading="lazy"
           />
         </div>
       </Card>
@@ -60,11 +63,10 @@ import Card from './ui/Card.astro';
     <div>
       <Card hoverable={false} class="p-1 md:p-2">
         <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
-          <img
-            src="/terminal-status.png"
+          <Image
+            src={terminalStatus}
             alt="DevCLI status command showing colorful process information"
             class="rounded-lg w-full h-auto shadow-xl"
-            loading="lazy"
           />
         </div>
       </Card>
@@ -84,11 +86,10 @@ import Card from './ui/Card.astro';
         Simple Yet Powerful Configuration
       </h3>
       <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-1 md:p-2 border border-slate-800">
-        <img
-          src="/tui-config.png"
+        <Image
+          src={tuiConfig}
           alt="DevCLI configuration file example"
           class="rounded-lg w-full h-auto shadow-xl"
-          loading="lazy"
         />
       </div>
     </div>

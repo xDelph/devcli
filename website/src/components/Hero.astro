@@ -1,6 +1,8 @@
 ---
 import CodeBlock from './ui/CodeBlock.astro';
 import Card from './ui/Card.astro';
+import { Image } from 'astro:assets';
+import heroDemo from '../assets/images/hero-terminal-demo.gif';
 ---
 
 <section class="relative min-h-screen flex items-center justify-center overflow-hidden px-4 py-20">
@@ -69,11 +71,10 @@ import Card from './ui/Card.astro';
     <div class="max-w-5xl mx-auto animate-slide-up" style="animation-delay: 0.6s;">
       <Card hoverable={false} class="bg-slate-900/90 p-1 md:p-2">
         <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
-          <img
-            src="/hero-terminal-demo.gif"
+          <Image
+            src={heroDemo}
             alt="DevCLI terminal demo showing process management commands"
             class="rounded-lg w-full h-auto shadow-xl"
-            loading="lazy"
           />
         </div>
       </Card>
