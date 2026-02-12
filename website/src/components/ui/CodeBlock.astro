@@ -6,7 +6,6 @@ interface Props {
 }
 
 const { code, copyable = false, class: className = '' } = Astro.props;
-const buttonId = copyable ? `copy-btn-${Math.random().toString(36).substr(2, 9)}` : '';
 ---
 
 <div class={`flex items-center gap-3 md:gap-4 bg-slate-950/80 rounded-lg px-4 md:px-6 py-4 md:py-5 border border-slate-800 ${className}`}>
@@ -15,31 +14,37 @@ const buttonId = copyable ? `copy-btn-${Math.random().toString(36).substr(2, 9)}
   </code>
   {copyable && (
     <button
-      id={buttonId}
       class="copy-btn text-slate-400 hover:text-cyan-400 transition-colors flex-shrink-0"
       data-code={code}
       aria-label="Copy to clipboard"
     >
-      <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg class="w-5 h-5 md:w-6 md:h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
       </svg>
     </button>
   )}
 </div>
 
-{copyable && (
-  <script define:vars={{ buttonId }}>
-    document.getElementById(buttonId)?.addEventListener('click', function() {
-      const code = this.getAttribute('data-code');
+<script>
+  const copyButtons = document.querySelectorAll('.copy-btn');
+  
+  copyButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const code = button.getAttribute('data-code');
       if (code) {
         navigator.clipboard.writeText(code).then(() => {
-          const originalHTML = this.innerHTML;
-          this.innerHTML = '<svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+          const originalHTML = button.innerHTML;
+          button.innerHTML = '<svg class="w-5 h-5 md:w-6 md:h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+          button.classList.add('text-green-400');
+          button.classList.remove('text-slate-400');
+          
           setTimeout(() => {
-            this.innerHTML = originalHTML;
+            button.innerHTML = originalHTML;
+            button.classList.remove('text-green-400');
+            button.classList.add('text-slate-400');
           }, 2000);
         });
       }
     });
-  </script>
-)}
+  });
+</script>
