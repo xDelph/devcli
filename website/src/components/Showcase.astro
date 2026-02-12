@@ -1,100 +1,96 @@
 ---
-// Showcase section with TUI screenshots
+import Section from './ui/Section.astro';
+import SectionHeader from './ui/SectionHeader.astro';
+import Card from './ui/Card.astro';
 ---
 
-<section class="relative py-32 px-4 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
-  <div class="max-w-7xl mx-auto">
-    <!-- Section header -->
-    <div class="text-center mb-20">
-      <h2 class="text-5xl md:text-6xl font-black mb-6 bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-        See It In Action
-      </h2>
-      <p class="text-xl text-slate-400 max-w-2xl mx-auto">
-        A glimpse into the beautiful interface and powerful features
+<Section background="dark">
+  <SectionHeader
+    title="See It In Action"
+    subtitle="A glimpse into the beautiful interface and powerful features"
+    gradient="cyan-blue"
+  />
+
+  <!-- TUI Dashboard showcase -->
+  <div class="mb-16 md:mb-32">
+    <Card hoverable={false} class="p-1 md:p-2">
+      <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
+        <img
+          src="/tui-dashboard.png"
+          alt="DevCLI TUI Dashboard showing process list and status"
+          class="rounded-lg md:rounded-xl w-full h-auto shadow-xl"
+          loading="lazy"
+        />
+      </div>
+    </Card>
+    <div class="text-center mt-6 md:mt-8">
+      <h3 class="text-2xl md:text-3xl font-bold mb-3 md:mb-4 text-white">
+        Interactive Dashboard
+      </h3>
+      <p class="text-slate-400 text-base md:text-lg max-w-3xl mx-auto">
+        Monitor all your processes in real-time with a beautiful terminal UI.
+        See status, uptime, logs, and health checks at a glance.
       </p>
     </div>
+  </div>
 
-    <!-- TUI Dashboard showcase -->
-    <div class="mb-32">
-      <div class="bg-slate-900/50 backdrop-blur-xl rounded-3xl p-2 border border-slate-800 shadow-2xl">
-        <div class="bg-slate-950/80 rounded-2xl p-8">
+  <!-- Split view: Logs + Terminal commands -->
+  <div class="grid md:grid-cols-2 gap-6 md:gap-8 mb-16 md:mb-32">
+    <!-- Log viewer -->
+    <div>
+      <Card hoverable={false} class="p-1 md:p-2">
+        <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
           <img
-            src="/tui-dashboard.png"
-            alt="DevCLI TUI Dashboard showing process list and status"
-            class="rounded-xl w-full h-auto shadow-xl"
-            loading="lazy"
-          />
-        </div>
-      </div>
-      <div class="text-center mt-8">
-        <h3 class="text-3xl font-bold mb-4 text-white">
-          Interactive Dashboard
-        </h3>
-        <p class="text-slate-400 text-lg max-w-3xl mx-auto">
-          Monitor all your processes in real-time with a beautiful terminal UI.
-          See status, uptime, logs, and health checks at a glance.
-        </p>
-      </div>
-    </div>
-
-    <!-- Split view: Logs + Terminal commands -->
-    <div class="grid lg:grid-cols-2 gap-8 mb-32">
-      <!-- Log viewer -->
-      <div>
-        <div class="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-2 border border-slate-800 shadow-xl hover:border-cyan-500/30 transition-all duration-500">
-          <div class="bg-slate-950/80 rounded-xl p-6">
-            <img
-              src="/tui-logs.png"
-              alt="DevCLI TUI log viewer with multi-app streaming"
-              class="rounded-lg w-full h-auto shadow-xl"
-              loading="lazy"
-            />
-          </div>
-        </div>
-        <div class="mt-6">
-          <h3 class="text-2xl font-bold mb-3 text-white">Live Log Streaming</h3>
-          <p class="text-slate-400">
-            Watch logs from multiple apps simultaneously with full ANSI color support and smart filtering.
-          </p>
-        </div>
-      </div>
-
-      <!-- Terminal commands -->
-      <div>
-        <div class="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-2 border border-slate-800 shadow-xl hover:border-cyan-500/30 transition-all duration-500">
-          <div class="bg-slate-950/80 rounded-xl p-6">
-            <img
-              src="/terminal-status.png"
-              alt="DevCLI status command showing colorful process information"
-              class="rounded-lg w-full h-auto shadow-xl"
-              loading="lazy"
-            />
-          </div>
-        </div>
-        <div class="mt-6">
-          <h3 class="text-2xl font-bold mb-3 text-white">Beautiful CLI</h3>
-          <p class="text-slate-400">
-            Intuitive commands with rich, colorful output that makes process management a joy.
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Configuration example -->
-    <div class="bg-gradient-to-br from-blue-600/10 to-cyan-600/10 rounded-3xl p-12 border border-cyan-500/20">
-      <div class="max-w-5xl mx-auto">
-        <h3 class="text-3xl font-bold mb-8 text-center text-white">
-          Simple Yet Powerful Configuration
-        </h3>
-        <div class="bg-slate-950/80 rounded-xl p-2 border border-slate-800">
-          <img
-            src="/tui-config.png"
-            alt="DevCLI configuration file example"
+            src="/tui-logs.png"
+            alt="DevCLI TUI log viewer with multi-app streaming"
             class="rounded-lg w-full h-auto shadow-xl"
             loading="lazy"
           />
         </div>
+      </Card>
+      <div class="mt-4 md:mt-6">
+        <h3 class="text-xl md:text-2xl font-bold mb-2 md:mb-3 text-white">Live Log Streaming</h3>
+        <p class="text-sm md:text-base text-slate-400">
+          Watch logs from multiple apps simultaneously with full ANSI color support and smart filtering.
+        </p>
+      </div>
+    </div>
+
+    <!-- Terminal commands -->
+    <div>
+      <Card hoverable={false} class="p-1 md:p-2">
+        <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
+          <img
+            src="/terminal-status.png"
+            alt="DevCLI status command showing colorful process information"
+            class="rounded-lg w-full h-auto shadow-xl"
+            loading="lazy"
+          />
+        </div>
+      </Card>
+      <div class="mt-4 md:mt-6">
+        <h3 class="text-xl md:text-2xl font-bold mb-2 md:mb-3 text-white">Beautiful CLI</h3>
+        <p class="text-sm md:text-base text-slate-400">
+          Intuitive commands with rich, colorful output that makes process management a joy.
+        </p>
       </div>
     </div>
   </div>
-</section>
+
+  <!-- Configuration example -->
+  <Card hoverable={false} class="bg-gradient-to-br from-blue-600/10 to-cyan-600/10 border-cyan-500/20">
+    <div class="max-w-5xl mx-auto">
+      <h3 class="text-2xl md:text-3xl font-bold mb-6 md:mb-8 text-center text-white">
+        Simple Yet Powerful Configuration
+      </h3>
+      <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-1 md:p-2 border border-slate-800">
+        <img
+          src="/tui-config.png"
+          alt="DevCLI configuration file example"
+          class="rounded-lg w-full h-auto shadow-xl"
+          loading="lazy"
+        />
+      </div>
+    </div>
+  </Card>
+</Section>

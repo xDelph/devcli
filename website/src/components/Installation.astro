@@ -1,4 +1,9 @@
 ---
+import Section from './ui/Section.astro';
+import SectionHeader from './ui/SectionHeader.astro';
+import Card from './ui/Card.astro';
+import CodeBlock from './ui/CodeBlock.astro';
+
 const installMethods = [
   {
     name: 'Quick Install',
@@ -24,91 +29,77 @@ const installMethods = [
 ];
 ---
 
-<section id="installation" class="relative py-32 px-4">
-  <div class="max-w-7xl mx-auto">
-    <!-- Section header -->
-    <div class="text-center mb-20">
-      <h2 class="text-5xl md:text-6xl font-black mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-        Get Started in Seconds
-      </h2>
-      <p class="text-xl text-slate-400 max-w-2xl mx-auto">
-        Choose your preferred installation method
-      </p>
-    </div>
+<Section id="installation">
+  <SectionHeader
+    title="Get Started in Seconds"
+    subtitle="Choose your preferred installation method"
+  />
 
-    <!-- Installation methods -->
-    <div class="grid md:grid-cols-3 gap-8 mb-20">
-      {installMethods.map((method, index) => (
-        <div class="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 hover:scale-105">
-          <!-- Icon -->
-          <div class="text-5xl mb-4">{method.icon}</div>
+  <!-- Installation methods -->
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 mb-16 md:mb-20">
+    {installMethods.map((method) => (
+      <Card>
+        <div class="text-4xl md:text-5xl mb-4">{method.icon}</div>
 
-          <!-- Title -->
-          <h3 class="text-2xl font-bold mb-2 text-white">{method.name}</h3>
-          <p class="text-slate-500 text-sm mb-6">{method.description}</p>
+        <h3 class="text-xl md:text-2xl font-bold mb-2 text-white">{method.name}</h3>
+        <p class="text-slate-500 text-sm mb-6">{method.description}</p>
 
-          <!-- Command -->
-          <div class="bg-slate-950/80 rounded-lg p-4 border border-slate-800 mb-4">
-            <code class="text-cyan-400 font-mono text-sm block overflow-x-auto">
-              {method.command}
-            </code>
-          </div>
+        <CodeBlock code={method.command} copyable={true} class="mb-4" />
 
-          {method.link && (
-            <a
-              href={method.link}
-              target={method.link.startsWith('http') ? '_blank' : undefined}
-              class="inline-flex items-center text-cyan-400 hover:text-cyan-300 transition-colors text-sm font-medium"
-            >
-              {method.linkText || 'View releases'}
-              <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-              </svg>
-            </a>
-          )}
+        {method.link && (
+          <a
+            href={method.link}
+            target={method.link.startsWith('http') ? '_blank' : undefined}
+            class="inline-flex items-center text-cyan-400 hover:text-cyan-300 transition-colors text-sm font-medium"
+          >
+            {method.linkText || 'View releases'}
+            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+            </svg>
+          </a>
+        )}
+      </Card>
+    ))}
+  </div>
+
+  <!-- Quick start steps -->
+  <Card hoverable={false} class="bg-gradient-to-br from-slate-900 to-slate-950">
+    <h3 class="text-2xl md:text-3xl font-bold mb-8 md:mb-12 text-center text-white">
+      Your First Steps
+    </h3>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+      <div class="text-center">
+        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-blue-600 to-cyan-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
+          1
         </div>
-      ))}
-    </div>
+        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Install</h4>
+        <p class="text-slate-400 text-xs md:text-sm">Run the install command</p>
+      </div>
 
-    <!-- Quick start steps -->
-    <div class="bg-gradient-to-br from-slate-900 to-slate-950 rounded-3xl p-12 border border-slate-800">
-      <h3 class="text-3xl font-bold mb-12 text-center text-white">
-        Your First Steps
-      </h3>
-
-      <div class="grid md:grid-cols-4 gap-8">
-        <div class="text-center">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-blue-600 to-cyan-600 text-white font-bold text-xl mb-4">
-            1
-          </div>
-          <h4 class="text-lg font-semibold mb-2 text-white">Install</h4>
-          <p class="text-slate-400 text-sm">Run the install command</p>
+      <div class="text-center">
+        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-cyan-600 to-teal-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
+          2
         </div>
+        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Initialize</h4>
+        <p class="text-slate-400 text-xs md:text-sm">Run <code class="text-cyan-400 font-mono text-xs">devcli config init</code></p>
+      </div>
 
-        <div class="text-center">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-cyan-600 to-teal-600 text-white font-bold text-xl mb-4">
-            2
-          </div>
-          <h4 class="text-lg font-semibold mb-2 text-white">Initialize</h4>
-          <p class="text-slate-400 text-sm">Run <code class="text-cyan-400 font-mono">devcli config init</code></p>
+      <div class="text-center">
+        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-teal-600 to-green-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
+          3
         </div>
+        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Auto-Add</h4>
+        <p class="text-slate-400 text-xs md:text-sm">Discover apps with <code class="text-cyan-400 font-mono text-xs">devcli auto-add</code></p>
+      </div>
 
-        <div class="text-center">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-teal-600 to-green-600 text-white font-bold text-xl mb-4">
-            3
-          </div>
-          <h4 class="text-lg font-semibold mb-2 text-white">Auto-Add</h4>
-          <p class="text-slate-400 text-sm">Discover apps with <code class="text-cyan-400 font-mono">devcli auto-add</code></p>
+      <div class="text-center">
+        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-green-600 to-emerald-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
+          4
         </div>
-
-        <div class="text-center">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-green-600 to-emerald-600 text-white font-bold text-xl mb-4">
-            4
-          </div>
-          <h4 class="text-lg font-semibold mb-2 text-white">Start!</h4>
-          <p class="text-slate-400 text-sm">Launch with <code class="text-cyan-400 font-mono">devcli start</code></p>
-        </div>
+        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Start!</h4>
+        <p class="text-slate-400 text-xs md:text-sm">Launch with <code class="text-cyan-400 font-mono text-xs">devcli start</code></p>
       </div>
     </div>
-  </div>
-</section>
+  </Card>
+</Section>

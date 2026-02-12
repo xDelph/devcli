@@ -1,0 +1,21 @@
+---
+interface Props {
+  id?: string;
+  class?: string;
+  background?: 'default' | 'gradient' | 'dark';
+}
+
+const { id, class: className = '', background = 'default' } = Astro.props;
+
+const bgClasses = {
+  default: '',
+  gradient: 'bg-gradient-to-b from-transparent via-cyan-950/5 to-transparent',
+  dark: 'bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950'
+};
+---
+
+<section id={id} class={`relative py-20 md:py-32 px-4 ${bgClasses[background]} ${className}`}>
+  <div class="max-w-7xl mx-auto">
+    <slot />
+  </div>
+</section>

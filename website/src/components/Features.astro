@@ -1,4 +1,8 @@
 ---
+import Section from './ui/Section.astro';
+import SectionHeader from './ui/SectionHeader.astro';
+import Card from './ui/Card.astro';
+
 const features = [
   {
     icon: '🚀',
@@ -39,57 +43,39 @@ const features = [
 ];
 ---
 
-<section id="features" class="relative py-32 px-4">
-  <!-- Background decoration -->
-  <div class="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-950/5 to-transparent"></div>
+<Section id="features" background="gradient">
+  <SectionHeader
+    title="Packed with Power"
+    subtitle="Everything you need to manage complex development environments with ease"
+  />
 
-  <div class="relative max-w-7xl mx-auto">
-    <!-- Section header -->
-    <div class="text-center mb-20">
-      <h2 class="text-5xl md:text-6xl font-black mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-        Packed with Power
-      </h2>
-      <p class="text-xl text-slate-400 max-w-2xl mx-auto">
-        Everything you need to manage complex development environments with ease
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+    {features.map((feature) => (
+      <Card>
+        <div class={`inline-flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-br ${feature.gradient} mb-4 md:mb-6 text-2xl md:text-3xl group-hover:scale-110 transition-transform duration-300`}>
+          {feature.icon}
+        </div>
+
+        <h3 class="text-xl md:text-2xl font-bold mb-3 md:mb-4 text-white group-hover:text-cyan-400 transition-colors">
+          {feature.title}
+        </h3>
+
+        <p class="text-sm md:text-base text-slate-400 leading-relaxed">
+          {feature.description}
+        </p>
+      </Card>
+    ))}
+  </div>
+
+  <Card hoverable={false} class="mt-12 md:mt-20 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border-cyan-500/20">
+    <div class="max-w-4xl mx-auto text-center">
+      <h3 class="text-2xl md:text-3xl font-bold mb-3 md:mb-4 text-white">
+        And that's just the beginning...
+      </h3>
+      <p class="text-slate-300 text-base md:text-lg leading-relaxed">
+        Multi-environment configuration, stage support, privacy-friendly alternative names,
+        Nx monorepo detection, environment variable management, and much more. DevCLI grows with your needs.
       </p>
     </div>
-
-    <!-- Features grid -->
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-      {features.map((feature, index) => (
-        <div
-          class="group bg-slate-900/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-cyan-500/10"
-          style={`animation-delay: ${index * 0.1}s;`}
-        >
-          <!-- Icon with gradient -->
-          <div class={`inline-flex items-center justify-center w-16 h-16 rounded-xl bg-gradient-to-br ${feature.gradient} mb-6 text-3xl group-hover:scale-110 transition-transform duration-300`}>
-            {feature.icon}
-          </div>
-
-          <!-- Title -->
-          <h3 class="text-2xl font-bold mb-4 text-white group-hover:text-cyan-400 transition-colors">
-            {feature.title}
-          </h3>
-
-          <!-- Description -->
-          <p class="text-slate-400 leading-relaxed">
-            {feature.description}
-          </p>
-        </div>
-      ))}
-    </div>
-
-    <!-- Additional highlight -->
-    <div class="mt-20 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 rounded-3xl p-12 border border-cyan-500/20">
-      <div class="max-w-4xl mx-auto text-center">
-        <h3 class="text-3xl font-bold mb-4 text-white">
-          And that's just the beginning...
-        </h3>
-        <p class="text-slate-300 text-lg leading-relaxed">
-          Multi-environment configuration, stage support, privacy-friendly alternative names,
-          Nx monorepo detection, environment variable management, and much more. DevCLI grows with your needs.
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
+  </Card>
+</Section>

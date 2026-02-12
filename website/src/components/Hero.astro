@@ -1,5 +1,6 @@
 ---
-// Hero section with animated gradient and terminal demo
+import CodeBlock from './ui/CodeBlock.astro';
+import Card from './ui/Card.astro';
 ---
 
 <section class="relative min-h-screen flex items-center justify-center overflow-hidden px-4 py-20">
@@ -16,53 +17,47 @@
   <div class="relative max-w-7xl mx-auto text-center z-10">
     <!-- Main heading -->
     <div class="mb-8 animate-fade-in">
-      <h1 class="text-6xl md:text-8xl font-black mb-6 bg-gradient-to-r from-blue-400 via-cyan-400 to-teal-400 bg-clip-text text-transparent leading-tight">
+      <h1 class="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black mb-6 bg-gradient-to-r from-blue-400 via-cyan-400 to-teal-400 bg-clip-text text-transparent leading-tight">
         DevCLI
       </h1>
-      <p class="text-2xl md:text-4xl font-bold text-slate-200 mb-4">
+      <p class="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-bold text-slate-200 mb-4">
         Your Process Management <span class="text-cyan-400">Powerhouse</span>
       </p>
-      <p class="text-lg md:text-xl text-slate-400 max-w-3xl mx-auto leading-relaxed">
+      <p class="text-base sm:text-lg md:text-xl text-slate-400 max-w-3xl mx-auto leading-relaxed">
         Manage multiple processes with automatic restarts, health checks, and built-in monitoring.
         <span class="text-cyan-400 font-semibold">Perfect for local development.</span>
       </p>
     </div>
 
     <!-- Installation command -->
-    <div class="mb-12 animate-slide-up" style="animation-delay: 0.2s;">
-      <div class="inline-block bg-slate-900/80 backdrop-blur-xl rounded-2xl p-8 border border-slate-800 shadow-2xl hover:border-cyan-500/50 transition-all duration-300">
-        <p class="text-slate-400 text-sm mb-3 font-medium">Quick Install</p>
-        <div class="flex items-center gap-4 bg-slate-950/50 rounded-lg px-6 py-4 border border-slate-800">
-          <code class="text-cyan-400 font-mono text-sm md:text-base">
-            curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/main/install.sh | sh
-          </code>
-          <button class="text-slate-400 hover:text-cyan-400 transition-colors" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/main/install.sh | sh')">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-            </svg>
-          </button>
-        </div>
-        <p class="text-slate-500 text-xs mt-3">
+    <div class="mb-12 md:mb-16 animate-slide-up w-full max-w-3xl mx-auto" style="animation-delay: 0.2s;">
+      <Card hoverable={false} class="bg-slate-900/80">
+        <p class="text-slate-400 text-sm md:text-base mb-3 md:mb-4 font-medium">Quick Install</p>
+        <CodeBlock
+          code="curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/main/install.sh | sh"
+          copyable={true}
+        />
+        <p class="text-slate-500 text-sm md:text-base mt-3 md:mt-4">
           or <a href="#installation" class="text-cyan-400 hover:text-cyan-300 transition-colors">see all installation methods</a> →
         </p>
-      </div>
+      </Card>
     </div>
 
     <!-- CTA buttons -->
-    <div class="flex flex-col sm:flex-row gap-4 justify-center mb-16 animate-slide-up" style="animation-delay: 0.4s;">
-      <a href="#features" class="group px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl font-semibold text-lg hover:shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300 hover:scale-105">
+    <div class="flex flex-col sm:flex-row gap-4 justify-center mb-16 md:mb-20 animate-slide-up" style="animation-delay: 0.4s;">
+      <a href="#features" class="group px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl font-semibold text-lg hover:shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300 hover:scale-105 text-center">
         Explore Features
         <svg class="inline w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
         </svg>
       </a>
-      <a href="/docs/getting-started" class="px-8 py-4 bg-slate-800 rounded-xl font-semibold text-lg border border-slate-700 hover:border-cyan-500 transition-all duration-300 hover:scale-105">
+      <a href="/docs/getting-started" class="px-8 py-4 bg-slate-800 rounded-xl font-semibold text-lg border border-slate-700 hover:border-cyan-500 transition-all duration-300 hover:scale-105 text-center">
         <svg class="inline w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
         </svg>
         Documentation
       </a>
-      <a href="https://github.com/xDelph/devcli" target="_blank" class="px-8 py-4 bg-slate-800 rounded-xl font-semibold text-lg border border-slate-700 hover:border-cyan-500 transition-all duration-300 hover:scale-105">
+      <a href="https://github.com/xDelph/devcli" target="_blank" class="px-8 py-4 bg-slate-800 rounded-xl font-semibold text-lg border border-slate-700 hover:border-cyan-500 transition-all duration-300 hover:scale-105 text-center">
         <svg class="inline w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
           <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
         </svg>
@@ -72,8 +67,8 @@
 
     <!-- Terminal demo animation -->
     <div class="max-w-5xl mx-auto animate-slide-up" style="animation-delay: 0.6s;">
-      <div class="bg-slate-900/90 backdrop-blur-xl rounded-2xl p-1 border border-slate-800 shadow-2xl hover:border-cyan-500/30 transition-all duration-500">
-        <div class="bg-slate-950/80 rounded-xl p-8">
+      <Card hoverable={false} class="bg-slate-900/90 p-1 md:p-2">
+        <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
           <img
             src="/hero-terminal-demo.gif"
             alt="DevCLI terminal demo showing process management commands"
@@ -81,7 +76,7 @@
             loading="lazy"
           />
         </div>
-      </div>
+      </Card>
     </div>
   </div>
 </section>

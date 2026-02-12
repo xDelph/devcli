@@ -1,4 +1,8 @@
 ---
+import Section from './ui/Section.astro';
+import SectionHeader from './ui/SectionHeader.astro';
+import Card from './ui/Card.astro';
+
 const comparisons = [
   {
     tool: 'PM2',
@@ -30,41 +34,34 @@ const comparisons = [
 ];
 ---
 
-<section class="relative py-32 px-4 bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900">
-  <div class="max-w-7xl mx-auto">
-    <!-- Section header -->
-    <div class="text-center mb-20">
-      <h2 class="text-5xl md:text-6xl font-black mb-6 bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-        Why DevCLI?
-      </h2>
-      <p class="text-xl text-slate-400 max-w-2xl mx-auto">
-        Built for modern development workflows
-      </p>
-    </div>
+<Section background="dark">
+  <SectionHeader
+    title="Why DevCLI?"
+    subtitle="Built for modern development workflows"
+    gradient="cyan-blue"
+  />
 
-    <!-- Comparison grid -->
-    <div class="grid md:grid-cols-3 gap-8">
-      {comparisons.map((comparison, index) => (
-        <div class="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-800 hover:border-cyan-500/30 transition-all duration-300">
-          <div class="flex items-center justify-between mb-6">
-            <h3 class="text-2xl font-bold text-white">vs {comparison.tool}</h3>
-            <svg class="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-            </svg>
-          </div>
-
-          <ul class="space-y-4">
-            {comparison.devCLIAdvantages.map(advantage => (
-              <li class="flex items-start gap-3">
-                <svg class="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-                <span class="text-slate-300">{advantage}</span>
-              </li>
-            ))}
-          </ul>
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+    {comparisons.map((comparison) => (
+      <Card hoverable={false}>
+        <div class="flex items-center justify-between mb-4 md:mb-6">
+          <h3 class="text-xl md:text-2xl font-bold text-white">vs {comparison.tool}</h3>
+          <svg class="w-6 h-6 md:w-8 md:h-8 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
         </div>
-      ))}
-    </div>
+
+        <ul class="space-y-3 md:space-y-4">
+          {comparison.devCLIAdvantages.map(advantage => (
+            <li class="flex items-start gap-2 md:gap-3">
+              <svg class="w-4 h-4 md:w-5 md:h-5 text-green-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <span class="text-sm md:text-base text-slate-300">{advantage}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    ))}
   </div>
-</section>
+</Section>
