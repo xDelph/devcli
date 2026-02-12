@@ -25,10 +25,10 @@
 ## In Progress 🚧
 
 ### Remaining Documentation Pages
-- ⏳ `/docs/configuration` - Configuration reference (from configuration-reference.md)
-- ⏳ `/docs/commands` - Commands reference (from commands-reference.md)
-- ⏳ `/docs/advanced` - Advanced features (from advanced-features.md)
-- ⏳ `/docs/troubleshooting` - Troubleshooting guide (from troubleshooting.md)
+- ✅ `/docs/configuration` - Configuration reference (from configuration-reference.md)
+- ✅ `/docs/commands` - Commands reference (from commands-reference.md)
+- ✅ `/docs/advanced` - Advanced features (from advanced-features.md)
+- ✅ `/docs/troubleshooting` - Troubleshooting guide (from troubleshooting.md)
 
 ## Benefits of This Approach
 

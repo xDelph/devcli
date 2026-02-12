@@ -16,7 +16,7 @@ const navItems = [
   { title: 'Troubleshooting', href: '/docs/troubleshooting' },
 ];
 
-const currentPath = Astro.url.pathname;
+const currentPath = Astro.url.pathname.replace(/\/$/, '');
 ---
 
 <Layout title={`${title} - DevCLI Documentation`} description={description}>
@@ -43,18 +43,22 @@ const currentPath = Astro.url.pathname;
         <div class="sticky top-24">
           <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Documentation</h3>
           <nav class="space-y-2">
-            {navItems.map(item => (
-              <a
-                href={item.href}
-                class={`block px-3 py-2 rounded-lg transition-all ${
-                  currentPath === item.href
-                    ? 'bg-blue-500/10 text-blue-400 border-l-2 border-blue-400 pl-[10px]'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {item.title}
-              </a>
-            ))}
+            {navItems.map(item => {
+              const href = item.href.replace(/\/$/, '');
+              const isActive = currentPath === href;
+              return (
+                <a
+                  href={item.href}
+                  class={`block px-3 py-2 rounded-lg transition-all ${
+                    isActive
+                      ? 'bg-blue-500/10 text-blue-400 border-l-2 border-blue-400 pl-[10px]'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  {item.title}
+                </a>
+              );
+            })}
           </nav>
 
           <!-- Back to Home -->
