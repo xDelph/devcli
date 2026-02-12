@@ -75,17 +75,64 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '');
 
       <!-- Mobile Navigation -->
       <div class="md:hidden mb-8">
-        <select
-          onchange="window.location.href = this.value"
-          class="w-full bg-slate-800 text-white rounded-lg px-4 py-3 border border-slate-700"
-        >
-          {navItems.map(item => (
-            <option value={item.href} selected={currentPath === item.href}>
-              {item.title}
-            </option>
-          ))}
-        </select>
+        <div class="relative inline-block w-full" id="mobile-nav">
+          <button
+            type="button"
+            class="w-full bg-slate-800 text-white rounded-lg px-4 py-3 border border-slate-700 flex items-center justify-between"
+            id="mobile-nav-button"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <span>{navItems.find(item => item.href.replace(/\/$/, '') === currentPath)?.title || 'Select Page'}</span>
+            <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          
+          <div
+            class="absolute left-0 right-0 mt-2 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 hidden"
+            id="mobile-nav-menu"
+            role="menu"
+          >
+            {navItems.map(item => {
+              const href = item.href.replace(/\/$/, '');
+              const isActive = currentPath === href;
+              return (
+                <a
+                  href={item.href}
+                  class={`block px-4 py-3 first:rounded-t-lg last:rounded-b-lg transition-colors ${
+                    isActive
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'text-slate-300 hover:bg-slate-700'
+                  }`}
+                  role="menuitem"
+                >
+                  {item.title}
+                </a>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      <script>
+        const button = document.getElementById('mobile-nav-button');
+        const menu = document.getElementById('mobile-nav-menu');
+        
+        button?.addEventListener('click', () => {
+          const isExpanded = button.getAttribute('aria-expanded') === 'true';
+          button.setAttribute('aria-expanded', (!isExpanded).toString());
+          menu?.classList.toggle('hidden');
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener('click', (event) => {
+          if (!button?.contains(event.target as Node) && !menu?.contains(event.target as Node)) {
+            button?.setAttribute('aria-expanded', 'false');
+            menu?.classList.add('hidden');
+          }
+        });
+      </script>
 
       <!-- Main Content -->
       <main class="prose prose-invert prose-slate max-w-none
