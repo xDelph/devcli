@@ -16,6 +16,22 @@ devcli is a powerful process management tool that allows you to:
 
 Perfect for microservices development, monorepo projects, and complex local development setups.
 
+![DevCLI Terminal Demo](./assets/hero-terminal-demo.gif)
+
+## Showcase
+
+### Interactive TUI Dashboard
+Monitor all your processes in real-time.
+![TUI Dashboard](./assets/tui-dashboard.png)
+
+### Multi-App Log Streaming
+Watch logs from multiple apps simultaneously.
+![TUI Logs](./assets/tui-logs.png)
+
+### Colorful CLI Status
+Get quick insights into your process health.
+![CLI Status](./assets/terminal-status.png)
+
 ## Features
 
 - ✅ **Config-based management** - Define once, run anywhere
