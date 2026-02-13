@@ -19,7 +19,7 @@ const { title, description = "DevCLI - Powerful process management CLI for devel
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet" />
 
     <!-- SEO -->
     <meta property="og:title" content={title} />
@@ -30,13 +30,168 @@ const { title, description = "DevCLI - Powerful process management CLI for devel
     <meta name="twitter:description" content={description} />
 
     <title>{title}</title>
+    <script is:inline>
+      // Initialize theme early to prevent flash
+      const theme = (() => {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
+          return localStorage.getItem('theme');
+        }
+        return 'dark';
+      })();
+      document.documentElement.setAttribute('data-theme', theme);
+    </script>
   </head>
-  <body class="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-x-hidden">
-    <slot />
+  <body class="bg-[var(--bg-main)] text-[var(--text-main)] overflow-x-hidden selection:bg-cyan-500/30 selection:text-white font-mono">
+    <!-- CRT Effects (Only visible in Dark and Terminal modes) -->
+    <div class="fixed inset-0 pointer-events-none z-[100] opacity-[0.03] bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%] crt-overlay"></div>
+    <div class="fixed inset-0 pointer-events-none z-[100] animate-scanline bg-gradient-to-b from-transparent via-blue-500/5 to-transparent h-32 opacity-20 crt-overlay"></div>
+    
+    <!-- Background Grid -->
+    <div class="fixed inset-0 pointer-events-none z-0 opacity-[var(--grid-opacity)] bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgzMCw0MSw1OSwwLjMpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')]"></div>
+
+    <div class="relative z-10 min-h-screen flex flex-col theme-transition">
+      <slot />
+    </div>
+
+    <!-- Image Lightbox Modal -->
+    <div id="lightbox" class="fixed inset-0 z-[200] hidden flex items-center justify-center p-4 md:p-10 bg-[var(--bg-main)]/90 backdrop-blur-md cursor-zoom-out theme-transition">
+      <div class="relative max-w-7xl max-h-full">
+        <img id="lightbox-img" src="" alt="" class="w-full h-full object-contain rounded-sm border border-[var(--border)] shadow-2xl" />
+        <button id="lightbox-close" class="absolute -top-12 right-0 text-[var(--text-main)] hover:text-[var(--accent)] font-mono text-sm uppercase tracking-widest">
+          [ close_x ]
+        </button>
+      </div>
+    </div>
+
+    <script>
+      // Section scroll animation
+      const observerOptions = {
+        threshold: 0.1,
+        rootMargin: '0px 0px -50px 0px'
+      };
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('reveal-active');
+          }
+        });
+      }, observerOptions);
+
+      document.querySelectorAll('section, .reveal-item').forEach((el) => {
+        el.classList.add('reveal');
+        observer.observe(el);
+      });
+
+      // Lightbox Logic
+      const lightbox = document.getElementById('lightbox');
+      const lightboxImg = document.getElementById('lightbox-img') as HTMLImageElement;
+      const lightboxClose = document.getElementById('lightbox-close');
+
+      document.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('zoomable')) {
+          const imgSrc = target instanceof HTMLImageElement ? target.src : target.querySelector('img')?.src;
+          if (imgSrc && lightbox && lightboxImg) {
+            lightboxImg.src = imgSrc;
+            lightbox.classList.remove('hidden');
+            lightbox.classList.add('flex');
+            document.body.style.overflow = 'hidden';
+          }
+        }
+      });
+
+      const closeLightbox = () => {
+        if (lightbox) {
+          lightbox.classList.add('hidden');
+          lightbox.classList.remove('flex');
+          document.body.style.overflow = '';
+        }
+      };
+
+      lightbox?.addEventListener('click', (e) => {
+        if (e.target === lightbox || e.target === lightboxClose) {
+          closeLightbox();
+        }
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLightbox();
+      });
+    </script>
   </body>
 </html>
 
 <style is:global>
+  :root[data-theme="dark"] {
+    --bg-main: #020617;
+    --bg-card: rgba(15, 23, 42, 0.3);
+    --text-main: #cbd5e1;
+    --text-muted: #64748b;
+    --accent: #22d3ee;
+    --accent-secondary: #3b82f6;
+    --border: #1e293b;
+    --grid-opacity: 0.2;
+    --terminal-header: #0f172a;
+    --code-bg: #020617;
+  }
+
+  :root[data-theme="light"] {
+    --bg-main: #ffffff;
+    --bg-card: #f8fafc;
+    --text-main: #0f172a;
+    --text-muted: #475569;
+    --accent: #0284c7;
+    --accent-secondary: #2563eb;
+    --border: #e2e8f0;
+    --grid-opacity: 0.03;
+    --terminal-header: #f1f5f9;
+    --code-bg: #f8fafc;
+  }
+
+  :root[data-theme="terminal"] {
+    --bg-main: #000000;
+    --bg-card: rgba(0, 20, 0, 0.4);
+    --text-main: #4ade80;
+    --text-muted: #166534;
+    --accent: #4ade80;
+    --accent-secondary: #22c55e;
+    --border: #14532d;
+    --grid-opacity: 0.1;
+    --terminal-header: #052e16;
+    --code-bg: #000000;
+  }
+
+  :root[data-theme="light"] .crt-overlay {
+    display: none;
+  }
+
+  :root[data-theme="light"] #lightbox {
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  .theme-transition {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  }
+
+  :root {
+    --terminal-green: #4ade80;
+    --terminal-blue: #38bdf8;
+    --terminal-cyan: #22d3ee;
+  }
+
+  /* Reveal Animation */
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .reveal-active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
   * {
     margin: 0;
     padding: 0;
@@ -44,7 +199,21 @@ const { title, description = "DevCLI - Powerful process management CLI for devel
   }
 
   html {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background-color: #020617;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: -0.05em;
+    font-weight: 800;
   }
 
   code, pre {
@@ -53,19 +222,46 @@ const { title, description = "DevCLI - Powerful process management CLI for devel
 
   /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 10px;
+    width: 8px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #0f172a;
+    background: #020617;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #334155;
-    border-radius: 5px;
+    background: #1e293b;
+    border: 2px solid #020617;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+    background: #334155;
+  }
+
+  /* TUI Heading Anchor */
+  .tui-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .tui-heading::before {
+    content: '>';
+    color: var(--terminal-cyan);
+    opacity: 0.7;
+  }
+
+  @keyframes flicker {
+    0% { opacity: 0.99; }
+    5% { opacity: 0.95; }
+    10% { opacity: 0.99; }
+    15% { opacity: 0.98; }
+    20% { opacity: 0.99; }
+    100% { opacity: 1; }
+  }
+
+  :root[data-theme="terminal"] .crt-overlay,
+  :root[data-theme="dark"] .crt-overlay {
+    animation: flicker 0.15s infinite;
   }
 </style>

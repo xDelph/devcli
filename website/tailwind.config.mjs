@@ -18,7 +18,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['JetBrains Mono', 'Fira Code', 'monospace'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       animation: {
@@ -26,6 +26,11 @@ export default {
         'slide-up': 'slideUp 0.8s ease-out forwards',
         'float': 'float 3s ease-in-out infinite',
         'glow': 'glow 2s ease-in-out infinite',
+        'scanline': 'scanline 8s linear infinite',
+        'flicker': 'flicker 0.15s infinite',
+        'blink': 'blink 1s step-end infinite',
+        'terminal-print': 'terminalPrint 0.5s steps(40, end)',
+        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       keyframes: {
         fadeIn: {
@@ -44,6 +49,26 @@ export default {
           '0%, 100%': { boxShadow: '0 0 20px rgba(14, 165, 233, 0.3)' },
           '50%': { boxShadow: '0 0 40px rgba(14, 165, 233, 0.6)' },
         },
+        scanline: {
+          '0%': { transform: 'translateY(-100%)' },
+          '100%': { transform: 'translateY(100%)' },
+        },
+        flicker: {
+          '0%': { opacity: '0.97' },
+          '5%': { opacity: '0.9' },
+          '10%': { opacity: '0.97' },
+          '15%': { opacity: '0.95' },
+          '20%': { opacity: '0.98' },
+          '100%': { opacity: '1' },
+        },
+        blink: {
+          'from, to': { opacity: '1' },
+          '50%': { opacity: '0' },
+        },
+        terminalPrint: {
+          'from': { width: '0' },
+          'to': { width: '100%' },
+        }
       },
     },
   },

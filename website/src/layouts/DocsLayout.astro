@@ -1,5 +1,6 @@
 ---
 import Layout from './Layout.astro';
+import ThemeSelector from '../components/ui/ThemeSelector.astro';
 
 interface Props {
   title: string;
@@ -20,77 +21,108 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '');
 ---
 
 <Layout title={`${title} - DevCLI Documentation`} description={description}>
-  <div class="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950">
+  <div class="flex-1 flex flex-col min-w-0">
     <!-- Header -->
-    <header class="border-b border-slate-800 bg-slate-950/50 backdrop-blur-xl sticky top-0 z-50">
-      <div class="max-w-7xl mx-auto px-6 py-4">
-        <div class="flex items-center justify-between">
-          <a href="/" class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-            DevCLI
-          </a>
-          <nav class="hidden md:flex gap-6">
-            <a href="/#features" class="text-slate-300 hover:text-white transition-colors">Features</a>
-            <a href="/docs/getting-started" class="text-blue-400 hover:text-blue-300 transition-colors">Docs</a>
-            <a href="https://github.com/xDelph/devcli" target="_blank" class="text-slate-300 hover:text-white transition-colors">GitHub</a>
+    <header class="border-b border-[var(--border)] bg-[var(--bg-main)] sticky top-0 z-50 px-4 md:px-6 py-3 md:py-4 theme-transition">
+      <div class="max-w-6xl mx-auto flex items-center justify-between gap-4">
+        <a href="/" class="group flex items-center gap-2 md:gap-3 shrink-0">
+          <div class="w-7 h-7 md:w-8 md:h-8 bg-blue-600 flex items-center justify-center font-black text-white text-lg md:text-xl rounded-sm group-hover:bg-cyan-500 transition-colors logo-box">D</div>
+          <span class="text-base md:text-xl font-black tracking-tighter text-[var(--text-main)] uppercase brand-text">DEVCLI<span class="text-blue-500 accent-underscore">_</span>DOCS</span>
+        </a>
+        
+        <div class="flex items-center gap-4 md:gap-8">
+          <nav class="hidden md:flex items-center gap-8 font-mono text-[10px] uppercase tracking-[0.2em]">
+            <a href="/#features" class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors nav-link">01_features</a>
+            <a href="/docs/getting-started" class="text-[var(--accent)] hover:text-[var(--accent)] transition-colors underline underline-offset-8 decoration-2">02_docs</a>
+            <a href="https://github.com/xDelph/devcli" target="_blank" class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors nav-link">03_github</a>
           </nav>
+          <ThemeSelector />
         </div>
       </div>
     </header>
 
-    <div class="max-w-7xl mx-auto px-6 py-12 grid md:grid-cols-[250px,1fr] gap-12">
-      <!-- Sidebar Navigation -->
-      <aside class="hidden md:block">
+    <div class="max-w-6xl mx-auto w-full px-4 md:px-6 py-8 md:py-12 flex-1 grid md:grid-cols-[250px,1fr] gap-8 md:gap-12 min-w-0">
+      <!-- Sidebar Navigation (Desktop) -->
+      <aside class="hidden md:block border-r border-[var(--border)] pr-8">
         <div class="sticky top-24">
-          <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Documentation</h3>
-          <nav class="space-y-2">
+          <div class="flex items-center gap-2 mb-8 text-slate-600 font-mono text-[10px] uppercase tracking-widest">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            <span>ROOT_DIRECT / DOCS /</span>
+          </div>
+          
+          <nav class="space-y-1">
             {navItems.map(item => {
               const href = item.href.replace(/\/$/, '');
               const isActive = currentPath === href;
               return (
                 <a
                   href={item.href}
-                  class={`block px-3 py-2 rounded-lg transition-all ${
+                  class={`group flex items-center gap-3 px-4 py-2.5 rounded-sm font-mono text-xs transition-all ${
                     isActive
-                      ? 'bg-blue-500/10 text-blue-400 border-l-2 border-blue-400 pl-[10px]'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                      ? 'bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)]'
                   }`}
                 >
-                  {item.title}
+                  <span class={`w-1.5 h-1.5 rounded-full transition-all ${isActive ? 'bg-[var(--accent)] shadow-[0_0_8px_var(--accent)]' : 'bg-[var(--border)]'}`}></span>
+                  <span class={isActive ? '' : 'group-hover:translate-x-1 transition-transform'}>
+                    {item.title.toLowerCase().replace(/ /g, '_')}.md
+                  </span>
                 </a>
               );
             })}
           </nav>
 
-          <!-- Back to Home -->
-          <div class="mt-8 pt-8 border-t border-slate-800">
-            <a href="/" class="text-sm text-slate-400 hover:text-white flex items-center gap-2 transition-colors">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-              </svg>
-              Back to Home
+          <!-- Status Panel -->
+          <div class="mt-16 p-5 bg-[var(--bg-card)] border border-[var(--border)] rounded-sm font-mono">
+            <div class="text-[9px] text-slate-600 uppercase mb-4 tracking-[0.2em] border-b border-[var(--border)] pb-2">Node_Information</div>
+            <div class="space-y-3 text-[10px]">
+              <div class="flex justify-between">
+                <span class="text-[var(--text-muted)]">STATUS:</span>
+                <span class="text-green-500 font-bold">STABLE</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-[var(--text-muted)]">LATENCY:</span>
+                <span class="text-[var(--text-main)]">12ms</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-[var(--text-muted)]">VERSION:</span>
+                <span class="text-[var(--text-main)]">0.1.0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Back -->
+          <div class="mt-12 pt-8 border-t border-[var(--border)]">
+            <a href="/" class="font-mono text-[10px] text-slate-600 hover:text-cyan-400 flex items-center gap-2 transition-colors uppercase tracking-widest">
+              <span class="text-cyan-500">&lt;&lt;</span> exit_to_main()
             </a>
           </div>
         </div>
       </aside>
 
       <!-- Mobile Navigation -->
-      <div class="md:hidden mb-8">
-        <div class="relative inline-block w-full" id="mobile-nav">
+      <div class="md:hidden mb-8 sticky top-[52px] z-40 py-3 bg-[var(--bg-main)]">
+        <div class="relative w-full" id="mobile-nav">
           <button
             type="button"
-            class="w-full bg-slate-800 text-white rounded-lg px-4 py-3 border border-slate-700 flex items-center justify-between"
+            class="w-full bg-[var(--bg-card)] text-[var(--text-main)] rounded-sm px-4 py-3 border border-[var(--border)] flex items-center justify-between font-mono text-xs uppercase tracking-widest shadow-sm"
             id="mobile-nav-button"
             aria-haspopup="true"
             aria-expanded="false"
           >
-            <span>{navItems.find(item => item.href.replace(/\/$/, '') === currentPath)?.title || 'Select Page'}</span>
-            <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="flex items-center gap-2">
+              <span class="text-[var(--accent)]">&gt;</span>
+              <span class="truncate">{navItems.find(item => item.href.replace(/\/$/, '') === currentPath)?.title || 'SELECT_MODULE'}</span>
+            </div>
+            <svg class="w-4 h-4 text-[var(--text-muted)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
           
           <div
-            class="absolute left-0 right-0 mt-2 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-40 hidden"
+            class="absolute left-0 right-0 mt-1 bg-[var(--bg-main)] border border-[var(--border)] rounded-sm shadow-2xl z-50 hidden overflow-hidden"
             id="mobile-nav-menu"
             role="menu"
           >
@@ -100,14 +132,14 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '');
               return (
                 <a
                   href={item.href}
-                  class={`block px-4 py-3 first:rounded-t-lg last:rounded-b-lg transition-colors ${
+                  class={`block px-5 py-3 border-b border-[var(--border)] last:border-0 font-mono text-[10px] uppercase tracking-widest transition-colors ${
                     isActive
-                      ? 'bg-blue-500/20 text-blue-400'
-                      : 'text-slate-300 hover:bg-slate-700'
+                      ? 'bg-[var(--accent)]/10 text-[var(--accent)] border-l-2 border-[var(--accent)]'
+                      : 'text-[var(--text-muted)] hover:bg-[var(--bg-card)]'
                   }`}
                   role="menuitem"
                 >
-                  {item.title}
+                  {item.title.replace(/ /g, '_')}
                 </a>
               );
             })}
@@ -115,78 +147,114 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '');
         </div>
       </div>
 
-      <script>
-        const button = document.getElementById('mobile-nav-button');
-        const menu = document.getElementById('mobile-nav-menu');
-        
-        button?.addEventListener('click', () => {
-          const isExpanded = button.getAttribute('aria-expanded') === 'true';
-          button.setAttribute('aria-expanded', (!isExpanded).toString());
-          menu?.classList.toggle('hidden');
-        });
-
-        // Close menu when clicking outside
-        document.addEventListener('click', (event) => {
-          if (!button?.contains(event.target as Node) && !menu?.contains(event.target as Node)) {
-            button?.setAttribute('aria-expanded', 'false');
-            menu?.classList.add('hidden');
-          }
-        });
-      </script>
-
       <!-- Main Content -->
-      <main class="prose prose-invert prose-slate max-w-none
-        prose-headings:font-bold
-        prose-h1:text-4xl prose-h1:mb-8 prose-h1:bg-gradient-to-r prose-h1:from-blue-400 prose-h1:to-cyan-400 prose-h1:bg-clip-text prose-h1:text-transparent
-        prose-h2:text-2xl prose-h2:mt-12 prose-h2:mb-4 prose-h2:text-white prose-h2:border-b prose-h2:border-slate-800 prose-h2:pb-2
-        prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3 prose-h3:text-blue-400
-        prose-h4:text-lg prose-h4:mt-6 prose-h4:mb-2 prose-h4:text-cyan-400
-        prose-p:text-slate-300 prose-p:leading-relaxed
-        prose-a:text-blue-400 prose-a:no-underline hover:prose-a:text-blue-300 hover:prose-a:underline
-        prose-code:text-cyan-400 prose-code:bg-slate-800/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
-        prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-pre:shadow-xl
-        prose-strong:text-white prose-strong:font-semibold
-        prose-ul:text-slate-300
-        prose-ol:text-slate-300
-        prose-li:text-slate-300
-        prose-blockquote:border-l-blue-500 prose-blockquote:text-slate-400
-        prose-table:border prose-table:border-slate-800
-        prose-thead:bg-slate-800/50
-        prose-th:text-blue-400
-        prose-td:border-slate-800
+      <main class="prose prose-invert prose-slate max-w-none min-w-0
+        prose-headings:font-black prose-headings:tracking-tighter prose-headings:uppercase
+        prose-h1:text-[clamp(2rem,7vw,3.5rem)] prose-h1:mb-8 prose-h1:bg-gradient-to-r prose-h1:from-blue-400 prose-h1:to-cyan-400 prose-h1:bg-clip-text prose-h1:text-transparent prose-h1:leading-tight
+        prose-h2:text-xl md:text-2xl prose-h2:mt-12 md:mt-16 prose-h2:mb-4 prose-h2:text-[var(--text-main)] prose-h2:border-b border-[var(--border)] prose-h2:pb-2
+        prose-h2:flex prose-h2:items-center prose-h2:gap-3 prose-h2:before:content-['>'] prose-h2:before:text-[var(--accent)] prose-h2:before:font-normal
+        prose-h3:text-lg md:text-xl prose-h3:mt-8 prose-h3:mb-3 prose-h3:text-[var(--accent)]
+        prose-h4:text-base md:text-lg prose-h4:mt-6 prose-h4:mb-2 prose-h4:text-[var(--accent-secondary)]
+        prose-p:text-[var(--text-muted)] prose-p:leading-relaxed prose-p:font-mono prose-p:text-xs md:text-sm
+        prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:text-[var(--text-main)] hover:prose-a:underline decoration-dashed underline-offset-4
+        prose-code:text-[var(--accent)] prose-code:bg-[var(--bg-card)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-sm prose-code:border prose-code:border-[var(--border)] prose-code:text-[10px] md:text-xs prose-code:before:content-none prose-code:after:content-none
+        prose-pre:bg-[var(--code-bg)] prose-pre:border border-[var(--border)] prose-pre:shadow-lg prose-pre:rounded-sm prose-pre:!my-4
+        prose-pre:!overflow-x-auto prose-pre:p-4
+        prose-strong:text-[var(--text-main)] prose-strong:font-bold
+        prose-ul:text-[var(--text-muted)] prose-ul:font-mono prose-ul:text-xs md:text-sm
+        prose-li:marker:text-[var(--accent)]
+        prose-blockquote:border-l-2 md:border-l-4 prose-blockquote:border-[var(--accent)] prose-blockquote:bg-[var(--accent)]/5 prose-blockquote:py-1 md:py-2 prose-blockquote:text-[var(--text-muted)] prose-blockquote:italic
+        prose-table:font-mono prose-table:text-[10px] md:text-xs prose-table:border-[var(--border)]
+        prose-thead:border-b border-[var(--border)]
+        prose-th:text-[var(--accent)] prose-th:p-2 md:p-4
+        prose-td:p-2 md:p-4 prose-td:border-[var(--border)]
       ">
         <slot />
       </main>
     </div>
   </div>
+
+  <script>
+    const button = document.getElementById('mobile-nav-button');
+    const menu = document.getElementById('mobile-nav-menu');
+    
+    button?.addEventListener('click', () => {
+      const isExpanded = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', (!isExpanded).toString());
+      menu?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!button?.contains(event.target as Node) && !menu?.contains(event.target as Node)) {
+        button?.setAttribute('aria-expanded', 'false');
+        menu?.classList.add('hidden');
+      }
+    });
+  </script>
 </Layout>
 
-<style>
-  /* Smooth scroll */
-  html {
-    scroll-behavior: smooth;
+<style is:global>
+  /* Documentation Scroll Margin */
+  h2, h3, h4 {
+    scroll-margin-top: 120px;
   }
 
-  /* Code block improvements */
-  pre {
-    padding: 1.5rem !important;
+  /* Fix for code tags inside pre tags */
+  .prose pre code {
+    background-color: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    font-size: inherit !important;
+    color: inherit !important;
+  }
+
+  /* Custom Scrollbar for pre */
+  pre::-webkit-scrollbar {
+    height: 4px;
+  }
+  pre::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  pre::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+  }
+
+  /* Prose Table Enhancements */
+  .prose table {
+    background: var(--bg-card);
+    width: 100%;
+    display: block;
     overflow-x: auto;
   }
 
-  /* Table improvements */
-  table {
-    width: 100%;
+  /* Custom Anchor for prose-h2 */
+  .prose h2::after {
+    content: '_';
+    animation: blink 1s step-end infinite;
+    color: var(--accent);
   }
 
-  /* Link improvements */
-  a[href^="http"]::after {
-    content: " ↗";
-    font-size: 0.8em;
-    opacity: 0.7;
+  @keyframes blink {
+    from, to { opacity: 1; }
+    50% { opacity: 0; }
   }
 
-  /* Anchor links for headings */
-  h2, h3, h4 {
-    scroll-margin-top: 6rem;
+  :root[data-theme="terminal"] .logo-box {
+    background-color: #166534;
+  }
+  
+  :root[data-theme="terminal"] .accent-underscore {
+    color: #4ade80;
+  }
+
+  :root[data-theme="light"] .logo-box {
+    background-color: #0284c7;
+  }
+
+  :root[data-theme="terminal"] .prose-h1 {
+    background: none;
+    -webkit-text-fill-color: initial;
+    color: var(--accent);
   }
 </style>

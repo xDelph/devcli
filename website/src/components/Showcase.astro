@@ -11,87 +11,157 @@ import tuiConfig from '../assets/images/tui-config.png';
 
 <Section background="dark">
   <SectionHeader
-    title="See It In Action"
-    subtitle="A glimpse into the beautiful interface and powerful features"
+    title="Terminal Intelligence"
+    subtitle="A high-fidelity interface for complex process orchestration"
     gradient="cyan-blue"
   />
 
   <!-- TUI Dashboard showcase -->
-  <div class="mb-16 md:mb-32">
-    <Card hoverable={false} class="p-1 md:p-2">
-      <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
+  <div class="mb-24 md:mb-40 reveal-item">
+    <div class="bg-[var(--border)] rounded-sm border border-[var(--border)] shadow-2xl relative group overflow-hidden terminal-frame text-left w-full">
+      <!-- Terminal Bar -->
+      <div class="flex items-center justify-between px-4 py-3 bg-[var(--terminal-header)] border-b border-[var(--border)]">
+        <div class="flex items-center gap-3">
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-[var(--border)]"></div>
+            <div class="w-3 h-3 rounded-full bg-[var(--border)]"></div>
+            <div class="w-3 h-3 rounded-full bg-[var(--border)]"></div>
+          </div>
+          <div class="h-4 w-px bg-[var(--border)]"></div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-[0.2em]">devcli_ui --dashboard</span>
+        </div>
+        <div class="font-mono text-[10px] text-[var(--accent)] opacity-50">01_ROOT_VIEW</div>
+      </div>
+      
+      <div class="bg-[var(--bg-main)] terminal-body overflow-hidden p-0 w-full cursor-zoom-in">
         <Image
           src={tuiDashboard}
           alt="DevCLI TUI Dashboard showing process list and status"
-          class="rounded-lg md:rounded-xl w-full h-auto shadow-xl"
+          class="w-full h-auto grayscale-[0.3] group-hover:grayscale-0 transition-all duration-700 terminal-image block object-cover zoomable"
         />
       </div>
-    </Card>
-    <div class="text-center mt-6 md:mt-8">
-      <h3 class="text-2xl md:text-3xl font-bold mb-3 md:mb-4 text-white">
-        Interactive Dashboard
+      
+      <!-- Scanline Overlay -->
+      <div class="absolute inset-0 pointer-events-none opacity-[0.03] bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%)] bg-[length:100%_4px]"></div>
+    </div>
+    
+    <div class="mt-10 grid grid-cols-1 md:grid-cols-[1fr,2fr] gap-8 items-start">
+      <h3 class="text-2xl md:text-3xl font-black text-[var(--text-main)] leading-none tracking-tighter showcase-title overflow-wrap-anywhere">
+        &gt; LIVE_&#x200B;SYSTEM_&#x200B;<span class="text-[var(--accent)]">MONITOR</span>
       </h3>
-      <p class="text-slate-400 text-base md:text-lg max-w-3xl mx-auto">
-        Monitor all your processes in real-time with a beautiful terminal UI.
-        See status, uptime, logs, and health checks at a glance.
+      <p class="text-[var(--text-muted)] text-sm md:text-lg font-mono leading-relaxed">
+        Monitor all your processes in real-time with a beautiful terminal UI. 
+        Tracks status, uptime, logs, and health checks with zero external dependencies.
       </p>
     </div>
   </div>
 
   <!-- Split view: Logs + Terminal commands -->
-  <div class="grid md:grid-cols-2 gap-6 md:gap-8 mb-16 md:mb-32">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16 mb-24 md:mb-40">
     <!-- Log viewer -->
-    <div>
-      <Card hoverable={false} class="p-1 md:p-2">
-        <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
+    <div class="reveal-item">
+      <div class="bg-[var(--border)] rounded-sm border border-[var(--border)] shadow-2xl relative overflow-hidden group terminal-frame text-left w-full">
+        <div class="flex items-center gap-3 px-4 py-2 bg-[var(--terminal-header)] border-b border-[var(--border)]">
+          <div class="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-widest">stream_logs --follow</span>
+        </div>
+        <div class="bg-[var(--bg-main)] terminal-body overflow-hidden p-0 w-full cursor-zoom-in">
           <Image
             src={tuiLogs}
             alt="DevCLI TUI log viewer with multi-app streaming"
-            class="rounded-lg w-full h-auto shadow-xl"
+            class="w-full h-auto opacity-80 group-hover:opacity-100 transition-opacity duration-500 terminal-image block object-cover zoomable"
           />
         </div>
-      </Card>
-      <div class="mt-4 md:mt-6">
-        <h3 class="text-xl md:text-2xl font-bold mb-2 md:mb-3 text-white">Live Log Streaming</h3>
-        <p class="text-sm md:text-base text-slate-400">
-          Watch logs from multiple apps simultaneously with full ANSI color support and smart filtering.
+      </div>
+      <div class="mt-8">
+        <h3 class="text-xl font-bold mb-4 text-[var(--text-main)] font-mono showcase-subtitle">&gt; MULTI_&#x200B;STREAM_&#x200B;LOGS</h3>
+        <p class="text-[var(--text-muted)] font-mono text-sm leading-relaxed">
+          Watch logs from multiple apps simultaneously with full ANSI color support and smart regex filtering.
         </p>
       </div>
     </div>
 
     <!-- Terminal commands -->
-    <div>
-      <Card hoverable={false} class="p-1 md:p-2">
-        <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-6 md:p-8">
+    <div class="reveal-item" style="transition-delay: 0.2s;">
+      <div class="bg-[var(--border)] rounded-sm border border-[var(--border)] shadow-2xl relative overflow-hidden group terminal-frame text-left w-full">
+        <div class="flex items-center gap-3 px-4 py-2 bg-[var(--terminal-header)] border-b border-[var(--border)]">
+          <div class="w-2 h-2 rounded-full bg-[var(--text-muted)] opacity-50"></div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-widest">cli_output --status</span>
+        </div>
+        <div class="bg-[var(--bg-main)] terminal-body overflow-hidden p-0 w-full cursor-zoom-in">
           <Image
             src={terminalStatus}
             alt="DevCLI status command showing colorful process information"
-            class="rounded-lg w-full h-auto shadow-xl"
+            class="w-full h-auto opacity-80 group-hover:opacity-100 transition-opacity duration-500 terminal-image block object-cover zoomable"
           />
         </div>
-      </Card>
-      <div class="mt-4 md:mt-6">
-        <h3 class="text-xl md:text-2xl font-bold mb-2 md:mb-3 text-white">Beautiful CLI</h3>
-        <p class="text-sm md:text-base text-slate-400">
-          Intuitive commands with rich, colorful output that makes process management a joy.
+      </div>
+      <div class="mt-8">
+        <h3 class="text-xl font-bold mb-4 text-[var(--text-main)] font-mono showcase-subtitle">&gt; INTUITIVE_&#x200B;CLI_&#x200B;UX</h3>
+        <p class="text-[var(--text-muted)] font-mono text-sm leading-relaxed">
+          Rich, colorful CLI output designed for human readability. Quickly audit your system state at a glance.
         </p>
       </div>
     </div>
   </div>
 
   <!-- Configuration example -->
-  <Card hoverable={false} class="bg-gradient-to-br from-blue-600/10 to-cyan-600/10 border-cyan-500/20">
-    <div class="max-w-5xl mx-auto">
-      <h3 class="text-2xl md:text-3xl font-bold mb-6 md:mb-8 text-center text-white">
-        Simple Yet Powerful Configuration
-      </h3>
-      <div class="bg-slate-950/80 rounded-lg md:rounded-xl p-1 md:p-2 border border-slate-800">
-        <Image
-          src={tuiConfig}
-          alt="DevCLI configuration file example"
-          class="rounded-lg w-full h-auto shadow-xl"
-        />
+  <div class="reveal-item">
+    <Card hoverable={false} class="border-[var(--border)] bg-[var(--bg-card)]">
+      <div class="flex flex-col md:flex-row justify-between items-end p-8 md:p-12 gap-6">
+        <div class="text-left">
+          <h3 class="text-2xl md:text-3xl font-black text-[var(--text-main)] tracking-tighter showcase-title">
+            &gt; DECLARATIVE_&#x200B;CONFIG
+          </h3>
+          <p class="text-[var(--text-muted)] font-mono text-base md:text-lg max-w-xl mt-4">
+            Simple YAML-based configuration that version controls your entire development stack.
+          </p>
+        </div>
+        <div class="flex gap-2">
+          <div class="px-3 py-1 bg-[var(--border)] rounded-sm font-mono text-[10px] text-[var(--text-muted)]">YAML_V1.2</div>
+          <div class="px-3 py-1 bg-[var(--border)] rounded-sm font-mono text-[10px] text-[var(--text-muted)]">SCHEMAFREE</div>
+        </div>
       </div>
-    </div>
-  </Card>
+      
+      <div class="bg-[var(--border)] rounded-sm border border-[var(--border)] terminal-frame text-left overflow-hidden w-full">
+        <div class="bg-[var(--bg-main)] terminal-body overflow-hidden p-0 w-full cursor-zoom-in">
+          <Image
+            src={tuiConfig}
+            alt="DevCLI configuration file example"
+            class="w-full h-auto grayscale-[0.5] contrast-[1.2] brightness-[0.8] hover:grayscale-0 hover:brightness-100 transition-all duration-1000 terminal-image block object-cover zoomable"
+          />
+        </div>
+      </div>
+    </Card>
+  </div>
 </Section>
+
+<style>
+  :root[data-theme="terminal"] .showcase-title {
+    color: var(--accent);
+  }
+  
+  :root[data-theme="terminal"] .showcase-subtitle {
+    color: var(--accent);
+  }
+
+  :root[data-theme="light"] .terminal-frame {
+    border-color: #e2e8f0;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.05);
+  }
+  
+  :root[data-theme="light"] .terminal-body {
+    background-color: #ffffff;
+  }
+  
+  :root[data-theme="light"] .terminal-image {
+    grayscale: 0;
+    opacity: 1;
+    brightness: 1;
+    contrast: 1;
+  }
+
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+</style>

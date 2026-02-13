@@ -1,0 +1,79 @@
+---
+/**
+ * ThemeSelector Component
+ * Handles switching between Light, Dark, and Terminal modes
+ */
+---
+
+<div class="flex items-center bg-slate-900/50 border border-slate-800 p-1 rounded-sm theme-selector-container">
+  <button
+    id="theme-light"
+    class="theme-btn p-1.5 rounded-sm transition-all hover:bg-slate-200 text-slate-500"
+    title="Light Mode"
+    data-theme="light"
+  >
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 18v1m9-9h-1M3 9h1m12.728-4.454l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 5a7 7 0 100 14 7 7 0 000-14z" />
+    </svg>
+  </button>
+
+  <button
+    id="theme-dark"
+    class="theme-btn p-1.5 rounded-sm transition-all hover:bg-slate-800 text-slate-500"
+    title="Dark Mode"
+    data-theme="dark"
+  >
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+    </svg>
+  </button>
+  
+  <button
+    id="theme-terminal"
+    class="theme-btn p-1.5 rounded-sm transition-all hover:bg-green-900/30 text-slate-500"
+    title="Terminal Mode"
+    data-theme="terminal"
+  >
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  </button>
+</div>
+
+<script>
+  const buttons = document.querySelectorAll('.theme-btn');
+  
+  const updateActiveButton = (currentTheme: string) => {
+    buttons.forEach(btn => {
+      const btnTheme = btn.getAttribute('data-theme');
+      if (btnTheme === currentTheme) {
+        btn.classList.add('text-[var(--accent)]', 'bg-[var(--border)]');
+        btn.classList.remove('text-slate-500');
+      } else {
+        btn.classList.remove('text-[var(--accent)]', 'bg-[var(--border)]', 'text-cyan-400', 'text-green-400', 'bg-slate-800', 'bg-green-900/20');
+        btn.classList.add('text-slate-500');
+      }
+    });
+  };
+
+  const initialTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  updateActiveButton(initialTheme);
+
+  buttons.forEach(button => {
+    button.addEventListener('click', () => {
+      const theme = button.getAttribute('data-theme');
+      if (theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+        updateActiveButton(theme);
+      }
+    });
+  });
+</script>
+
+<style>
+  .theme-selector-container {
+    background-color: var(--bg-card);
+    border-color: var(--border);
+  }
+</style>

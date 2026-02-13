@@ -1,0 +1,38 @@
+---
+import ThemeSelector from './ui/ThemeSelector.astro';
+---
+
+<header class="border-b border-[var(--border)] bg-[var(--bg-main)] fixed top-0 left-0 right-0 z-50 px-6 py-4 header-container theme-transition">
+  <div class="max-w-6xl mx-auto flex items-center justify-between">
+    <a href="/" class="group flex items-center gap-3">
+      <div class="w-8 h-8 bg-blue-600 flex items-center justify-center font-black text-white text-xl rounded-sm group-hover:bg-cyan-500 transition-colors logo-box">D</div>
+      <span class="text-xl font-black tracking-tighter text-[var(--text-main)] uppercase brand-text">DEVCLI<span class="text-blue-500 accent-underscore">_</span></span>
+    </a>
+    <nav class="hidden md:flex items-center gap-8 font-mono text-[10px] uppercase tracking-[0.2em]">
+      <a href="/#features" class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors nav-link">01_features</a>
+      <a href="/docs/getting-started" class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors nav-link">02_docs</a>
+      <a href="https://github.com/xDelph/devcli" target="_blank" class="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors nav-link">03_github</a>
+      <ThemeSelector />
+    </nav>
+    
+    <!-- Mobile docs link only -->
+    <div class="md:hidden flex items-center gap-4">
+       <a href="/docs/getting-started" class="text-[10px] font-mono text-[var(--accent)]">DOCS_&gt;</a>
+       <ThemeSelector />
+    </div>
+  </div>
+</header>
+
+<style>
+  :root[data-theme="terminal"] .logo-box {
+    background-color: #166534;
+  }
+  
+  :root[data-theme="terminal"] .accent-underscore {
+    color: #4ade80;
+  }
+
+  :root[data-theme="light"] .logo-box {
+    background-color: #0284c7;
+  }
+</style>

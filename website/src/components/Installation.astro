@@ -6,100 +6,91 @@ import CodeBlock from './ui/CodeBlock.astro';
 
 const installMethods = [
   {
-    name: 'Quick Install',
-    description: 'Recommended for most users',
+    name: 'QUICK_INSTALL',
+    description: 'Recommended for most environments',
     command: 'curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/main/install.sh | sh',
     icon: '⚡'
   },
   {
-    name: 'Homebrew',
+    name: 'HOMEBREW_TAP',
     description: 'macOS & Linux package manager',
     command: 'brew tap xDelph/devcli && brew install devcli',
     icon: '🍺',
     link: '#installation',
-    linkText: 'See all install options'
-  },
-  {
-    name: 'Manual Download',
-    description: 'Download binaries directly',
-    command: '# See GitHub releases for platform-specific binaries',
-    icon: '📦',
-    link: 'https://github.com/xDelph/devcli/releases'
+    linkText: 'SEE_ALL_OPTIONS'
   }
 ];
 ---
 
 <Section id="installation">
   <SectionHeader
-    title="Get Started in Seconds"
-    subtitle="Choose your preferred installation method"
+    title="Deployment"
+    subtitle="Inject DevCLI into your workflow in seconds"
   />
 
-  <!-- Installation methods -->
-  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 mb-16 md:mb-20">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-24">
     {installMethods.map((method) => (
-      <Card>
-        <div class="text-4xl md:text-5xl mb-4">{method.icon}</div>
+      <Card class="flex flex-col h-full">
+        <div class="flex items-center justify-between mb-8">
+          <h3 class="text-xl font-black text-[var(--text-main)] tracking-tighter">{method.name}</h3>
+          <div class="text-2xl grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 transition-all">
+            {method.icon}
+          </div>
+        </div>
+        
+        <p class="text-[var(--text-muted)] font-mono text-sm mb-8 flex-1">
+          // {method.description}
+        </p>
 
-        <h3 class="text-xl md:text-2xl font-bold mb-2 text-white">{method.name}</h3>
-        <p class="text-slate-500 text-sm mb-6">{method.description}</p>
-
-        <CodeBlock code={method.command} copyable={true} class="mb-4" />
+        <CodeBlock code={method.command} copyable={true} class="mt-auto" />
 
         {method.link && (
-          <a
-            href={method.link}
-            target={method.link.startsWith('http') ? '_blank' : undefined}
-            class="inline-flex items-center text-cyan-400 hover:text-cyan-300 transition-colors text-sm font-medium"
-          >
-            {method.linkText || 'View releases'}
-            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-            </svg>
-          </a>
+          <div class="mt-6">
+            <a
+              href={method.link}
+              class="inline-flex items-center text-[10px] font-mono text-[var(--accent)] hover:text-[var(--text-main)] transition-colors"
+            >
+              [ {method.linkText} ]
+            </a>
+          </div>
         )}
       </Card>
     ))}
   </div>
 
-  <!-- Quick start steps -->
-  <Card hoverable={false} class="bg-gradient-to-br from-slate-900 to-slate-950">
-    <h3 class="text-2xl md:text-3xl font-bold mb-8 md:mb-12 text-center text-white">
-      Your First Steps
-    </h3>
-
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
-      <div class="text-center">
-        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-blue-600 to-cyan-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
-          1
-        </div>
-        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Install</h4>
-        <p class="text-slate-400 text-xs md:text-sm">Run the install command</p>
+  <!-- Progress Flow -->
+  <div class="reveal-item">
+    <div class="bg-[var(--bg-card)] border border-[var(--border)] p-8 md:p-12 relative overflow-hidden">
+      <!-- Background ASCII graphic -->
+      <div class="absolute right-0 top-0 text-[150px] font-black text-[var(--text-muted)] opacity-[0.03] leading-none select-none pointer-events-none">
+        FLOW
       </div>
 
-      <div class="text-center">
-        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-cyan-600 to-teal-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
-          2
-        </div>
-        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Initialize</h4>
-        <p class="text-slate-400 text-xs md:text-sm">Run <code class="text-cyan-400 font-mono text-xs">devcli config init</code></p>
-      </div>
+      <h3 class="text-2xl font-black mb-12 text-[var(--text-main)] font-mono tracking-tighter">
+        &gt; INITIAL_SETUP_PROTOCOL
+      </h3>
 
-      <div class="text-center">
-        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-teal-600 to-green-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
-          3
-        </div>
-        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Auto-Add</h4>
-        <p class="text-slate-400 text-xs md:text-sm">Discover apps with <code class="text-cyan-400 font-mono text-xs">devcli auto-add</code></p>
-      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 relative text-center md:text-left">
+        <!-- Connecting lines -->
+        <div class="hidden md:block absolute top-8 left-0 w-full h-0.5 bg-[var(--border)] -z-0"></div>
 
-      <div class="text-center">
-        <div class="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-green-600 to-emerald-600 text-white font-bold text-lg md:text-xl mb-3 md:mb-4">
-          4
-        </div>
-        <h4 class="text-base md:text-lg font-semibold mb-2 text-white">Start!</h4>
-        <p class="text-slate-400 text-xs md:text-sm">Launch with <code class="text-cyan-400 font-mono text-xs">devcli start</code></p>
+        {[
+          { step: '01', title: 'INSTALL', cmd: 'curl | sh' },
+          { step: '02', title: 'INIT', cmd: 'config init' },
+          { step: '03', title: 'DETECT', cmd: 'auto-add' },
+          { step: '04', title: 'START', cmd: 'start' }
+        ].map((item) => (
+          <div class="relative z-10 group">
+            <div class="w-12 h-12 md:w-16 md:h-16 rounded-sm bg-[var(--bg-main)] border-2 border-[var(--border)] flex items-center justify-center text-lg md:text-xl font-black text-[var(--text-muted)] group-hover:border-[var(--accent)] group-hover:text-[var(--accent)] transition-all mb-4 mx-auto md:mx-0 shadow-lg">
+              {item.step}
+            </div>
+            <h4 class="text-[var(--text-main)] font-black text-[10px] md:text-sm mb-1 md:mb-2 tracking-widest">{item.title}</h4>
+            <code class="block text-[8px] md:text-[10px] text-[var(--text-muted)] font-mono bg-[var(--bg-main)] p-1 rounded-sm truncate border border-[var(--border)]">
+              {item.cmd}
+            </code>
+          </div>
+        ))}
       </div>
     </div>
-  </Card>
+  </div>
 </Section>

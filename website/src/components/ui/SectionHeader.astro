@@ -8,18 +8,33 @@ interface Props {
 const { title, subtitle, gradient = 'blue-cyan' } = Astro.props;
 
 const gradientClasses = {
-  'blue-cyan': 'from-blue-400 to-cyan-400',
-  'cyan-blue': 'from-cyan-400 to-blue-400'
+  'blue-cyan': 'from-[var(--accent-secondary)] to-[var(--accent)]',
+  'cyan-blue': 'from-[var(--accent)] to-[var(--accent-secondary)]'
 };
 ---
 
-<div class="text-center mb-16 md:mb-20">
-  <h2 class={`text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black mb-6 md:mb-8 bg-gradient-to-r ${gradientClasses[gradient]} bg-clip-text text-transparent leading-tight`}>
-    {title}
+<div class="text-center mb-16 md:mb-24 reveal-item">
+  <div class="inline-block mb-4 px-3 py-1 border border-[var(--accent)]/30 bg-[var(--accent)]/5 rounded-sm">
+    <span class="text-[10px] font-mono text-[var(--accent)] uppercase tracking-widest animate-pulse">
+      system_module // {title.toLowerCase().replace(/ /g, '_')}
+    </span>
+  </div>
+  
+  <h2 class={`section-title text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black mb-6 md:mb-8 bg-gradient-to-r ${gradientClasses[gradient]} bg-clip-text text-transparent leading-tight tracking-tighter`}>
+    <span class="text-slate-700 font-normal mr-2 md:mr-4 select-none">&gt;</span>{title}
   </h2>
+  
   {subtitle && (
-    <p class="text-xl sm:text-2xl md:text-3xl text-slate-400 max-w-4xl mx-auto leading-relaxed">
-      {subtitle}
+    <p class="text-lg sm:text-xl md:text-2xl text-[var(--text-muted)] max-w-3xl mx-auto leading-relaxed font-mono">
+      // {subtitle}
     </p>
   )}
 </div>
+
+<style>
+  :root[data-theme="terminal"] .section-title {
+    background: none;
+    -webkit-text-fill-color: initial;
+    color: var(--accent);
+  }
+</style>

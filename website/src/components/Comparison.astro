@@ -7,28 +7,28 @@ const comparisons = [
   {
     tool: 'PM2',
     devCLIAdvantages: [
-      'Native health checks (no modules)',
-      'Built-in TUI interface',
-      'Better dependency management',
-      'Docker/OrbStack native support'
+      'NATIVE_HEALTH_CHECKS',
+      'BUILTIN_TUI_VIEWER',
+      'TOPOLOGICAL_SORTING',
+      'ORBSTACK_READY'
     ]
   },
   {
-    tool: 'Docker Compose',
+    tool: 'DOCKER_COMPOSE',
     devCLIAdvantages: [
-      'Mixed environments (local + Docker)',
-      'Interactive TUI monitoring',
-      'Advanced restart policies',
-      'Health check retry logic'
+      'HYBRID_ENV_MODES',
+      'INTERACTIVE_CONTROL',
+      'EXPONENTIAL_BACKOFF',
+      'RETRY_LOGIC_V2'
     ]
   },
   {
-    tool: 'Custom Scripts',
+    tool: 'CUSTOM_SCRIPTS',
     devCLIAdvantages: [
-      'No bash scripting needed',
-      'Declarative configuration',
-      'Built-in monitoring',
-      'Cross-platform support'
+      'ZERO_MAINTENANCE',
+      'DECLARATIVE_YAML',
+      'CENTRALIZED_LOGS',
+      'X_PLATFORM_CORE'
     ]
   }
 ];
@@ -36,32 +36,35 @@ const comparisons = [
 
 <Section background="dark">
   <SectionHeader
-    title="Why DevCLI?"
-    subtitle="Built for modern development workflows"
+    title="Competitive Edge"
+    subtitle="Audit report comparing DevCLI against industry standards"
     gradient="cyan-blue"
   />
 
-  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 reveal-item">
     {comparisons.map((comparison) => (
-      <Card hoverable={false}>
-        <div class="flex items-center justify-between mb-4 md:mb-6">
-          <h3 class="text-xl md:text-2xl font-bold text-white">vs {comparison.tool}</h3>
-          <svg class="w-6 h-6 md:w-8 md:h-8 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-          </svg>
+      <div class="bg-[var(--bg-card)] border border-[var(--border)] p-6 md:p-8 hover:border-[var(--accent)]/30 transition-colors group">
+        <div class="flex items-center gap-3 md:gap-4 mb-8 md:mb-10 pb-4 border-b border-[var(--border)]">
+          <div class="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse"></div>
+          <h3 class="text-lg md:text-xl font-black text-[var(--text-main)] tracking-tighter uppercase font-mono truncate">
+            vs_{comparison.tool.toLowerCase()}
+          </h3>
         </div>
 
-        <ul class="space-y-3 md:space-y-4">
+        <ul class="space-y-4 md:space-y-6">
           {comparison.devCLIAdvantages.map(advantage => (
-            <li class="flex items-start gap-2 md:gap-3">
-              <svg class="w-4 h-4 md:w-5 md:h-5 text-green-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              <span class="text-sm md:text-base text-slate-300">{advantage}</span>
+            <li class="flex items-start gap-3 md:gap-4 font-mono text-[10px] md:text-xs">
+              <span class="text-green-500 mt-0.5 select-none">[+]</span>
+              <span class="text-[var(--text-muted)] group-hover:text-[var(--text-main)] transition-colors leading-relaxed">{advantage}</span>
             </li>
           ))}
         </ul>
-      </Card>
+        
+        <div class="mt-12 pt-6 border-t border-[var(--border)] flex justify-between items-center opacity-30 group-hover:opacity-100 transition-opacity">
+          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">Confidence: 99.9%</span>
+          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">ID: {Math.random().toString(36).substr(2, 6).toUpperCase()}</span>
+        </div>
+      </div>
     ))}
   </div>
 </Section>

@@ -9,13 +9,30 @@ const { id, class: className = '', background = 'default' } = Astro.props;
 
 const bgClasses = {
   default: '',
-  gradient: 'bg-gradient-to-b from-transparent via-cyan-950/5 to-transparent',
-  dark: 'bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950'
+  gradient: 'bg-slate-950/20',
+  dark: 'bg-slate-950/40'
 };
 ---
 
-<section id={id} class={`relative py-20 md:py-32 px-4 ${bgClasses[background]} ${className}`}>
-  <div class="max-w-7xl mx-auto">
+<section id={id} class={`relative py-12 md:py-20 px-6 border-b border-[var(--border)] last:border-0 ${bgClasses[background]} ${className}`}>
+  <!-- Decorative Section Numbering (Left side) -->
+  <div class="absolute left-4 top-1/2 -translate-y-1/2 hidden 2xl:flex flex-col items-center gap-4 opacity-10 font-mono text-xs pointer-events-none select-none">
+    <div class="w-px h-24 bg-slate-500"></div>
+    <span class="rotate-90 whitespace-nowrap text-[var(--text-muted)]">SECTION_ID_{id || '00'}</span>
+    <div class="w-px h-24 bg-slate-500"></div>
+  </div>
+
+  <div class="max-w-6xl mx-auto relative z-10 w-full">
     <slot />
   </div>
 </section>
+
+<style>
+  section {
+    background-color: transparent;
+  }
+  
+  :root[data-theme="terminal"] section {
+    border-color: #14532d;
+  }
+</style>

@@ -5,77 +5,111 @@ import Card from './ui/Card.astro';
 
 const features = [
   {
-    icon: '🚀',
-    title: 'Auto-Restart Policies',
+    icon: '01',
+    title: 'AUTO_RESTART',
     description: 'Configurable restart on crash with exponential backoff, max restart limits, and smart failure detection.',
-    gradient: 'from-blue-500 to-cyan-500'
+    gradient: 'from-blue-500/20 to-cyan-500/20',
+    color: 'text-blue-400'
   },
   {
-    icon: '💚',
-    title: 'Health Checks',
+    icon: '02',
+    title: 'HEALTH_CHECKS',
     description: 'HTTP, TCP, and command-based health monitoring with automatic restart on failure detection.',
-    gradient: 'from-green-500 to-emerald-500'
+    gradient: 'from-green-500/20 to-emerald-500/20',
+    color: 'text-green-400'
   },
   {
-    icon: '📊',
-    title: 'Built-in TUI',
+    icon: '03',
+    title: 'BUILTIN_TUI',
     description: 'Real-time dashboard with live logs, process status, and interactive management. No external tools needed.',
-    gradient: 'from-purple-500 to-pink-500'
+    gradient: 'from-purple-500/20 to-pink-500/20',
+    color: 'text-purple-400'
   },
   {
-    icon: '🔄',
-    title: 'Dependencies',
+    icon: '04',
+    title: 'DEPENDENCIES',
     description: 'Smart dependency resolution with automatic startup ordering and cascading restarts.',
-    gradient: 'from-orange-500 to-red-500'
+    gradient: 'from-orange-500/20 to-red-500/20',
+    color: 'text-orange-400'
   },
   {
-    icon: '📝',
-    title: 'Metrics & Logging',
+    icon: '05',
+    title: 'METRICS_LOGS',
     description: 'JSON structured logs, process metrics, performance tracking, and HTTP metrics API endpoint.',
-    gradient: 'from-cyan-500 to-blue-500'
+    gradient: 'from-cyan-500/20 to-blue-500/20',
+    color: 'text-cyan-400'
   },
   {
-    icon: '🐳',
-    title: 'Docker & OrbStack',
+    icon: '06',
+    title: 'DOCKER_NATIVE',
     description: 'Native Docker support with env injection, multi-stage builds, and OrbStack optimizations.',
-    gradient: 'from-indigo-500 to-purple-500'
+    gradient: 'from-indigo-500/20 to-purple-500/20',
+    color: 'text-indigo-400'
   }
 ];
 ---
 
-<Section id="features" background="gradient">
+<Section id="features">
   <SectionHeader
-    title="Packed with Power"
-    subtitle="Everything you need to manage complex development environments with ease"
+    title="Core Capabilities"
+    subtitle="Engineered for high-performance development environments"
   />
 
-  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-[var(--border)] border border-[var(--border)]">
     {features.map((feature) => (
-      <Card>
-        <div class={`inline-flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-br ${feature.gradient} mb-4 md:mb-6 text-2xl md:text-3xl group-hover:scale-110 transition-transform duration-300`}>
-          {feature.icon}
+      <div class="bg-[var(--bg-main)] p-8 md:p-10 transition-all duration-300 hover:bg-[var(--bg-card)] group relative overflow-hidden">
+        <div class="flex justify-between items-start mb-8">
+          <span class={`font-mono text-xs ${feature.color} border border-current px-2 py-0.5 rounded-sm opacity-70 group-hover:opacity-100 transition-opacity`}>
+            FEAT_{feature.icon}
+          </span>
+          <svg class="w-5 h-5 text-slate-800 group-hover:text-[var(--accent)]/30 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
         </div>
 
-        <h3 class="text-xl md:text-2xl font-bold mb-3 md:mb-4 text-white group-hover:text-cyan-400 transition-colors">
-          {feature.title}
+        <h3 class="text-xl md:text-2xl font-black mb-4 text-[var(--text-main)] tracking-tighter group-hover:text-[var(--accent)] transition-colors overflow-wrap-anywhere">
+          {feature.title.split('_').map((word, i, arr) => (
+            <>
+              {word}{i < arr.length - 1 ? <>{'_'}&#x200B;</> : ''}
+            </>
+          ))}
         </h3>
 
-        <p class="text-sm md:text-base text-slate-400 leading-relaxed">
+        <p class="text-sm md:text-base text-[var(--text-muted)] leading-relaxed font-mono">
           {feature.description}
         </p>
-      </Card>
+        
+        <!-- Hover background effect -->
+        <div class={`absolute inset-0 bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`}></div>
+      </div>
     ))}
   </div>
 
-  <Card hoverable={false} class="mt-12 md:mt-20 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border-cyan-500/20">
-    <div class="max-w-4xl mx-auto text-center">
-      <h3 class="text-2xl md:text-3xl font-bold mb-3 md:mb-4 text-white">
-        And that's just the beginning...
+  <div class="mt-12 md:mt-24 reveal-item">
+    <div class="relative bg-[var(--bg-card)] border border-dashed border-[var(--border)] p-8 md:p-12 rounded-sm text-center max-w-4xl mx-auto">
+      <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-[var(--bg-main)] px-4 font-mono text-[10px] text-[var(--text-muted)] uppercase tracking-[0.3em]">
+        Extensibility_Module
+      </div>
+      
+      <h3 class="text-xl sm:text-2xl md:text-3xl font-black mb-6 text-[var(--text-main)] tracking-tight overflow-wrap-anywhere">
+        &gt; SCALABLE_&#x200B;BEYOND_&#x200B;DEFAULTS
       </h3>
-      <p class="text-slate-300 text-base md:text-lg leading-relaxed">
-        Multi-environment configuration, stage support, privacy-friendly alternative names,
-        Nx monorepo detection, environment variable management, and much more. DevCLI grows with your needs.
+      <p class="text-[var(--text-muted)] text-sm md:text-lg leading-relaxed font-mono italic">
+        "Multi-environment configuration, stage support, privacy-friendly alternative names,
+        Nx monorepo detection, environment variable management, and much more. DevCLI grows with your needs."
       </p>
+      
+      <div class="mt-8 flex justify-center gap-2">
+        <div class="w-1 h-1 bg-[var(--border)]"></div>
+        <div class="w-1 h-1 bg-[var(--border)]"></div>
+        <div class="w-1 h-1 bg-[var(--border)]"></div>
+      </div>
     </div>
-  </Card>
+  </div>
 </Section>
+
+<style>
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+</style>
