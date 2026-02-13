@@ -1,3 +1,23 @@
+# DevCLI
+
+Powerful process management CLI for developers. Manage multiple processes with automatic restarts, health checks, and a beautiful terminal UI.
+
+![DevCLI Terminal Demo](./assets/hero-terminal-demo.gif)
+
+## Showcase
+
+### Interactive TUI Dashboard
+Monitor all your processes in real-time.
+![TUI Dashboard](./assets/tui-dashboard.png)
+
+### Multi-App Log Streaming
+Watch logs from multiple apps simultaneously.
+![TUI Logs](./assets/tui-logs.png)
+
+### Colorful CLI Status
+Get quick insights into your process health.
+![CLI Status](./assets/terminal-status.png)
+
 ## Getting Started
 
 ### 1. Initialize Configuration
