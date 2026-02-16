@@ -1,0 +1,117 @@
+[package]
+name = "config-manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Flexible, schema-based configuration management with validation and dependency resolution"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { version = "0.8", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = "1.0"
+
+# Utilities
+once_cell = "1.19"
+
+# Interactive prompts (optional)
+inquire = { version = "0.7", optional = true }
+
+# File watching (optional)
+notify = { version = "6.1", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+
+# Async support (optional)
+tokio = { version = "1.0", features = ["fs", "io-util"], optional = true }
+async-trait = { version = "0.1", optional = true }
+
+# HTTP support (optional)
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+# Encryption support (optional)
+aes-gcm = { version = "0.10", optional = true }
+argon2 = { version = "0.5", optional = true }
+rand = { version = "0.8", optional = true }
+base64 = { version = "0.22", optional = true }
+
+# Schema generation (optional)
+schemars = { version = "0.8", optional = true }
+jsonschema = { version = "0.18", optional = true }
+
+# S3 support (optional)
+aws-config = { version = "1.0", optional = true }
+aws-sdk-s3 = { version = "1.0", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio = { version = "1.0", features = ["full"] }
+
+[features]
+default = []
+
+# Format support
+toml = ["dep:toml"]
+yaml = ["dep:serde_yaml"]
+all-formats = ["toml", "yaml"]
+
+# Interactive features
+interactive = ["dep:inquire"]
+
+# File watching
+watch = ["dep:notify", "dep:crossbeam-channel"]
+
+# Async support
+async = ["dep:tokio", "dep:async-trait"]
+
+# HTTP support (requires async)
+http = ["async", "dep:reqwest"]
+
+# Encryption support
+encryption = ["dep:aes-gcm", "dep:argon2", "dep:rand", "dep:base64"]
+
+# Schema generation and validation
+schema = ["dep:schemars", "dep:jsonschema"]
+
+# S3 support (requires async)
+s3 = ["async", "dep:aws-config", "dep:aws-sdk-s3"]
+
+# Full feature set
+full = ["all-formats", "interactive", "watch", "async", "http", "encryption", "schema", "s3"]
+
+[lib]
+name = "config_manager"
+path = "src/lib.rs"
+
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
+
+[[example]]
+name = "hierarchical"
+path = "examples/hierarchical.rs"
+
+[[example]]
+name = "dependencies"
+path = "examples/dependencies.rs"
+
+[[bench]]
+name = "loader_benchmarks"
+harness = false
+
+[[bench]]
+name = "dependency_benchmarks"
+harness = false
+
+[[bench]]
+name = "resolver_benchmarks"
+harness = false
