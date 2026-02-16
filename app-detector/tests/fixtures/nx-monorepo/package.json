@@ -1,0 +1,13 @@
+{
+  "name": "my-nx-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "serve": "nx serve",
+    "build": "nx build",
+    "test": "nx test"
+  },
+  "devDependencies": {
+    "@nx/vite": "^18.0.0",
+    "nx": "^18.0.0"
+  }
+}

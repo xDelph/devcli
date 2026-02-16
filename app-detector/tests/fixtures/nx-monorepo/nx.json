@@ -1,0 +1,9 @@
+{
+  "extends": "nx/presets/npm.json",
+  "affected": {
+    "defaultBase": "main"
+  },
+  "plugins": [
+    "@nx/vite/plugin"
+  ]
+}

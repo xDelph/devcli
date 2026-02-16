@@ -1,0 +1,17 @@
+{
+  "name": "test-nodejs-app",
+  "version": "1.0.0",
+  "description": "Test Node.js application with Docker",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "nodemon": "^3.0.0"
+  }
+}
