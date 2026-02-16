@@ -10,3 +10,10 @@ pub use model::{HealthCheck, ProcessMetadata, RestartPolicy, Task};
 pub use monitor::Monitor;
 pub use restart::RestartCoordinator;
 pub use state::{ManagedProcess, StateStore};
+
+#[cfg(test)]
+mod model_tests;
+#[cfg(test)]
+mod state_tests;
+#[cfg(test)]
+mod health_tests;

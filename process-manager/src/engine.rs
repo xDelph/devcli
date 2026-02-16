@@ -18,11 +18,15 @@ pub struct RunningProcess {
 }
 
 pub async fn spawn(task: &Task) -> Result<RunningProcess> {
-    let parts: Vec<&str> = task.command.split_whitespace().collect();
+    // Parse command using shell-words to handle quoted arguments correctly
+    let parts = shell_words::split(&task.command)
+        .context("Failed to parse command string")?;
+
     if parts.is_empty() {
         anyhow::bail!("Command cannot be empty");
     }
-    let program = parts[0];
+
+    let program = &parts[0];
     let args = &parts[1..];
 
     let mut cmd = tokio::process::Command::new(program);
@@ -38,7 +42,6 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
 
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
             unsafe {
                 cmd.pre_exec(|| {
                     if libc::setsid() == -1 {

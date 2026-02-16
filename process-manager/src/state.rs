@@ -146,6 +146,25 @@ impl StateStore {
         }
         Ok(cleaned)
     }
+
+    /// Find processes by metadata key-value pair
+    /// Returns all processes where metadata[key] == value
+    pub fn find_by_metadata(&self, key: &str, value: &str) -> Result<Vec<ManagedProcess>> {
+        let all_processes = self.list()?;
+        Ok(all_processes
+            .into_iter()
+            .filter(|proc| proc.metadata.get(key).map(|v| v.as_str()) == Some(value))
+            .collect())
+    }
+
+    /// Find a single process by metadata key-value pair
+    /// Returns the first matching process, or None if no match found
+    pub fn find_one_by_metadata(&self, key: &str, value: &str) -> Result<Option<ManagedProcess>> {
+        let all_processes = self.list()?;
+        Ok(all_processes
+            .into_iter()
+            .find(|proc| proc.metadata.get(key).map(|v| v.as_str()) == Some(value)))
+    }
 }
 
 impl ManagedProcess {

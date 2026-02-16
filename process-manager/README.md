@@ -29,12 +29,15 @@ The crate is divided into several modular components:
 use process_manager::Task;
 use std::collections::HashMap;
 
+let mut env = HashMap::new();
+env.insert("NODE_ENV".to_string(), "development".to_string());
+
 let task = Task {
     id: "my-service".to_string(),
-    command: "npm".to_string(),
-    args: vec!["run".to_string(), "dev".to_string()],
+    command: "npm run dev".to_string(),
+    args: vec!["--port".to_string(), "3000".to_string()],
     working_dir: std::env::current_dir()?,
-    env: HashMap::new(),
+    env,
     is_detached: true,
     log_file: Some("service.log".into()),
     health_check: process_manager::HealthCheck::Http {
@@ -73,6 +76,69 @@ let monitor = Monitor::new(
 
 monitor.run().await?;
 ```
+
+## Process Metadata
+
+The `process-manager` crate uses a flexible metadata system to store arbitrary key-value pairs about processes. This allows integrators like `devcli` to track application-specific information without coupling the crate to specific use cases.
+
+### Standard Metadata Fields
+
+While metadata is completely flexible, the following fields are recommended for `devcli` integration:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `project` | String | Project/repository name | `"my-webapp"` |
+| `app_config_name` | String | Clean application name from config | `"api-server"` |
+| `environment` | String | Deployment environment | `"dev"`, `"qa"`, `"prod"` |
+| `stage` | String | Deployment stage (if different from environment) | `"staging"`, `"production"` |
+| `command_variant` | String | Which command variant was used | `"start"`, `"dev"`, `"build"` |
+
+### Setting Metadata
+
+```rust
+use std::collections::HashMap;
+use process_manager::{ManagedProcess, StateStore};
+
+let mut metadata = HashMap::new();
+metadata.insert("project".to_string(), "my-webapp".to_string());
+metadata.insert("app_config_name".to_string(), "api-server".to_string());
+metadata.insert("environment".to_string(), "dev".to_string());
+
+let process = ManagedProcess {
+    id: "my-webapp.api-server.dev".to_string(),
+    // ... other fields
+    metadata,
+    // ...
+};
+```
+
+### Querying by Metadata
+
+```rust
+use process_manager::StateStore;
+
+let store = StateStore::new("./state".into())?;
+
+// Find all processes in development environment
+let dev_processes = store.find_by_metadata("environment", "dev")?;
+
+// Find all processes for a specific project
+let project_processes = store.find_by_metadata("project", "my-webapp")?;
+
+// Find a single process by unique identifier
+let process = store.find_one_by_metadata("app_config_name", "api-server")?;
+```
+
+### Recommended ID Format
+
+For compatibility with existing `devcli` PID files, use the format:
+```
+{project}.{app_config_name}.{environment}
+```
+
+Example: `"my-webapp.api-server.dev"`
+
+This allows easy migration from the old `ProcessTracker` system while maintaining backward-compatible file naming.
 
 ## Documentation
 
