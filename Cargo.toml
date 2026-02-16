@@ -1,5 +1,5 @@
 [workspace]
-members = ["devcli", "devcli-core"]
+members = ["devcli", "devcli-core", "process-manager"]
 resolver = "2"
 
 [workspace.package]
