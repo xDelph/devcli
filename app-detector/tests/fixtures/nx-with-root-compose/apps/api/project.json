@@ -1,0 +1,8 @@
+{
+  "name": "api",
+  "targets": {
+    "build": { "executor": "@nx/node:build" },
+    "serve": { "executor": "@nx/node:execute" },
+    "test":  { "executor": "@nx/jest:jest" }
+  }
+}

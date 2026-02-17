@@ -278,6 +278,30 @@ if let Some(name) = report.app_name() {
 - **[Examples Collection](docs/examples.md)** - Common usage patterns
 - **[API Reference](https://docs.rs/app-detector)** - Full API documentation
 
+## Glob Pattern Support
+
+The `DetectionContext` provides a `glob()` method for pattern-based file matching:
+
+```rust
+// Extension matching
+ctx.glob("**/*.rs")     // All Rust files
+ctx.glob("*.json")      // JSON files in root
+
+// Wildcard patterns
+ctx.glob("**/Dockerfile*")  // Dockerfile, Dockerfile.dev, docker/Dockerfile, etc.
+ctx.glob("**/test_*.rs")    // Test files at any depth
+
+// Directory matching
+ctx.glob("src/*")       // Files directly in src/ (no subdirs)
+```
+
+**Supported Patterns**:
+- `**/*.ext` - Files with extension at any depth
+- `**/pattern*` - Files starting with pattern at any depth
+- `**/pattern` - Exact filename match at any depth
+- `*.ext` - Extension match in root
+- `dir/*` - Files directly in directory
+
 ## Performance
 
 App-detector is designed for speed:
@@ -319,10 +343,12 @@ cargo clippy -p app-detector --all-targets
 ```
 
 **Test Coverage**:
-- 51 unit tests (strategy logic)
+- 54 unit tests (strategy logic, glob patterns, multi-stage builds)
 - 11 integration tests (end-to-end scenarios)
 - 6 documentation tests (example verification)
-- **68 total tests, 0 warnings, 0 ignored**
+- **71 total tests, 0 warnings, 0 ignored**
+
+See [CHANGELOG.md](CHANGELOG.md) for recent bug fixes and improvements.
 
 ## Contributing
 

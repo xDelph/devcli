@@ -12,10 +12,12 @@
 pub mod docker;
 pub mod kubernetes_env;
 pub mod local_env;
+pub mod nx_env;
 pub mod orbstack_env;
 
 // Re-export all environment capability strategies
 pub use docker::DockerStrategy;
 pub use kubernetes_env::KubernetesEnvStrategy;
 pub use local_env::LocalEnvStrategy;
+pub use nx_env::NxEnvStrategy;
 pub use orbstack_env::OrbStackEnvStrategy;

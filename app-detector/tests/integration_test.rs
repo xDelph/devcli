@@ -203,10 +203,10 @@ fn test_detect_nx_monorepo() {
     assert_eq!(nx.len(), 1);
     assert_eq!(nx[0].strategy_id, "nx");
 
-    // Should also detect Node.js as underlying language
+    // Node.js should NOT be detected at root level (Nx suppresses it)
+    // Node.js apps exist within the monorepo workspaces
     let nodejs = report.by_app_type(&AppTypeCategory::Language);
-    assert_eq!(nodejs.len(), 1);
-    assert_eq!(nodejs[0].strategy_id, "nodejs");
+    assert_eq!(nodejs.len(), 0, "Node.js should be suppressed by Nx at root level");
 
     // Should detect Local environment
     let local = report.by_env_capability(&EnvCapabilityCategory::Local);
@@ -298,7 +298,12 @@ fn test_detect_k8s_app_multi_environment() {
     assert_eq!(nodejs[0].strategy_id, "nodejs");
 
     // Should detect multiple environments: Docker, OrbStack, Kubernetes, Local
-    assert_eq!(report.env_capabilities().len(), 4);
+    let env_caps = report.env_capabilities();
+    eprintln!("Detected {} env capabilities:", env_caps.len());
+    for cap in &env_caps {
+        eprintln!("  - {}", cap.strategy_id);
+    }
+    assert_eq!(env_caps.len(), 4, "Expected 4 env capabilities: docker, orbstack-env, kubernetes-env, local-env");
 
     // Check Docker
     let docker = report.by_env_capability(&EnvCapabilityCategory::Docker);
@@ -308,11 +313,49 @@ fn test_detect_k8s_app_multi_environment() {
     let orbstack = report.by_env_capability(&EnvCapabilityCategory::OrbStack);
     assert_eq!(orbstack.len(), 1);
 
+    // Compare Docker and OrbStack outputs
+    use app_detector::types::DetectionData;
+    let docker_data = match &docker[0].data {
+        DetectionData::DockerEnv(info) => info,
+        _ => panic!("Expected DockerEnv data"),
+    };
+    let orbstack_data = match &orbstack[0].data {
+        DetectionData::OrbStackEnv(info) => info,
+        _ => panic!("Expected OrbStackEnv data"),
+    };
+
+    eprintln!("\n=== DOCKER ===");
+    eprintln!("Commands: {:?}", docker_data.commands.keys().collect::<Vec<_>>());
+    for (k, v) in &docker_data.commands {
+        eprintln!("  {}: {}", k, v);
+    }
+    eprintln!("Metadata: {:?}", docker_data.metadata);
+
+    eprintln!("\n=== ORBSTACK ===");
+    eprintln!("Commands: {:?}", orbstack_data.commands.keys().collect::<Vec<_>>());
+    for (k, v) in &orbstack_data.commands {
+        eprintln!("  {}: {}", k, v);
+    }
+    eprintln!("Metadata: {:?}", orbstack_data.metadata);
+
+    // They should have the same commands
+    assert_eq!(
+        docker_data.commands.len(),
+        orbstack_data.commands.len(),
+        "Docker and OrbStack should have the same number of commands"
+    );
+    for (key, docker_cmd) in &docker_data.commands {
+        assert_eq!(
+            orbstack_data.commands.get(key),
+            Some(docker_cmd),
+            "OrbStack should have the same '{}' command as Docker", key
+        );
+    }
+
     // Check Kubernetes
     let k8s = report.by_env_capability(&EnvCapabilityCategory::Kubernetes);
     assert_eq!(k8s.len(), 1);
 
-    use app_detector::types::DetectionData;
     match &k8s[0].data {
         DetectionData::KubernetesEnv(info) => {
             assert!(info.manifests.len() >= 2); // deployment.yaml and service.yaml

@@ -1,0 +1,9 @@
+{
+  "name": "no-scripts-app",
+  "version": "1.0.0",
+  "description": "A minimal Node.js package with no scripts",
+  "main": "index.js",
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

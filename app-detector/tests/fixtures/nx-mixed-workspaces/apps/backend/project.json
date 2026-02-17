@@ -1,0 +1,7 @@
+{
+  "name": "backend",
+  "targets": {
+    "build": { "executor": "@monodon/rust:build" },
+    "test":  { "executor": "@monodon/rust:test" }
+  }
+}

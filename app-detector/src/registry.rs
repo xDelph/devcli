@@ -50,6 +50,9 @@ impl StrategyRegistry {
         // Priority 450: Kubernetes
         registry.register(Box::new(crate::strategies::KubernetesEnvStrategy));
 
+        // Priority 460: Nx task runner (depends on nx app-type result)
+        registry.register(Box::new(crate::strategies::NxEnvStrategy));
+
         // Priority 500: Local (runs last, depends on app types)
         registry.register(Box::new(crate::strategies::LocalEnvStrategy));
 

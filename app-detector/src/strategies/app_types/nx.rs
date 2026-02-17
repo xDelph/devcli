@@ -81,9 +81,10 @@ impl DetectionStrategy for NxStrategy {
         let plugin_count = nx_json.plugins.as_ref().map(|p| p.len()).unwrap_or(0);
         metadata.insert("plugin_count".to_string(), serde_json::json!(plugin_count));
 
-        // Detect workspaces
-        let workspaces = detect_nx_workspaces(ctx);
-        metadata.insert("workspace_count".to_string(), serde_json::json!(workspaces.len()));
+        // Detect workspaces with structured info
+        let workspace_info = detect_nx_workspace_info(ctx);
+        let workspaces: Vec<String> = workspace_info.iter().map(|w| w.path.clone()).collect();
+        metadata.insert("workspace_count".to_string(), serde_json::json!(workspace_info.len()));
 
         // Suggest Node.js strategy since Nx is built on Node
         let suggested_strategies = vec!["nodejs".to_string()];
@@ -96,6 +97,7 @@ impl DetectionStrategy for NxStrategy {
                 tool: "nx".to_string(),
                 version: None, // Would need to parse nx version from package.json
                 config_file: std::path::PathBuf::from("nx.json"),
+                workspace_info,
                 workspaces,
                 metadata,
             }),
@@ -106,37 +108,41 @@ impl DetectionStrategy for NxStrategy {
     fn depends_on(&self) -> Vec<&str> {
         vec![] // Runs first, no dependencies
     }
+
+    fn conflicts_with(&self) -> Vec<&str> {
+        // Nx monorepo should suppress root-level Node.js detection
+        // Node.js apps exist within the monorepo workspaces
+        vec!["nodejs"]
+    }
 }
 
-fn detect_nx_workspaces(ctx: &DetectionContext) -> Vec<String> {
-    let mut workspaces = Vec::new();
+fn detect_nx_workspace_info(ctx: &DetectionContext) -> Vec<WorkspaceInfo> {
+    let mut infos = Vec::new();
 
     // Look for apps/ and libs/ directories (common Nx structure)
-    if ctx.file_exists("apps") {
-        if let Ok(entries) = std::fs::read_dir(ctx.root_path.join("apps")) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
+    for dir in &["apps", "libs", "packages"] {
+        if ctx.file_exists(dir) {
+            if let Ok(entries) = std::fs::read_dir(ctx.root_path.join(dir)) {
+                let mut dir_entries: Vec<_> = entries.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+                // Sort for deterministic order
+                dir_entries.sort_by_key(|e| e.file_name());
+
+                for entry in dir_entries {
                     if let Some(name) = entry.file_name().to_str() {
-                        workspaces.push(format!("apps/{}", name));
+                        infos.push(WorkspaceInfo {
+                            path: format!("{}/{}", dir, name),
+                            name: Some(name.to_string()),
+                            should_detect: true,
+                        });
                     }
                 }
             }
         }
     }
 
-    if ctx.file_exists("libs") {
-        if let Ok(entries) = std::fs::read_dir(ctx.root_path.join("libs")) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        workspaces.push(format!("libs/{}", name));
-                    }
-                }
-            }
-        }
-    }
-
-    workspaces
+    infos
 }
 
 #[cfg(test)]
@@ -198,7 +204,10 @@ mod tests {
             DetectionData::Monorepo(info) => {
                 assert_eq!(info.tool, "nx");
                 assert_eq!(info.config_file, std::path::PathBuf::from("nx.json"));
-                assert!(info.workspaces.len() >= 2);
+                assert!(info.workspace_info.len() >= 2, "Should detect workspace_info");
+                assert_eq!(info.workspace_info.len(), info.workspaces.len(), "workspace_info and workspaces should match");
+                assert!(info.workspace_info.iter().any(|w| w.path == "apps/web"));
+                assert!(info.workspace_info.iter().any(|w| w.path == "apps/api"));
                 assert!(info.metadata.contains_key("package_name"));
             }
             _ => panic!("Expected Monorepo data"),

@@ -56,18 +56,6 @@ impl DetectionStrategy for RedisStrategy {
             }
         }
 
-        // Check docker-compose files for redis services
-        for compose_file in &["docker-compose.yml", "docker-compose.yaml"] {
-            if ctx.file_exists(compose_file) {
-                if let Ok(content) = ctx.read_file(compose_file) {
-                    let content_lower = content.to_lowercase();
-                    if content_lower.contains("redis:") || content_lower.contains("image: redis") {
-                        return true;
-                    }
-                }
-            }
-        }
-
         false
     }
 
@@ -173,34 +161,25 @@ mod tests {
     }
 
     #[test]
-    fn test_redis_detection_docker_compose() {
+    fn test_redis_not_detected_from_compose_dependency() {
+        // A project that USES Redis as a dependency should NOT be detected as a Redis project.
+        // Only projects that ARE Redis (have redis.conf) should be detected.
         let temp_dir = TempDir::new().unwrap();
 
-        // Create docker-compose.yml with Redis
+        // Create docker-compose.yml that references redis as a service dependency
         let compose = temp_dir.path().join("docker-compose.yml");
         let mut file = fs::File::create(&compose).unwrap();
         file.write_all(
-            b"services:\n  redis:\n    image: redis:7-alpine\n    ports:\n      - 6379:6379\n",
+            b"services:\n  app:\n    build: .\n  redis:\n    image: redis:7-alpine\n",
         )
         .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let strategy = RedisStrategy;
 
-        // Test can_apply
-        assert!(strategy.can_apply(&ctx));
-
-        // Test detect
-        let result = strategy.detect(&ctx).unwrap();
-        assert_eq!(result.strategy_id, "redis");
-
-        // Check metadata
-        match result.data {
-            DetectionData::Service(info) => {
-                assert!(info.metadata.contains_key("in_docker_compose"));
-            }
-            _ => panic!("Expected Service data"),
-        }
+        // Should NOT apply: this project uses Redis but is not itself Redis
+        assert!(!strategy.can_apply(&ctx),
+            "Redis should not be detected just because docker-compose.yml references redis image");
     }
 
     #[test]

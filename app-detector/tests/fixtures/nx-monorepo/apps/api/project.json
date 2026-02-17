@@ -1,0 +1,8 @@
+{
+  "name": "api",
+  "targets": {
+    "build": { "executor": "@nx/webpack:webpack" },
+    "serve": { "executor": "@nx/node:execute" },
+    "test":  { "executor": "@nx/jest:jest" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "my-platform",
+  "version": "0.0.0",
+  "scripts": {
+    "start": "nx run-many --target=serve",
+    "build": "nx run-many --target=build",
+    "test": "nx run-many --target=test"
+  }
+}

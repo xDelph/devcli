@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nodejs-full-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nodejs-full-app
+  template:
+    metadata:
+      labels:
+        app: nodejs-full-app
+    spec:
+      containers:
+      - name: app
+        image: nodejs-full-app:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: production

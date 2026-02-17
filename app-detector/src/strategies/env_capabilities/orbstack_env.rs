@@ -6,7 +6,6 @@ use crate::{
     types::*,
     Result,
 };
-use std::collections::HashMap;
 
 /// Detects OrbStack environment (Docker/Kubernetes on macOS)
 #[derive(Default)]
@@ -30,8 +29,14 @@ impl DetectionStrategy for OrbStackEnvStrategy {
     }
 
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
-        // OrbStack is available if Docker is available
-        // Check for Dockerfile or docker-compose
+        // OrbStack is available if Docker files exist.
+        // Mirror Docker's scope awareness: at monorepo root, only check root-level files.
+        if ctx.get_result("nx").is_some() && !ctx.is_workspace() {
+            return ctx.file_exists("Dockerfile")
+                || ctx.file_exists("docker-compose.yml")
+                || ctx.file_exists("docker-compose.yaml");
+        }
+
         ctx.file_exists("Dockerfile")
             || ctx.file_exists("docker-compose.yml")
             || ctx.file_exists("docker-compose.yaml")
@@ -39,66 +44,30 @@ impl DetectionStrategy for OrbStackEnvStrategy {
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
-        let mut commands = HashMap::new();
-        let mut metadata = HashMap::new();
+        // OrbStack is a superset of Docker - reuse Docker's detection
+        let docker_result = ctx.get_result("docker")
+            .ok_or_else(|| anyhow::anyhow!("Docker strategy must run first"))?;
 
-        // OrbStack uses standard Docker commands
-        // Check for docker-compose files
-        let has_compose = ctx.file_exists("docker-compose.yml")
-            || ctx.file_exists("docker-compose.yaml");
-
-        if has_compose {
-            commands.insert(
-                "up".to_string(),
-                "docker compose up".to_string(),
-            );
-            commands.insert(
-                "down".to_string(),
-                "docker compose down".to_string(),
-            );
-            commands.insert(
-                "build".to_string(),
-                "docker compose build".to_string(),
-            );
-            commands.insert(
-                "logs".to_string(),
-                "docker compose logs -f".to_string(),
-            );
-            metadata.insert("has_compose".to_string(), serde_json::json!(true));
-        }
-
-        // Check for Dockerfile
-        if ctx.file_exists("Dockerfile") || !ctx.glob("**/Dockerfile*").is_empty() {
-            if !has_compose {
-                // Add basic docker commands if no compose file
-                commands.insert(
-                    "build".to_string(),
-                    "docker build -t app .".to_string(),
-                );
-                commands.insert(
-                    "run".to_string(),
-                    "docker run app".to_string(),
-                );
+        // Extract Docker's data
+        let (docker_commands, docker_metadata, docker_suggested_default) = match &docker_result.data {
+            DetectionData::DockerEnv(info) => {
+                (info.commands.clone(), info.metadata.clone(), info.suggested_default.clone())
             }
-            metadata.insert("has_dockerfile".to_string(), serde_json::json!(true));
-        }
-
-        // Suggest default command
-        let suggested_default = if has_compose {
-            Some("up".to_string())
-        } else if commands.contains_key("run") {
-            Some("run".to_string())
-        } else {
-            None
+            _ => return Err(anyhow::anyhow!("Expected DockerEnv data from docker strategy")),
         };
+
+        // OrbStack uses the exact same commands as Docker
+        // It's just a different runtime with better macOS integration
+        let mut metadata = docker_metadata;
+        metadata.insert("orbstack_compatible".to_string(), serde_json::json!(true));
 
         Ok(DetectionResult {
             strategy_id: self.id().to_string(),
             category: self.category(),
             confidence: 1.0,
             data: DetectionData::OrbStackEnv(OrbStackEnvInfo {
-                commands,
-                suggested_default,
+                commands: docker_commands,
+                suggested_default: docker_suggested_default,
                 metadata,
             }),
             suggested_strategies: vec![],
@@ -106,8 +75,8 @@ impl DetectionStrategy for OrbStackEnvStrategy {
     }
 
     fn depends_on(&self) -> Vec<&str> {
-        // Can run alongside docker-env
-        vec![]
+        // OrbStack depends on Docker detection
+        vec!["docker"]
     }
 }
 
@@ -131,8 +100,14 @@ mod tests {
         .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
-        let strategy = OrbStackEnvStrategy;
 
+        // First run Docker strategy
+        let docker_strategy = crate::strategies::DockerStrategy;
+        let docker_result = docker_strategy.detect(&ctx).unwrap();
+        ctx.store_result(docker_result);
+
+        // Then run OrbStack strategy
+        let strategy = OrbStackEnvStrategy;
         assert!(strategy.can_apply(&ctx));
 
         let result = strategy.detect(&ctx).unwrap();
@@ -140,11 +115,18 @@ mod tests {
 
         match result.data {
             DetectionData::OrbStackEnv(info) => {
+                // Should have same commands as Docker
                 assert!(info.commands.contains_key("up"));
                 assert!(info.commands.contains_key("down"));
+                assert!(info.commands.contains_key("build"));
+                assert!(info.commands.contains_key("logs"));
                 assert_eq!(info.suggested_default, Some("up".to_string()));
                 assert_eq!(
                     info.metadata.get("has_compose"),
+                    Some(&serde_json::json!(true))
+                );
+                assert_eq!(
+                    info.metadata.get("orbstack_compatible"),
                     Some(&serde_json::json!(true))
                 );
             }
@@ -153,28 +135,39 @@ mod tests {
     }
 
     #[test]
-    fn test_orbstack_with_dockerfile_only() {
+    fn test_orbstack_with_multistage_dockerfile() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create Dockerfile
+        // Create multi-stage Dockerfile
         let dockerfile = temp_dir.path().join("Dockerfile");
         let mut file = fs::File::create(&dockerfile).unwrap();
-        file.write_all(b"FROM node:18\nWORKDIR /app\nCOPY . .\nCMD [\"node\", \"index.js\"]\n")
-            .unwrap();
+        file.write_all(
+            b"FROM node:18 AS builder\nWORKDIR /app\nCOPY . .\nRUN npm install\n\nFROM nginx:alpine AS production\nEXPOSE 80\nCOPY --from=builder /app/dist /usr/share/nginx/html\n"
+        )
+        .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
-        let strategy = OrbStackEnvStrategy;
 
+        // First run Docker strategy
+        let docker_strategy = crate::strategies::DockerStrategy;
+        let docker_result = docker_strategy.detect(&ctx).unwrap();
+        ctx.store_result(docker_result);
+
+        // Then run OrbStack strategy
+        let strategy = OrbStackEnvStrategy;
         assert!(strategy.can_apply(&ctx));
 
         let result = strategy.detect(&ctx).unwrap();
 
         match result.data {
             DetectionData::OrbStackEnv(info) => {
+                // Should have stage-specific build commands from Docker
                 assert!(info.commands.contains_key("build"));
+                assert!(info.commands.contains_key("build-builder"));
+                assert!(info.commands.contains_key("build-production"));
                 assert!(info.commands.contains_key("run"));
                 assert_eq!(
-                    info.metadata.get("has_dockerfile"),
+                    info.metadata.get("has_stages"),
                     Some(&serde_json::json!(true))
                 );
             }
@@ -188,7 +181,7 @@ mod tests {
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let strategy = OrbStackEnvStrategy;
 
-        // Should not apply without Docker files
+        // Should not apply without Docker detection
         assert!(!strategy.can_apply(&ctx));
     }
 }

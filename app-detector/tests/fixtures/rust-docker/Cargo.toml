@@ -1,0 +1,8 @@
+[package]
+name = "rust-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rust-api"
+path = "src/main.rs"

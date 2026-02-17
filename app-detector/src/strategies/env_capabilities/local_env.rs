@@ -33,6 +33,7 @@ impl DetectionStrategy for LocalEnvStrategy {
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
         // Check if we have any supported app type detected
         // This strategy depends on having an app type first
+        // Note: For monorepos (nx), we detect at root level with limited commands
         ctx.get_result("nodejs").is_some()
             || ctx.get_result("nx").is_some()
             || ctx.get_result("python").is_some()

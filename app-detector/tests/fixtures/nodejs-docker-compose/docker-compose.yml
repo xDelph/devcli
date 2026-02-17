@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  app:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: node index.js
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"

@@ -67,9 +67,19 @@ The detection engine follows a strict two-phase approach matching devcli's archi
 | **KubernetesEnvStrategy** | 450 | K8s/Helm/Kustomize commands | - |
 | **LocalEnvStrategy** | 500 | Local dev commands | App type strategies |
 
+## Recent Updates (2026-02-16)
+
+### Bug Fixes
+1. **Glob Pattern Wildcard Matching** - Fixed `**/Dockerfile*` pattern to properly match files in subdirectories
+2. **Node.js File Bloat** - Reduced `primary_files` from all source files to just key config files
+3. **OrbStack Strategy Reuse** - OrbStack now depends on Docker and reuses its commands (eliminates duplication)
+4. **Multi-Stage Dockerfile Commands** - Docker now generates stage-specific build commands (`build-builder`, `build-production`)
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed documentation of fixes.
+
 ## Test Coverage
 
-### Unit Tests: 43 passing
+### Unit Tests: 54 passing
 - Strategy-specific tests (3 tests per strategy × 10 strategies)
 - Core component tests (types, context, engine, graph)
 - Positive and negative test cases
@@ -256,7 +266,14 @@ Perfect 1:1 mapping with devcli detection:
 - Task #17: Update DetectionEngine for two-phase detection ✓
 - Task #18: Create comprehensive tests ✓
 
-**Total: 56 tests passing (43 unit + 11 integration + 2 doc)**
+**Total: 71 tests passing (54 unit + 11 integration + 6 doc)**
+
+### Recent Additions (2026-02-16)
+- `test_glob_wildcard_pattern` - Verifies wildcard glob patterns work correctly
+- `test_dockerfile_in_subdirectory` - Verifies Docker strategy detects files in subdirs
+- `test_multistage_dockerfile_commands` - Verifies stage-specific build commands
+- `test_orbstack_with_multistage_dockerfile` - Verifies OrbStack reuses Docker's stage commands
+- Updated `test_nodejs_detection` - Verifies only key files are returned, not all sources
 
 ## Next Steps (Future Enhancements)
 

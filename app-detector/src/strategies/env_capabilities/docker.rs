@@ -30,6 +30,14 @@ impl DetectionStrategy for DockerStrategy {
     }
 
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
+        // At monorepo root, only detect root-level files (not recursive into workspaces).
+        // Each workspace will be detected independently via hierarchical detection.
+        if ctx.get_result("nx").is_some() && !ctx.is_workspace() {
+            return ctx.file_exists("Dockerfile")
+                || ctx.file_exists("docker-compose.yml")
+                || ctx.file_exists("docker-compose.yaml");
+        }
+
         ctx.file_exists("Dockerfile")
             || ctx.file_exists("docker-compose.yml")
             || ctx.file_exists("docker-compose.yaml")
@@ -43,15 +51,21 @@ impl DetectionStrategy for DockerStrategy {
         let mut base_images = std::collections::HashSet::new();
         let mut exposed_ports = Vec::new();
 
+        // At monorepo root, only scan root-level files.
+        // Each workspace will be detected independently via hierarchical detection.
+        let monorepo_root = ctx.get_result("nx").is_some() && !ctx.is_workspace();
+
         // Find Dockerfiles
         if ctx.file_exists("Dockerfile") {
             dockerfiles.push(std::path::PathBuf::from("Dockerfile"));
         }
 
-        // Find in subdirectories
-        for path in ctx.glob("**/Dockerfile*") {
-            if !dockerfiles.contains(&path) {
-                dockerfiles.push(path);
+        // Find in subdirectories (skip at monorepo root)
+        if !monorepo_root {
+            for path in ctx.glob("**/Dockerfile*") {
+                if !dockerfiles.contains(&path) {
+                    dockerfiles.push(path);
+                }
             }
         }
 
@@ -90,17 +104,38 @@ impl DetectionStrategy for DockerStrategy {
         } else if !dockerfiles.is_empty() {
             // Plain Docker commands
             let dockerfile_path = dockerfiles.first().unwrap().to_string_lossy();
-            if dockerfile_path == "Dockerfile" {
-                commands.insert("build".to_string(), "docker build -t app .".to_string());
+            let dockerfile_flag = if dockerfile_path == "Dockerfile" {
+                String::new()
             } else {
-                commands.insert("build".to_string(), format!("docker build -f {} -t app .", dockerfile_path));
+                format!("-f {} ", dockerfile_path)
+            };
+
+            // Generic build command
+            commands.insert("build".to_string(), format!("docker build {}-t app .", dockerfile_flag));
+
+            // Stage-specific build commands
+            if !stages.is_empty() {
+                for stage in &stages {
+                    let stage_lower = stage.to_lowercase();
+                    commands.insert(
+                        format!("build-{}", stage_lower),
+                        format!("docker build {}--target {} -t app:{} .", dockerfile_flag, stage, stage_lower)
+                    );
+                }
+                metadata.insert("has_stages".to_string(), serde_json::json!(true));
+                metadata.insert("stages".to_string(), serde_json::json!(stages));
             }
+
+            // Run commands
             commands.insert("run".to_string(), "docker run app".to_string());
             commands.insert("run-it".to_string(), "docker run -it app".to_string());
+
+            // Port-specific run commands
             if !exposed_ports.is_empty() {
                 let port = exposed_ports[0];
                 commands.insert("run-port".to_string(), format!("docker run -p {}:{} app", port, port));
             }
+
             metadata.insert("has_dockerfile".to_string(), serde_json::json!(true));
             suggested_default = Some("build".to_string());
         } else {
@@ -260,5 +295,88 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
         assert_eq!(info.exposed_ports.len(), 2);
         assert!(info.exposed_ports.contains(&8080));
         assert!(info.exposed_ports.contains(&9090));
+    }
+
+    #[test]
+    fn test_dockerfile_in_subdirectory() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create docker directory with Dockerfile
+        fs::create_dir(temp_dir.path().join("docker")).unwrap();
+        let dockerfile = temp_dir.path().join("docker/Dockerfile");
+        let mut file = fs::File::create(&dockerfile).unwrap();
+        file.write_all(b"FROM node:18\nEXPOSE 3000\n").unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let strategy = DockerStrategy;
+
+        // Should detect Dockerfile in subdirectory
+        assert!(strategy.can_apply(&ctx), "Should detect Dockerfile in docker/ subdirectory");
+
+        let result = strategy.detect(&ctx).unwrap();
+        match result.data {
+            DetectionData::DockerEnv(info) => {
+                assert_eq!(info.dockerfiles.len(), 1);
+                assert!(info.dockerfiles[0].to_string_lossy().contains("docker/Dockerfile"));
+                assert!(info.exposed_ports.contains(&3000));
+            }
+            _ => panic!("Expected DockerEnv data"),
+        }
+    }
+
+    #[test]
+    fn test_multistage_dockerfile_commands() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create multi-stage Dockerfile
+        let dockerfile = temp_dir.path().join("Dockerfile");
+        let mut file = fs::File::create(&dockerfile).unwrap();
+        file.write_all(
+            b"FROM node:18 AS builder\nWORKDIR /app\nCOPY . .\nRUN npm install\n\nFROM nginx:alpine AS production\nEXPOSE 80\nCOPY --from=builder /app/dist /usr/share/nginx/html\n",
+        )
+        .unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let strategy = DockerStrategy;
+
+        assert!(strategy.can_apply(&ctx));
+
+        let result = strategy.detect(&ctx).unwrap();
+        assert_eq!(result.strategy_id, "docker");
+
+        match result.data {
+            DetectionData::DockerEnv(info) => {
+                // Should have generic build command
+                assert!(info.commands.contains_key("build"));
+                assert_eq!(info.commands.get("build"), Some(&"docker build -t app .".to_string()));
+
+                // Should have stage-specific build commands
+                assert!(info.commands.contains_key("build-builder"));
+                assert!(info.commands.contains_key("build-production"));
+
+                assert_eq!(
+                    info.commands.get("build-builder"),
+                    Some(&"docker build --target builder -t app:builder .".to_string())
+                );
+                assert_eq!(
+                    info.commands.get("build-production"),
+                    Some(&"docker build --target production -t app:production .".to_string())
+                );
+
+                // Should have stage metadata
+                assert_eq!(info.metadata.get("has_stages"), Some(&serde_json::json!(true)));
+                assert_eq!(info.stages.len(), 2);
+                assert!(info.stages.contains(&"builder".to_string()));
+                assert!(info.stages.contains(&"production".to_string()));
+
+                // Should have base images
+                assert!(info.base_images.contains(&"node:18".to_string()));
+                assert!(info.base_images.contains(&"nginx:alpine".to_string()));
+
+                // Should have exposed port
+                assert!(info.exposed_ports.contains(&80));
+            }
+            _ => panic!("Expected DockerEnv data"),
+        }
     }
 }

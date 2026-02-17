@@ -1,0 +1,11 @@
+{
+  "name": "nodejs-full-app",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "nodemon index.js",
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint ."
+  }
+}

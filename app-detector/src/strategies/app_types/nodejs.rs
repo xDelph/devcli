@@ -56,11 +56,8 @@ impl DetectionStrategy for NodeJsStrategy {
         // Detect package manager (npm, yarn, pnpm, bun)
         let package_manager = detect_package_manager(ctx);
 
-        // Find JavaScript/TypeScript files
-        let mut js_files = ctx.glob("**/*.js");
-        js_files.extend(ctx.glob("**/*.ts"));
-        js_files.extend(ctx.glob("**/*.jsx"));
-        js_files.extend(ctx.glob("**/*.tsx"));
+        // Only track key configuration files, not all source files
+        let key_files = vec!["package.json".into()];
 
         let mut metadata = HashMap::new();
         metadata.insert("package_name".to_string(), serde_json::json!(package_json.name));
@@ -96,7 +93,7 @@ impl DetectionStrategy for NodeJsStrategy {
                 name: "Node.js".to_string(),
                 version,
                 version_source: Some("node --version".to_string()),
-                primary_files: js_files,
+                primary_files: key_files,
                 total_lines: None,
                 metadata,
             }),
@@ -179,7 +176,9 @@ mod tests {
         match result.data {
             DetectionData::Language(info) => {
                 assert_eq!(info.name, "Node.js");
-                assert!(!info.primary_files.is_empty());
+                // Should only include key config files, not all source files
+                assert_eq!(info.primary_files.len(), 1);
+                assert!(info.primary_files[0].to_string_lossy().contains("package.json"));
             }
             _ => panic!("Expected Language data"),
         }

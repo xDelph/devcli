@@ -1,0 +1,10 @@
+{
+  "name": "@my-platform/web",
+  "version": "0.0.1",
+  "scripts": {
+    "start": "serve dist/web",
+    "build": "nx build web",
+    "dev": "nx serve web",
+    "test": "nx test web"
+  }
+}

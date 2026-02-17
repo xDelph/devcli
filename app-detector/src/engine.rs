@@ -1,6 +1,12 @@
 //! Detection engine for orchestrating strategy execution
 
-use crate::{context::DetectionContext, graph::DependencyGraph, registry::StrategyRegistry, types::*, Result};
+use crate::{
+    context::{DetectionContext, DetectionScope},
+    graph::DependencyGraph,
+    registry::StrategyRegistry,
+    types::*,
+    Result,
+};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -21,6 +27,12 @@ pub struct DetectionConfig {
 
     /// Run strategies in parallel
     pub parallel: bool,
+
+    /// Enable hierarchical workspace detection for monorepos (default: true)
+    pub enable_workspace_detection: bool,
+
+    /// Maximum recursion depth for workspace detection (default: 2)
+    pub max_workspace_depth: usize,
 }
 
 impl Default for DetectionConfig {
@@ -35,6 +47,8 @@ impl Default for DetectionConfig {
             enabled_categories: None,
             disabled_strategies: HashSet::new(),
             parallel: false,
+            enable_workspace_detection: true,
+            max_workspace_depth: 2,
         }
     }
 }
@@ -66,21 +80,37 @@ impl DetectionEngine {
 
     /// Detect with custom configuration
     ///
-    /// Performs two-phase detection:
+    /// Performs three-phase detection:
     /// - Phase 1: App Type detection (what the application IS)
+    /// - Phase 1.5: Workspace Detection (recurse into monorepo workspaces)
     /// - Phase 2: Environment Capability detection (how the application CAN RUN)
     pub fn detect_with_config(
         &self,
         path: impl AsRef<Path>,
         config: &DetectionConfig,
     ) -> Result<DetectionReport> {
-        let context = DetectionContext::new(path.as_ref())?;
+        let scope = DetectionScope::root(config.max_workspace_depth);
+        self.detect_scoped(path.as_ref(), config, scope)
+    }
+
+    /// Internal detection method with explicit scope for hierarchical recursion
+    fn detect_scoped(
+        &self,
+        path: &Path,
+        config: &DetectionConfig,
+        scope: DetectionScope,
+    ) -> Result<DetectionReport> {
+        let context = DetectionContext::with_scope(path, scope.clone())?;
         let mut report = DetectionReport::new(context.root_path.clone());
 
-        tracing::info!(path = %path.as_ref().display(), "Starting detection");
+        tracing::info!(
+            path = %path.display(),
+            depth = scope.depth,
+            "Starting detection"
+        );
 
         // Phase 1: Find and execute App Type strategies
-        tracing::info!("Phase 1: Detecting app types");
+        tracing::info!(depth = scope.depth, "Phase 1: Detecting app types");
 
         let app_type_applicable = self.find_app_type_strategies(&context, config);
         tracing::debug!(count = app_type_applicable.len(), "Found applicable app type strategies");
@@ -97,9 +127,30 @@ impl DetectionEngine {
             report.app_types().len()
         );
 
+        // Phase 1.5: Workspace Detection (only at root and if enabled)
+        if config.enable_workspace_detection && scope.can_recurse(path) {
+            let workspaces = self.extract_workspaces(&report);
+            if !workspaces.is_empty() {
+                tracing::info!(
+                    workspace_count = workspaces.len(),
+                    "Phase 1.5: Detecting {} workspace(s)",
+                    workspaces.len()
+                );
+                let children = self.detect_workspaces(workspaces, path, config, &scope)?;
+                for child in children {
+                    report.add_child(child);
+                }
+                tracing::info!(
+                    children = report.children.len(),
+                    "Phase 1.5 complete: {} workspace(s) detected",
+                    report.children.len()
+                );
+            }
+        }
+
         // Phase 2: Find and execute Environment Capability strategies
         // Re-evaluate can_apply now that app types are detected
-        tracing::info!("Phase 2: Detecting environment capabilities");
+        tracing::info!(depth = scope.depth, "Phase 2: Detecting environment capabilities");
 
         let env_applicable = self.find_env_capability_strategies(&context, config);
         tracing::debug!(count = env_applicable.len(), "Found applicable environment strategies");
@@ -122,6 +173,88 @@ impl DetectionEngine {
         );
 
         Ok(report)
+    }
+
+    /// Extract workspace paths from monorepo detection results
+    fn extract_workspaces(&self, report: &DetectionReport) -> Vec<WorkspaceInfo> {
+        for result in &report.results {
+            if let DetectionData::Monorepo(monorepo_info) = &result.data {
+                if !monorepo_info.workspace_info.is_empty() {
+                    return monorepo_info.workspace_info.clone();
+                }
+                // Fallback: convert legacy workspaces strings to WorkspaceInfo
+                if !monorepo_info.workspaces.is_empty() {
+                    return monorepo_info.workspaces.iter().map(|path| WorkspaceInfo {
+                        path: path.clone(),
+                        name: path.split('/').last().map(|s| s.to_string()),
+                        should_detect: true,
+                    }).collect();
+                }
+            }
+        }
+        vec![]
+    }
+
+    /// Run detection on each workspace in a monorepo, returning child reports
+    fn detect_workspaces(
+        &self,
+        workspaces: Vec<WorkspaceInfo>,
+        monorepo_root: &Path,
+        config: &DetectionConfig,
+        parent_scope: &DetectionScope,
+    ) -> Result<Vec<DetectionReport>> {
+        let mut children = Vec::new();
+
+        for workspace in workspaces {
+            if !workspace.should_detect {
+                tracing::debug!(workspace = %workspace.path, "Skipping workspace (should_detect=false)");
+                continue;
+            }
+
+            let workspace_path = monorepo_root.join(&workspace.path);
+
+            if !workspace_path.exists() || !workspace_path.is_dir() {
+                tracing::warn!(workspace = %workspace.path, "Workspace path does not exist or is not a directory");
+                continue;
+            }
+
+            if !parent_scope.can_recurse(&workspace_path) {
+                tracing::debug!(
+                    workspace = %workspace.path,
+                    depth = parent_scope.depth,
+                    "Skipping workspace: recursion limit reached or cycle detected"
+                );
+                continue;
+            }
+
+            let workspace_name = workspace.name.clone()
+                .unwrap_or_else(|| workspace.path.clone());
+
+            let child_scope = DetectionScope::workspace(
+                parent_scope,
+                workspace_name.clone(),
+                monorepo_root.to_path_buf(),
+            );
+
+            tracing::info!(
+                workspace = %workspace_name,
+                path = %workspace_path.display(),
+                "Detecting workspace"
+            );
+
+            match self.detect_scoped(&workspace_path, config, child_scope) {
+                Ok(child_report) => children.push(child_report),
+                Err(e) => {
+                    tracing::warn!(
+                        workspace = %workspace_name,
+                        error = %e,
+                        "Workspace detection failed"
+                    );
+                }
+            }
+        }
+
+        Ok(children)
     }
 
     /// Execute a single strategy and handle results
@@ -230,37 +363,77 @@ impl DetectionEngine {
 
     /// Resolve execution order based on dependencies and priorities
     fn resolve_execution_order(&self, applicable: &[String]) -> Result<Vec<String>> {
+        // Filter out conflicting strategies (higher priority wins)
+        let mut filtered_applicable = applicable.to_vec();
+        let mut to_remove = std::collections::HashSet::new();
+
+        for id in applicable {
+            if let Some(strategy) = self.registry.get(id) {
+                for conflict in strategy.conflicts_with() {
+                    if applicable.contains(&conflict.to_string()) {
+                        // Both strategies are applicable - higher priority wins
+                        if let Some(conflict_strategy) = self.registry.get(conflict) {
+                            if strategy.priority() < conflict_strategy.priority() {
+                                // Current strategy has higher priority (lower number) - remove conflict
+                                tracing::info!(
+                                    kept = %id,
+                                    removed = %conflict,
+                                    "Conflict resolved: {} (priority {}) wins over {} (priority {})",
+                                    id, strategy.priority(), conflict, conflict_strategy.priority()
+                                );
+                                to_remove.insert(conflict.to_string());
+                            } else {
+                                // Conflict strategy has higher priority - remove current
+                                tracing::info!(
+                                    kept = %conflict,
+                                    removed = %id,
+                                    "Conflict resolved: {} (priority {}) wins over {} (priority {})",
+                                    conflict, conflict_strategy.priority(), id, strategy.priority()
+                                );
+                                to_remove.insert(id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove conflicting strategies
+        filtered_applicable.retain(|id| !to_remove.contains(id));
+
         let mut graph = DependencyGraph::new();
 
-        // Build dependency graph
-        for id in applicable {
+        // Build dependency graph with filtered strategies
+        for id in &filtered_applicable {
             if let Some(strategy) = self.registry.get(id) {
                 // Add node with priority
                 graph.add_node(id.clone(), strategy.priority());
 
                 // Add dependency edges
                 for dep in strategy.depends_on() {
-                    // Only add edge if dependency is in applicable list
-                    if applicable.contains(&dep.to_string()) {
+                    // Only add edge if dependency is in filtered list
+                    if filtered_applicable.contains(&dep.to_string()) {
                         graph.add_edge(id.clone(), dep.to_string());
                     } else {
-                        // Dependency not available - log warning
-                        tracing::warn!(
-                            strategy = %id,
-                            missing_dependency = %dep,
-                            "Required dependency not detected or disabled"
-                        );
-                    }
-                }
+                        // Check if this is a cross-phase dependency (e.g., local-env depends on nodejs)
+                        // Cross-phase deps are resolved via ctx.get_result() at runtime, not via ordering.
+                        let is_cross_phase = self.registry.get(dep)
+                            .map(|s| s.category().is_app_type() != strategy.category().is_app_type())
+                            .unwrap_or(false);
 
-                // Check for conflicts
-                for conflict in strategy.conflicts_with() {
-                    if applicable.contains(&conflict.to_string()) {
-                        tracing::warn!(
-                            strategy = %id,
-                            conflicts_with = %conflict,
-                            "Strategy conflict detected - both strategies are applicable"
-                        );
+                        if is_cross_phase {
+                            tracing::debug!(
+                                strategy = %id,
+                                missing_dependency = %dep,
+                                "Cross-phase dependency (resolved at runtime via context)"
+                            );
+                        } else {
+                            tracing::warn!(
+                                strategy = %id,
+                                missing_dependency = %dep,
+                                "Required dependency not detected or disabled"
+                            );
+                        }
                     }
                 }
             }

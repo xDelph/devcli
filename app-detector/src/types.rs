@@ -66,6 +66,9 @@ pub enum EnvCapabilityCategory {
     /// Kubernetes orchestration
     Kubernetes,
 
+    /// Nx monorepo task runner
+    Nx,
+
     /// Docker Swarm orchestration
     DockerSwarm,
 
@@ -178,6 +181,9 @@ pub enum DetectionData {
     /// Kubernetes environment
     KubernetesEnv(KubernetesEnvInfo),
 
+    /// Nx monorepo task runner environment
+    NxEnv(NxEnvInfo),
+
     /// Custom structured data
     Custom(serde_json::Value),
 }
@@ -234,12 +240,32 @@ pub struct PackageManagerInfo {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
+/// Structured workspace info for hierarchical detection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceInfo {
+    /// Relative path from monorepo root (e.g., "apps/web")
+    pub path: String,
+    /// Optional human-readable name (e.g., "web")
+    pub name: Option<String>,
+    /// Whether to run detection on this workspace (default: true)
+    #[serde(default = "bool_true")]
+    pub should_detect: bool,
+}
+
+fn bool_true() -> bool {
+    true
+}
+
 /// Monorepo detection info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonorepoInfo {
     pub tool: String,
     pub version: Option<String>,
     pub config_file: PathBuf,
+    /// Structured workspace info for hierarchical detection
+    #[serde(default)]
+    pub workspace_info: Vec<WorkspaceInfo>,
+    /// Flat workspace paths (kept for backward compatibility)
     #[serde(default)]
     pub workspaces: Vec<String>,
     #[serde(default)]
@@ -314,11 +340,32 @@ pub struct KubernetesEnvInfo {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
+/// Nx monorepo task runner environment info
+///
+/// Commands are derived entirely from project config — no hardcoded targets:
+/// - Source A: `nx.json` → `targetDefaults` keys
+/// - Source B: `<workspace>/project.json` → `targets` keys (aggregated across all workspaces)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NxEnvInfo {
+    /// Discovered target names, sorted (union of targetDefaults + project.json targets)
+    pub targets: Vec<String>,
+    /// Commands: target name → `nx run-many --target=<name>`
+    pub commands: HashMap<String, String>,
+    /// Suggested default command key
+    pub suggested_default: Option<String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
 /// Detection report containing all results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionReport {
     pub path: PathBuf,
     pub results: Vec<DetectionResult>,
+    /// Child reports for nested structures (e.g., monorepo workspaces).
+    /// Omitted from JSON when empty for backward compatibility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<DetectionReport>,
 }
 
 impl DetectionReport {
@@ -327,12 +374,32 @@ impl DetectionReport {
         Self {
             path,
             results: Vec::new(),
+            children: Vec::new(),
         }
     }
 
     /// Add a detection result
     pub fn add_result(&mut self, result: DetectionResult) {
         self.results.push(result);
+    }
+
+    /// Add a child workspace report
+    pub fn add_child(&mut self, child: DetectionReport) {
+        self.children.push(child);
+    }
+
+    /// True if this report has workspace children
+    pub fn is_workspace_root(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// Flat traversal of this report and all descendants (breadth-first)
+    pub fn all_reports(&self) -> Vec<&DetectionReport> {
+        let mut result = vec![self];
+        for child in &self.children {
+            result.extend(child.all_reports());
+        }
+        result
     }
 
     /// Get all results by category

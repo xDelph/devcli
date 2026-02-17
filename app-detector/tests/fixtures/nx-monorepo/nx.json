@@ -1,5 +1,10 @@
 {
   "extends": "nx/presets/npm.json",
+  "targetDefaults": {
+    "build": { "dependsOn": ["^build"], "cache": true },
+    "test":  { "cache": true },
+    "lint":  { "cache": true }
+  },
   "affected": {
     "defaultBase": "main"
   },

@@ -31,13 +31,21 @@ impl DetectionStrategy for KubernetesEnvStrategy {
     }
 
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
-        // Check for Kubernetes manifest files
-        !ctx.glob("**/*.yaml").is_empty()
-            || !ctx.glob("**/*.yml").is_empty()
-            || ctx.file_exists("k8s")
+        // Specific k8s directory structures (most reliable signal)
+        ctx.file_exists("k8s")
             || ctx.file_exists("kubernetes")
+            || ctx.file_exists(".kube")
+            // Kustomize and Helm are k8s-specific
             || ctx.file_exists("kustomization.yaml")
-            || ctx.file_exists("Chart.yaml") // Helm chart
+            || ctx.file_exists("kustomization.yml")
+            || ctx.file_exists("Chart.yaml")
+            // Well-known k8s manifest filenames at root
+            || ctx.file_exists("deployment.yaml")
+            || ctx.file_exists("deployment.yml")
+            || ctx.file_exists("service.yaml")
+            || ctx.file_exists("service.yml")
+            || ctx.file_exists("ingress.yaml")
+            || ctx.file_exists("ingress.yml")
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {

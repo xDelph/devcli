@@ -1,0 +1,9 @@
+{
+  "name": "web",
+  "targets": {
+    "build": { "executor": "@nx/vite:build" },
+    "serve": { "executor": "@nx/vite:dev-server" },
+    "test":  { "executor": "@nx/jest:jest" },
+    "lint":  { "executor": "@nx/eslint:lint" }
+  }
+}

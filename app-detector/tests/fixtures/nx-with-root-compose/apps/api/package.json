@@ -1,0 +1,10 @@
+{
+  "name": "@my-platform/api",
+  "version": "0.0.1",
+  "scripts": {
+    "start": "node dist/main.js",
+    "build": "nx build api",
+    "dev": "nx serve api",
+    "test": "nx test api"
+  }
+}

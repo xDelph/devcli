@@ -1,0 +1,10 @@
+{
+  "name": "@mixed/frontend",
+  "version": "0.0.1",
+  "scripts": {
+    "start": "serve dist",
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest"
+  }
+}
