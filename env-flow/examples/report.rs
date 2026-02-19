@@ -27,8 +27,36 @@ struct FixtureResult {
     warnings: Vec<String>,
 }
 
+#[derive(Clone, PartialEq)]
+enum LoadMode {
+    /// Default: all layers merged from lowest to highest priority.
+    Cascade,
+    /// Only the single highest-priority existing layer is loaded.
+    NoCascade,
+    /// A specific file loaded directly, bypassing the layer chain.
+    FromFile,
+}
+
+impl LoadMode {
+    fn label(&self) -> &'static str {
+        match self {
+            LoadMode::Cascade   => "cascade",
+            LoadMode::NoCascade => "no-cascade",
+            LoadMode::FromFile  => "from-file",
+        }
+    }
+    fn css_class(&self) -> &'static str {
+        match self {
+            LoadMode::Cascade   => "badge-mode-cascade",
+            LoadMode::NoCascade => "badge-mode-nocascade",
+            LoadMode::FromFile  => "badge-mode-fromfile",
+        }
+    }
+}
+
 struct ScenarioResult {
     label: String,
+    mode: LoadMode,
     layers: Vec<ResolvedLayer>,
     vars: Result<EnvVars, env_flow::Error>,
 }
@@ -142,11 +170,8 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
 
     for ctx in &probe_contexts {
         for stage in &actual_stages {
-            let label = format!(
-                "{} / {}",
-                stage.as_ref().map(|s| s.as_str()).unwrap_or("base"),
-                ctx.as_str()
-            );
+            let stage_label = stage.as_ref().map(|s| s.as_str()).unwrap_or("base");
+            let base_label  = format!("{stage_label} / {}", ctx.as_str());
 
             let layers = match EnvFlow::from_dir(dir)
                 .context(ctx.clone())
@@ -162,12 +187,53 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
                 continue;
             }
 
-            let vars = EnvFlow::from_dir(dir)
+            // ── Cascade (default) ──────────────────────────────────────────
+            let vars_cascade = EnvFlow::from_dir(dir)
                 .context(ctx.clone())
                 .stage_opt(stage.clone())
                 .load();
+            scenarios.push(ScenarioResult {
+                label: base_label.clone(),
+                mode: LoadMode::Cascade,
+                layers: layers.clone(),
+                vars: vars_cascade,
+            });
 
-            scenarios.push(ScenarioResult { label, layers, vars });
+            // ── No-cascade: only if there are 2+ existing layers ───────────
+            let existing_count = layers.iter().filter(|l| l.exists).count();
+            if existing_count >= 2 {
+                let vars_nc = EnvFlow::from_dir(dir)
+                    .context(ctx.clone())
+                    .stage_opt(stage.clone())
+                    .no_cascade()
+                    .load();
+                scenarios.push(ScenarioResult {
+                    label: format!("{base_label} [no-cascade]"),
+                    mode: LoadMode::NoCascade,
+                    layers: layers.clone(),
+                    vars: vars_nc,
+                });
+            }
+
+            // ── From-file: show each existing layer individually ───────────
+            // Only do this for fixtures with <= 4 existing files to keep report concise
+            if existing_count <= 4 {
+                for layer in layers.iter().filter(|l| l.exists) {
+                    let file_label = format!(
+                        "{} [from-file: {}]",
+                        base_label,
+                        layer.relative_path
+                    );
+                    let vars_ff = EnvFlow::from_file(&layer.path).load();
+                    // Reuse single-element layer list for the from-file view
+                    scenarios.push(ScenarioResult {
+                        label: file_label,
+                        mode: LoadMode::FromFile,
+                        layers: vec![layer.clone()],
+                        vars: vars_ff,
+                    });
+                }
+            }
         }
     }
 
@@ -238,6 +304,7 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
     let table_html = render_summary_table(results);
     let cards_html: String = results.iter().map(render_card).collect();
     let warnings_html = render_warnings(&warnings);
+    let mode_comparison_html = render_mode_comparison(results);
     let warn_badge = if warn_count > 0 { format!("({warn_count})") } else { String::new() };
 
     format!(r#"<!DOCTYPE html>
@@ -345,6 +412,10 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
   .badge-warn     {{ background: #3a2d1f; color: var(--yellow); }}
   .badge-ok       {{ background: #1f3d2a; color: #4ade80; }}
   .badge-err      {{ background: #3d1f1f; color: var(--red); }}
+  /* load mode badges */
+  .badge-mode-cascade    {{ background: #1d3461; color: #60a5fa; }}
+  .badge-mode-nocascade  {{ background: #3a2d1f; color: #fb923c; }}
+  .badge-mode-fromfile   {{ background: #2d1f61; color: #a78bfa; }}
 
   /* layer pills */
   .layer-row {{
@@ -470,6 +541,7 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
 <nav>
   <div class="tab active" onclick="showSection('summary')">Summary Table</div>
   <div class="tab" onclick="showSection('cards')">Detail Cards</div>
+  <div class="tab" onclick="showSection('mode-comparison')">Mode Comparison</div>
   <div class="tab" onclick="showSection('warnings-section')">Warnings {warn_badge}</div>
   <div class="tab" onclick="showSection('legend-section')">Layer Legend</div>
 </nav>
@@ -484,6 +556,11 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
   <div class="cards">
     {cards_html}
   </div>
+</div>
+
+<div id="mode-comparison" class="section">
+  <div class="section-title">Mode comparison — cascade vs no-cascade vs from-file</div>
+  {mode_comparison_html}
 </div>
 
 <div id="warnings-section" class="section">
@@ -525,6 +602,7 @@ function toggleScenario(el) {{
         table_html = table_html,
         cards_html = cards_html,
         warnings_html = warnings_html,
+        mode_comparison_html = mode_comparison_html,
         legend_html = render_legend(),
     )
 }
@@ -616,15 +694,14 @@ fn render_card(r: &FixtureResult) -> String {
 fn render_scenario(s: &ScenarioResult, open: bool) -> String {
     let open_cls = if open { " open" } else { "" };
 
-    let (status_badge, var_count) = match &s.vars {
-        Ok(v) => (
-            format!(r#"<span class="badge badge-ok">{} vars</span>"#, v.len()),
-            v.len(),
-        ),
-        Err(e) => (
-            format!(r#"<span class="badge badge-err" title="{e}">✗ error</span>"#),
-            0,
-        ),
+    let mode_badge = format!(
+        r#"<span class="badge {}">{}</span>"#,
+        s.mode.css_class(), s.mode.label()
+    );
+
+    let status_badge = match &s.vars {
+        Ok(v) => format!(r#"<span class="badge badge-ok">{} vars</span>"#, v.len()),
+        Err(e) => format!(r#"<span class="badge badge-err" title="{e}">✗ error</span>"#),
     };
 
     let layers_html = render_layers(&s.layers);
@@ -634,12 +711,13 @@ fn render_scenario(s: &ScenarioResult, open: bool) -> String {
         Err(e) => format!(r#"<div style="color:var(--red);font-size:0.75rem">{e}</div>"#),
     };
 
-    let _ = var_count; // suppress unused warning
-
     format!(r#"<div class="scenario">
       <div class="scenario-hdr" onclick="toggleScenario(this)">
         <span class="scenario-label">{label}</span>
-        {status_badge}
+        <span style="display:flex;gap:0.3rem;align-items:center">
+          {mode_badge}
+          {status_badge}
+        </span>
       </div>
       <div class="scenario-body{open_cls}">
         <div class="subsection-title">Layer chain (low → high priority)</div>
@@ -736,6 +814,99 @@ fn render_warnings(warnings: &[Warning]) -> String {
 
 // ─────────────────────────────────────────────────────────────
 // Layer legend
+// ─────────────────────────────────────────────────────────────
+
+fn render_mode_comparison(results: &[FixtureResult]) -> String {
+    // Find fixtures that have at least one cascade + one no-cascade scenario
+    let comparable: Vec<&FixtureResult> = results
+        .iter()
+        .filter(|r| {
+            let has_cascade    = r.scenarios.iter().any(|s| s.mode == LoadMode::Cascade);
+            let has_no_cascade = r.scenarios.iter().any(|s| s.mode == LoadMode::NoCascade);
+            has_cascade && has_no_cascade
+        })
+        .collect();
+
+    if comparable.is_empty() {
+        return r#"<div class="all-ok">No fixtures with multiple layers found.</div>"#.to_string();
+    }
+
+    let explanation = r#"<div style="color:var(--muted);font-size:0.8rem;margin-bottom:1.5rem;line-height:1.8">
+      <strong style="color:var(--text)">cascade</strong> (default) — all layers merged; lower layers provide fallback values.<br>
+      <strong style="color:var(--text)">no-cascade</strong> — only the single highest-priority <em>existing</em> file is loaded; no inheritance.<br>
+      <strong style="color:var(--text)">from-file</strong> — one specific file loaded directly; the layer chain is ignored entirely.
+    </div>"#;
+
+    let tables: String = comparable.iter().map(|r| {
+        // For each unique base-label, collect cascade vs no-cascade scenarios
+        let base_labels: Vec<String> = r.scenarios.iter()
+            .filter(|s| s.mode == LoadMode::Cascade)
+            .map(|s| s.label.clone())
+            .collect();
+
+        let rows: String = base_labels.iter().map(|base| {
+            let cascade = r.scenarios.iter()
+                .find(|s| s.mode == LoadMode::Cascade && &s.label == base);
+            let no_cascade = r.scenarios.iter()
+                .find(|s| s.mode == LoadMode::NoCascade && s.label.starts_with(base.as_str()));
+
+            let fmt_vars = |vars: &Result<EnvVars, env_flow::Error>| -> String {
+                match vars {
+                    Err(e) => format!(r#"<span style="color:var(--red)">{e}</span>"#),
+                    Ok(v) if v.is_empty() => r#"<span style="color:var(--muted)">—</span>"#.to_string(),
+                    Ok(v) => {
+                        let pairs: String = v.iter()
+                            .map(|(k, val)| format!(
+                                r#"<div><span style="color:var(--cyan)">{k}</span>=<span style="color:var(--text)">{val}</span></div>"#
+                            ))
+                            .collect();
+                        format!(r#"<div style="font-size:0.72rem;line-height:1.7">{pairs}</div>"#)
+                    }
+                }
+            };
+
+            let cascade_cell = cascade
+                .map(|s| fmt_vars(&s.vars))
+                .unwrap_or_else(|| r#"<span style="color:var(--muted)">—</span>"#.to_string());
+            let nc_cell = no_cascade
+                .map(|s| fmt_vars(&s.vars))
+                .unwrap_or_else(|| r#"<span style="color:var(--muted)">—</span>"#.to_string());
+
+            // Count vars for badge
+            let cascade_count = cascade.and_then(|s| s.vars.as_ref().ok()).map(|v| v.len()).unwrap_or(0);
+            let nc_count = no_cascade.and_then(|s| s.vars.as_ref().ok()).map(|v| v.len()).unwrap_or(0);
+            let saved_label = if cascade_count > nc_count {
+                format!(r#"<span style="color:var(--muted);font-size:0.68rem">{} fewer vars</span>"#,
+                    cascade_count - nc_count)
+            } else { String::new() };
+
+            format!(r#"<tr>
+              <td style="padding:0.5rem 0.6rem;color:var(--text);font-weight:600;white-space:nowrap">{base}</td>
+              <td style="padding:0.5rem 0.6rem;border-left:1px solid var(--border)">{cascade_cell}</td>
+              <td style="padding:0.5rem 0.6rem;border-left:1px solid var(--border)">{nc_cell} {saved_label}</td>
+            </tr>"#)
+        }).collect();
+
+        format!(r#"<div style="margin-bottom:2rem">
+          <div style="font-size:0.8rem;font-weight:bold;color:var(--cyan);margin-bottom:0.5rem">{name}</div>
+          <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+            <thead><tr>
+              <th style="padding:0.3rem 0.6rem;color:var(--muted);text-align:left">Scenario</th>
+              <th style="padding:0.3rem 0.6rem;color:var(--blue);text-align:left;border-left:1px solid var(--border)">
+                <span class="badge badge-mode-cascade">cascade</span> (all layers merged)
+              </th>
+              <th style="padding:0.3rem 0.6rem;color:var(--orange);text-align:left;border-left:1px solid var(--border)">
+                <span class="badge badge-mode-nocascade">no-cascade</span> (highest layer only)
+              </th>
+            </tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>"#, name = r.name)
+    }).collect();
+
+    format!("{explanation}{tables}")
+}
+
 // ─────────────────────────────────────────────────────────────
 
 fn render_legend() -> String {

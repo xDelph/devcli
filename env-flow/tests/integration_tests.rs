@@ -307,3 +307,144 @@ fn layers_plan_transparency() {
     assert!(existing.iter().any(|l| l.layer_type == LayerType::Base));
     assert!(existing.iter().any(|l| l.layer_type == LayerType::StageBase));
 }
+
+// ── no-cascade fixture ───────────────────────────────────────────────────────
+//
+// Fixture layout (deliberately non-overlapping keys per layer):
+//   .env            → PORT=3000, APP_NAME=myapp
+//   .env.dev        → DB=dev-db, DEBUG=true
+//   .env.dev.local  → SECRET=local-secret, DEV_NOTE=override
+
+#[test]
+fn no_cascade_fixture_cascade_merges_all_layers() {
+    // Default (cascade): all three layers merged, 4 unique keys total + DEV_NOTE
+    let vars = EnvFlow::from_dir(fix("no-cascade"))
+        .stage(Stage::Dev)
+        .context(RuntimeContext::Local)
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("PORT"),     Some("3000"));
+    assert_eq!(vars.get("APP_NAME"), Some("myapp"));
+    assert_eq!(vars.get("DB"),       Some("dev-db"));
+    assert_eq!(vars.get("DEBUG"),    Some("true"));
+    assert_eq!(vars.get("SECRET"),   Some("local-secret"));
+    assert_eq!(vars.get("DEV_NOTE"), Some("override"));
+    assert_eq!(vars.len(), 6);
+}
+
+#[test]
+fn no_cascade_fixture_no_cascade_picks_highest_existing() {
+    // no_cascade + dev + local → highest existing = .env.dev.local
+    let vars = EnvFlow::from_dir(fix("no-cascade"))
+        .stage(Stage::Dev)
+        .context(RuntimeContext::Local)
+        .no_cascade()
+        .load()
+        .unwrap();
+
+    // Only keys from .env.dev.local
+    assert_eq!(vars.get("SECRET"),   Some("local-secret"));
+    assert_eq!(vars.get("DEV_NOTE"), Some("override"));
+    // Base and .env.dev keys are NOT inherited
+    assert_eq!(vars.get("PORT"),     None);
+    assert_eq!(vars.get("DB"),       None);
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn no_cascade_fixture_no_cascade_docker_picks_stage_base() {
+    // no_cascade + dev + docker → .env.dev.docker doesn't exist, .env.dev.local is skipped
+    // (Docker skips .local files), .env.docker doesn't exist
+    // → highest existing is .env.dev
+    let vars = EnvFlow::from_dir(fix("no-cascade"))
+        .stage(Stage::Dev)
+        .context(RuntimeContext::Docker)
+        .no_cascade()
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("DB"),    Some("dev-db"));
+    assert_eq!(vars.get("DEBUG"), Some("true"));
+    assert_eq!(vars.get("PORT"),  None); // base not inherited
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn no_cascade_fixture_no_cascade_no_stage_picks_base() {
+    // no_cascade + no stage → only .env exists
+    let vars = EnvFlow::from_dir(fix("no-cascade"))
+        .no_cascade()
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("PORT"),     Some("3000"));
+    assert_eq!(vars.get("APP_NAME"), Some("myapp"));
+    assert_eq!(vars.len(), 2);
+}
+
+// ── single-file fixture ──────────────────────────────────────────────────────
+//
+// Fixture layout:
+//   .env          → PORT=3000, DB=base, APP_NAME=myapp
+//   .env.override → DB=override-db, EXTRA=only-in-override
+
+#[test]
+fn single_file_from_file_loads_only_specified_file() {
+    let vars = EnvFlow::from_file(fix("single-file").join(".env.override"))
+        .load()
+        .unwrap();
+
+    // Only keys from .env.override
+    assert_eq!(vars.get("DB"),    Some("override-db"));
+    assert_eq!(vars.get("EXTRA"), Some("only-in-override"));
+    // Keys from .env are NOT present
+    assert_eq!(vars.get("PORT"),     None);
+    assert_eq!(vars.get("APP_NAME"), None);
+    assert_eq!(vars.len(), 2);
+}
+
+#[test]
+fn single_file_from_file_base_env() {
+    let vars = EnvFlow::from_file(fix("single-file").join(".env"))
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("PORT"),     Some("3000"));
+    assert_eq!(vars.get("DB"),       Some("base"));
+    assert_eq!(vars.get("APP_NAME"), Some("myapp"));
+    // .env.override is NOT loaded
+    assert_eq!(vars.get("EXTRA"), None);
+    assert_eq!(vars.len(), 3);
+}
+
+#[test]
+fn single_file_cascade_vs_no_cascade_vs_from_file() {
+    // Shows the three modes side-by-side on the same fixture set
+
+    // 1. Cascade (default from_dir): inherits PORT from .env, overrides DB
+    //    Note: .env.override isn't a recognised naming convention so the resolver
+    //    won't include it — use staged fixture to demonstrate cascade contrast
+    let cascade = EnvFlow::from_dir(fix("staged"))
+        .stage(Stage::Dev)
+        .load()
+        .unwrap();
+    assert_eq!(cascade.get("APP_NAME"), Some("myapp")); // from .env
+    assert_eq!(cascade.get("DB_HOST"),  Some("dev-db")); // from .env.dev
+
+    // 2. no_cascade on staged/dev → only .env.dev loaded
+    let no_cascade = EnvFlow::from_dir(fix("staged"))
+        .stage(Stage::Dev)
+        .no_cascade()
+        .load()
+        .unwrap();
+    assert_eq!(no_cascade.get("DB_HOST"),  Some("dev-db")); // from .env.dev
+    assert_eq!(no_cascade.get("APP_NAME"), None);           // .env not loaded
+
+    // 3. from_file → exactly one file
+    let from_file = EnvFlow::from_file(fix("staged").join(".env"))
+        .load()
+        .unwrap();
+    assert_eq!(from_file.get("APP_NAME"), Some("myapp")); // from .env only
+    assert_eq!(from_file.get("DB_HOST"),  Some("localhost")); // only base value
+}
