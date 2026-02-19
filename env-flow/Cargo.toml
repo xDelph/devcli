@@ -1,0 +1,20 @@
+[package]
+name = "env-flow"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "2D layered env file loader: stage × runtime context with interpolation and source tracking"
+keywords = ["env", "dotenv", "environment", "config", "layered"]
+categories = ["config", "command-line-utilities"]
+
+[dependencies]
+thiserror = "1.0"
+indexmap = "2.2"
+serde = { workspace = true, features = ["derive"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.8"
