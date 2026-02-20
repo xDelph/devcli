@@ -18,6 +18,10 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 fs2 = "0.4.3"
 shell-words = "1.1"
 
+[[bin]]
+name = "pm-daemon"
+path = "src/bin/pm-daemon.rs"
+
 [dev-dependencies]
 tempfile = "3.8"
 tokio-test = "0.4"

@@ -17,10 +17,32 @@ pub struct RunningProcess {
     pub output_rx: OutputReceiver,
 }
 
+impl RunningProcess {
+    /// Returns `true` if the spawned process is still alive.
+    ///
+    /// Uses a signal-0 probe on Unix (no signal delivered, just existence check).
+    /// Callers should not need to touch `self.pid` directly for liveness checks.
+    pub fn is_alive(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            Command::new("kill")
+                .arg("-0")
+                .arg(self.pid.to_string())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    }
+}
+
 pub async fn spawn(task: &Task) -> Result<RunningProcess> {
     // Parse command using shell-words to handle quoted arguments correctly
-    let parts = shell_words::split(&task.command)
-        .context("Failed to parse command string")?;
+    let parts = shell_words::split(&task.command).context("Failed to parse command string")?;
 
     if parts.is_empty() {
         anyhow::bail!("Command cannot be empty");
@@ -139,6 +161,55 @@ pub async fn restart(
     }
 
     spawn(task).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    fn make_running_process(pid: u32) -> RunningProcess {
+        let (_tx, rx) = mpsc::unbounded_channel();
+        RunningProcess {
+            pid,
+            pgid: None,
+            child: None,
+            output_rx: rx,
+        }
+    }
+
+    /// A RunningProcess whose PID is the current test process must be alive.
+    #[test]
+    fn test_is_alive_current_process() {
+        let current_pid = std::process::id();
+        let rp = make_running_process(current_pid);
+        assert!(rp.is_alive(), "current process must report itself as alive");
+    }
+
+    /// PID 0 is never a valid user process and must report as not alive.
+    /// On Linux/macOS, `kill -0 0` sends to the process *group* which could
+    /// succeed, so we use a clearly invalid large PID instead.
+    #[test]
+    fn test_is_alive_dead_process() {
+        // PID 4_194_304 is above the kernel max on Linux (default 4_194_304 is
+        // the ceiling; we use one above that). On macOS the max is 99_998.
+        // Using a very large number that is guaranteed not to be running.
+        let dead_pid = 2_000_000_000_u32;
+        let rp = make_running_process(dead_pid);
+        assert!(
+            !rp.is_alive(),
+            "a PID that cannot exist must report as dead"
+        );
+    }
+
+    /// is_alive() on the same PID called twice must be consistent (no side
+    /// effects from the signal-0 probe).
+    #[test]
+    fn test_is_alive_is_idempotent() {
+        let current_pid = std::process::id();
+        let rp = make_running_process(current_pid);
+        assert_eq!(rp.is_alive(), rp.is_alive());
+    }
 }
 
 fn spawn_output_handler<R>(

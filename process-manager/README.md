@@ -4,42 +4,57 @@ A high-performance, standalone Rust library for managing local process lifecycle
 
 ## Features
 
-- 🚀 **Agnostic Execution**: Spawn any shell command as a managed process.
-- 👥 **Process Group Tracking**: Robust **PGID** support ensures that child processes are tracked and terminated even if the parent exits.
-- 🛡️ **Cross-Process Safety**: File-based locking prevents race conditions between multiple instances (e.g., CLI vs. background Daemon).
-- 💚 **Pluggable Health Checks**: Built-in support for HTTP, TCP, and custom command-based health monitoring.
-- 🔄 **Self-Healing**: Configurable restart policies with exponential backoff and time-window limits.
-- 📝 **Structured Output**: Unified, asynchronous stream for `stdout` and `stderr` with automatic background log file persistence.
-- 💾 **Persistent State**: JSON-based state store that survives process exits and system reboots.
+- **Agnostic Execution**: Spawn any shell command as a managed process.
+- **Process Group Tracking**: Robust PGID support ensures child processes are tracked and terminated even if the parent exits.
+- **Self-Managing Daemon**: `pm-daemon` starts automatically when the first process is launched and exits when none remain — no user interaction required.
+- **Cross-Process Safety**: File-based locking prevents race conditions between multiple clients and the daemon.
+- **Pluggable Health Checks**: Built-in HTTP, TCP, and command-based health monitoring.
+- **Self-Healing**: Configurable restart policies with exponential backoff and time-window limits.
+- **Structured Output**: Unified async stream for `stdout`/`stderr` with automatic log file persistence.
+- **Persistent State**: JSON-based state store that survives process exits and reboots.
 
 ## Architecture
 
-The crate is divided into several modular components:
+```
+process-manager/
+├── engine      — Process spawning, termination, group management, liveness probe
+├── state       — JSON persistence, daemon lifecycle (ensure_daemon_running)
+├── monitor     — Health check + auto-restart loop (runs inside pm-daemon)
+├── restart     — File-lock coordination preventing thundering-herd restarts
+├── health      — HTTP / TCP / Command health check execution
+└── bin/
+    └── pm-daemon — Background singleton daemon (spawned automatically)
+```
 
-- **Engine**: Low-level process spawning, termination, and group management.
-- **State**: Persistent storage and robust liveness checks.
-- **Monitor**: Background loop for health monitoring and auto-recovery.
-- **Restart**: Coordination logic for safe, synchronized restarts.
-- **Health**: Execution engine for various health check protocols.
+### Directory layout (state_dir)
+
+```
+~/.devcli/processes/          ← default state_dir for devcli
+  <id>.json                   ← one file per managed process
+  .daemon.lock                ← exclusive lock held by pm-daemon while alive
+  .status_changed             ← touched on every save/delete (TUI poll target)
+  locks/
+    <id>.lock                 ← per-process restart coordination lock
+```
+
+All daemon infrastructure lives **inside** `state_dir`. Callers choose where `state_dir` points; the library manages everything beneath it.
 
 ## Quick Start
 
 ### 1. Define a Task
+
 ```rust
 use process_manager::Task;
 use std::collections::HashMap;
 
-let mut env = HashMap::new();
-env.insert("NODE_ENV".to_string(), "development".to_string());
-
 let task = Task {
     id: "my-service".to_string(),
     command: "npm run dev".to_string(),
-    args: vec!["--port".to_string(), "3000".to_string()],
+    args: vec![],
     working_dir: std::env::current_dir()?,
-    env,
+    env: HashMap::new(),
     is_detached: true,
-    log_file: Some("service.log".into()),
+    log_file: Some("~/.devcli/logs/my-service.log".into()),
     health_check: process_manager::HealthCheck::Http {
         url: "http://localhost:3000/health".to_string(),
         timeout_secs: 5,
@@ -49,102 +64,140 @@ let task = Task {
 };
 ```
 
-### 2. Spawn and Listen
+### 2. Spawn, Persist, and Enable Monitoring
+
 ```rust
-use process_manager::engine;
+use process_manager::{engine, ManagedProcess, StateStore};
+use std::sync::Arc;
 
-let mut running = engine::spawn(&task).await?;
-println!("Started with PID: {}", running.pid);
+let store = StateStore::new("/path/to/state_dir".into())?;
 
-// Listen to output in real-time
+// Spawn the process
+let running = engine::spawn(&task).await?;
+
+// Verify it started successfully — no raw PID needed
+assert!(running.is_alive());
+
+// Save to state store
+let managed = ManagedProcess { /* ... */ };
+store.save(&managed)?;
+
+// Ensure pm-daemon is running (no-op if already alive).
+// The daemon handles health checks and auto-restarts from here on.
+store.ensure_daemon_running()?;
+
+// Forward output (or just drop the receiver for detached mode)
 while let Some(msg) = running.output_rx.recv().await {
     println!("[{}] {}", msg.source, msg.content);
 }
 ```
 
-### 3. Background Monitoring
+### 3. The Daemon Lifecycle
+
+`ensure_daemon_running()` is the only call needed to activate monitoring:
+
+```
+first start call
+  └── store.save()
+  └── store.ensure_daemon_running()
+        ├── checks state_dir/.daemon.lock
+        ├── lock free? → spawns pm-daemon --state-dir <path>
+        └── lock held? → daemon already running, returns Ok(())
+
+pm-daemon
+  ├── acquires .daemon.lock (exclusive, held until exit)
+  ├── runs Monitor loop every 3 s:
+  │     ├── liveness check (kill -0) → restart on crash
+  │     └── health check → restart after 3 consecutive failures
+  └── exits when StateStore is empty → lock released
+
+next start call
+  └── ensure_daemon_running() → lock held → no-op
+```
+
+The daemon is a **singleton per state directory** — it is impossible to spawn two daemons for the same store regardless of how many callers call `ensure_daemon_running()` concurrently.
+
+## API Reference
+
+### `StateStore`
+
+| Method | Description |
+|--------|-------------|
+| `new(base_dir)` | Open or create a state store at `base_dir` |
+| `save(&proc)` | Persist a `ManagedProcess`; touches `.status_changed` |
+| `load(id)` | Load a single process by ID |
+| `list()` | List all persisted processes |
+| `delete(id)` | Remove a process; touches `.status_changed` |
+| `is_running(&proc)` | Signal-0 liveness probe (checks PID and PGID) |
+| `cleanup_dead()` | Remove all dead processes; returns deleted IDs |
+| `find_by_metadata(key, value)` | Find all processes matching a metadata field |
+| `find_one_by_metadata(key, value)` | Find the first matching process |
+| `ensure_daemon_running()` | Start `pm-daemon` if not already alive |
+
+### `RunningProcess`
+
+| Method / Field | Description |
+|----------------|-------------|
+| `is_alive()` | Returns `true` if the spawned process is still running |
+| `output_rx` | Async receiver for stdout/stderr lines |
+| `pid` | Raw PID (use `is_alive()` for liveness; avoid raw PID probes) |
+| `pgid` | Process Group ID for group-kill support |
+
+### `engine` functions
+
+| Function | Description |
+|----------|-------------|
+| `spawn(task)` | Spawn a process; returns `RunningProcess` |
+| `terminate(pid, pgid, force)` | SIGTERM / SIGKILL with process-group support |
+| `restart(task, old_pid, old_pgid, backoff)` | Terminate old, wait, spawn new |
+
+### Health Check types
+
 ```rust
-use process_manager::{Monitor, StateStore, HealthCheckEngine, RestartCoordinator};
-use std::sync::Arc;
+HealthCheck::Process {}                               // always passes
+HealthCheck::Http { url, timeout_secs, expected_status }
+HealthCheck::Tcp  { host, port, timeout_secs }
+HealthCheck::Command { command, timeout_secs, expected_exit_code }
+```
 
-let state = Arc::new(StateStore::new("./state")?);
-let monitor = Monitor::new(
-    state,
-    Arc::new(HealthCheckEngine::new()),
-    Arc::new(RestartCoordinator::new("./locks".into())),
-);
+### Restart Policy
 
-monitor.run().await?;
+```rust
+RestartPolicy {
+    enabled: true,
+    max_restarts: 3,            // within the window
+    restart_window_secs: 300,   // 5-minute window
+    initial_backoff_secs: 1,
+    max_backoff_secs: 60,
+    backoff_multiplier: 2.0,    // exponential: 1s, 2s, 4s, …, 60s
+    restart_on_exit_codes: None, // None = restart on any non-zero exit
+}
 ```
 
 ## Process Metadata
 
-The `process-manager` crate uses a flexible metadata system to store arbitrary key-value pairs about processes. This allows integrators like `devcli` to track application-specific information without coupling the crate to specific use cases.
+The metadata system lets callers store arbitrary key-value pairs alongside a process without coupling the library to any specific domain.
 
-### Standard Metadata Fields
+### Recommended fields (devcli convention)
 
-While metadata is completely flexible, the following fields are recommended for `devcli` integration:
+| Field | Example |
+|-------|---------|
+| `project` | `"my-webapp"` |
+| `app` | `"api-server"` |
+| `env` | `"local"`, `"docker"` |
+| `stage` | `"dev"`, `"prod"` |
+| `command_variant` | `"start"`, `"build"` |
+| `alternative_name` | `"Backend"` |
 
-| Field | Type | Description | Example |
-|-------|------|-------------|---------|
-| `project` | String | Project/repository name | `"my-webapp"` |
-| `app_config_name` | String | Clean application name from config | `"api-server"` |
-| `environment` | String | Deployment environment | `"dev"`, `"qa"`, `"prod"` |
-| `stage` | String | Deployment stage (if different from environment) | `"staging"`, `"production"` |
-| `command_variant` | String | Which command variant was used | `"start"`, `"dev"`, `"build"` |
-
-### Setting Metadata
-
-```rust
-use std::collections::HashMap;
-use process_manager::{ManagedProcess, StateStore};
-
-let mut metadata = HashMap::new();
-metadata.insert("project".to_string(), "my-webapp".to_string());
-metadata.insert("app_config_name".to_string(), "api-server".to_string());
-metadata.insert("environment".to_string(), "dev".to_string());
-
-let process = ManagedProcess {
-    id: "my-webapp.api-server.dev".to_string(),
-    // ... other fields
-    metadata,
-    // ...
-};
-```
-
-### Querying by Metadata
+### Querying by metadata
 
 ```rust
-use process_manager::StateStore;
+let store = StateStore::new(state_dir)?;
 
-let store = StateStore::new("./state".into())?;
-
-// Find all processes in development environment
-let dev_processes = store.find_by_metadata("environment", "dev")?;
-
-// Find all processes for a specific project
-let project_processes = store.find_by_metadata("project", "my-webapp")?;
-
-// Find a single process by unique identifier
-let process = store.find_one_by_metadata("app_config_name", "api-server")?;
+let dev_processes   = store.find_by_metadata("env", "local")?;
+let project_procs   = store.find_by_metadata("project", "my-webapp")?;
+let single          = store.find_one_by_metadata("app", "api-server")?;
 ```
-
-### Recommended ID Format
-
-For compatibility with existing `devcli` PID files, use the format:
-```
-{project}.{app_config_name}.{environment}
-```
-
-Example: `"my-webapp.api-server.dev"`
-
-This allows easy migration from the old `ProcessTracker` system while maintaining backward-compatible file naming.
-
-## Documentation
-
-- [Architecture Guide](docs/architecture.md)
-- [Usage Examples](docs/usage.md)
-- [API Reference](https://docs.rs/process-manager) (Coming soon)
 
 ## License
 

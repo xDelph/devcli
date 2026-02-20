@@ -1,6 +1,7 @@
 use crate::model::{RestartPolicy, Task};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -164,6 +165,94 @@ impl StateStore {
         Ok(all_processes
             .into_iter()
             .find(|proc| proc.metadata.get(key).map(|v| v.as_str()) == Some(value)))
+    }
+
+    /// Ensure the monitor daemon is running for this state store.
+    ///
+    /// Uses an exclusive file lock on `state_dir/.daemon.lock` to detect
+    /// whether a daemon is already alive (the daemon holds the lock for its
+    /// entire lifetime and releases it on exit).
+    ///
+    /// If no daemon is running, spawns `pm-daemon --state-dir <base_dir>`
+    /// from the same directory as the current executable. Silently skips
+    /// if the binary cannot be found (monitoring is optional infrastructure).
+    pub fn ensure_daemon_running(&self) -> Result<()> {
+        let lock_path = self.base_dir.join(".daemon.lock");
+
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .context("Failed to open daemon lock file")?;
+
+        match file.try_lock_exclusive() {
+            Ok(_) => {
+                // Lock acquired → daemon is NOT running.
+                // Release now so pm-daemon can acquire it on startup.
+                file.unlock().context("Failed to release daemon lock")?;
+                drop(file);
+                self.spawn_daemon()?;
+            }
+            Err(_) => {
+                // Lock is held by the running daemon — nothing to do.
+            }
+        }
+
+        Ok(())
+    }
+
+    fn spawn_daemon(&self) -> Result<()> {
+        let Some(daemon_bin) = Self::find_daemon_binary() else {
+            tracing::debug!("pm-daemon not found alongside executable or in PATH — process monitoring disabled");
+            return Ok(());
+        };
+
+        std::process::Command::new(&daemon_bin)
+            .arg("--state-dir")
+            .arg(&self.base_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .with_context(|| format!("Failed to spawn pm-daemon at {}", daemon_bin.display()))?;
+
+        tracing::debug!(
+            path = %daemon_bin.display(),
+            state_dir = %self.base_dir.display(),
+            "pm-daemon spawned"
+        );
+        Ok(())
+    }
+
+    /// Locate the `pm-daemon` binary.
+    ///
+    /// Search order:
+    /// 1. Same directory as the current executable (e.g. target/debug/ in dev,
+    ///    or ~/.cargo/bin/ when installed via `cargo install`)
+    /// 2. Each directory in `$PATH`
+    pub(crate) fn find_daemon_binary() -> Option<PathBuf> {
+        // 1. Alongside current executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join("pm-daemon");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        // 2. Search PATH
+        if let Ok(path_var) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                let candidate = dir.join("pm-daemon");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        None
     }
 }
 
