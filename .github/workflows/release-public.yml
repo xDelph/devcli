@@ -293,25 +293,25 @@ jobs:
           ### macOS (Apple Silicon)
           \`\`\`bash
           curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-apple-darwin.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
+          chmod +x devcli pm-daemon && mv devcli pm-daemon ~/.devcli/bin/
           \`\`\`
 
           ### macOS (Intel)
           \`\`\`bash
           curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-apple-darwin.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
+          chmod +x devcli pm-daemon && mv devcli pm-daemon ~/.devcli/bin/
           \`\`\`
 
           ### Linux (x64)
           \`\`\`bash
           curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
+          chmod +x devcli pm-daemon && mv devcli pm-daemon ~/.devcli/bin/
           \`\`\`
 
           ### Linux (ARM64)
           \`\`\`bash
           curl -L https://github.com/${{ env.PUBLIC_REPO_OWNER }}/${{ env.PUBLIC_REPO_NAME }}/releases/download/${{ github.ref_name }}/devcli-aarch64-unknown-linux-gnu.tar.gz | tar xz
-          chmod +x devcli && mv devcli ~/.devcli/bin/
+          chmod +x devcli pm-daemon && mv devcli pm-daemon ~/.devcli/bin/
           \`\`\`
 
           ### Verify Checksums

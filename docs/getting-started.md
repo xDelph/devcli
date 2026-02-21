@@ -27,21 +27,21 @@ Perfect for microservices development, monorepo projects, and complex local deve
 **macOS (Apple Silicon M1/M2/M3):**
 ```bash
 curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
+sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
 
 **macOS (Intel):**
 ```bash
 curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
+sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
 
 **Linux (x64):**
 ```bash
 curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv devcli /usr/local/bin/
+sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
 
@@ -51,7 +51,7 @@ devcli --version
 git clone https://github.com/YOUR_USERNAME/devcli.git
 cd devcli
 cargo build --release
-sudo cp target/release/devcli /usr/local/bin/
+sudo cp target/release/devcli target/release/pm-daemon /usr/local/bin/
 ```
 
 ## Quick Start (5 minutes)
