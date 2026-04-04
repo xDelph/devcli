@@ -2,8 +2,8 @@
 //!
 //! This module handles:
 //! - Starting multiple apps in parallel
-//! - Spawning individual app processes
-//! - Process validation and tracking
+//! - Spawning individual app processes through process-manager
+//! - Persisting process metadata and ensuring monitor daemon is running
 //! - Internal app starting for dependencies
 
 use super::resolver::{AppToStart, StartCommandArgs};
@@ -11,21 +11,25 @@ use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},
     load_config, load_preferences, resolve_app,
 };
-use crate::process::ProcessTracker;
+use crate::process_manager_support::{
+    emit_line, find_process, log_file_path, process_id, state_store, stream_output, OutputChannel,
+};
 use crate::utils::path::expand_path;
 use crate::Result;
-use anyhow::Context;
-use chrono::Utc;
+use process_manager::state::{ManagedProcess, ProcessRuntime};
+use process_manager::{engine, HealthCheck, RestartPolicy, Task};
+use std::collections::HashMap;
 
 /// Start all apps in parallel
 ///
 /// Returns a vector of successfully started app names
-#[tracing::instrument(skip(apps_to_start), fields(app_count = apps_to_start.len(), environment = %environment))]
+#[tracing::instrument(skip(apps_to_start, output_tx), fields(app_count = apps_to_start.len(), environment = %environment))]
 pub async fn start_apps_in_parallel(
     apps_to_start: Vec<AppToStart>,
     environment: &str,
     silent: bool,
     stage_override: Option<String>,
+    output_tx: Option<OutputChannel>,
 ) -> Result<Vec<String>> {
     tracing::info!(
         app_count = apps_to_start.len(),
@@ -33,9 +37,11 @@ pub async fn start_apps_in_parallel(
         "Starting apps in parallel"
     );
 
-    if !silent {
-        println!("\nStarting {} app(s) in parallel...", apps_to_start.len());
-    }
+    emit_line(
+        silent,
+        output_tx.as_ref(),
+        format!("\nStarting {} app(s) in parallel...", apps_to_start.len()),
+    );
 
     let preferences = load_preferences()?;
     let show_output = !silent && !preferences.detached_mode;
@@ -47,6 +53,7 @@ pub async fn start_apps_in_parallel(
         let app_name = app_info.resolved_app.app_name.clone();
         let environment = environment.to_string();
         let stage = stage_override.clone();
+        let output_tx = output_tx.clone();
 
         let task = tokio::spawn(async move {
             start_single_app_process(
@@ -56,6 +63,7 @@ pub async fn start_apps_in_parallel(
                 environment,
                 show_output,
                 stage,
+                output_tx,
             )
             .await
             .map_err(|e| format!("{}: {}", app_name, e))
@@ -86,13 +94,15 @@ pub async fn start_apps_in_parallel(
             "Apps started successfully"
         );
 
-        if show_output {
-            println!(
+        emit_line(
+            !show_output,
+            output_tx.as_ref(),
+            format!(
                 "\n✓ Successfully started {} app(s): {}",
                 started_apps.len(),
                 started_apps.join(", ")
-            );
-        }
+            ),
+        );
     }
 
     if !errors.is_empty() {
@@ -113,9 +123,11 @@ pub async fn start_apps_in_parallel(
                 "Some apps failed to start"
             );
 
-            if show_output {
-                println!("\n⚠ Some apps failed to start:\n  {}", errors.join("\n  "));
-            }
+            emit_line(
+                !show_output,
+                output_tx.as_ref(),
+                format!("\n⚠ Some apps failed to start:\n  {}", errors.join("\n  ")),
+            );
         }
     }
 
@@ -127,7 +139,7 @@ pub async fn start_apps_in_parallel(
 /// This is used by the parallel app starting logic.
 /// Returns the app name on success for reporting.
 #[tracing::instrument(
-    skip(resolved_app, command, default_command),
+    skip(resolved_app, command, default_command, output_tx),
     fields(
         app = %resolved_app.app_name,
         project = %resolved_app.project,
@@ -142,6 +154,7 @@ async fn start_single_app_process(
     environment: String,
     show_output: bool,
     stage_override: Option<String>,
+    output_tx: Option<OutputChannel>,
 ) -> Result<String> {
     let app_name = resolved_app.app_name.clone();
 
@@ -173,7 +186,7 @@ async fn start_single_app_process(
         }
     }
 
-    // Step 1: Expand the working directory path
+    // Expand the working directory path
     let working_dir = expand_path(&resolved_app.app.path);
 
     // Verify the directory actually exists
@@ -184,21 +197,10 @@ async fn start_single_app_process(
         );
     }
 
-    // Step 2: Create log file path for this process
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    let log_dir = home.join(".devcli").join("logs");
-    tokio::fs::create_dir_all(&log_dir)
-        .await
-        .context("Failed to create log directory")?;
+    // Create log file path for this process
+    let log_path = log_file_path(&resolved_app.project, &app_name, &environment)?;
 
-    let date = Utc::now().format("%Y%m%d");
-    let filename = format!(
-        "{}_{}_{}_{}.log",
-        resolved_app.project, app_name, environment, date
-    );
-    let log_path = log_dir.join(filename);
-
-    // Step 3: Prepare command and environment variables
+    // Prepare command and environment variables
     let prepared = crate::commands::prepare::prepare_command(
         &command,
         &environment,
@@ -212,7 +214,6 @@ async fn start_single_app_process(
     let final_command = prepared.final_command;
     let env_vars = prepared.env_vars;
 
-    // Step 4: Display info to the user about what we're doing (unless silent)
     tracing::info!(
         app = %app_name,
         working_dir = %working_dir.display(),
@@ -223,147 +224,147 @@ async fn start_single_app_process(
         "Starting app process"
     );
 
-    if show_output {
-        println!(
+    emit_line(
+        !show_output,
+        output_tx.as_ref(),
+        format!(
             "→ Starting '{}' in {} (environment: {})",
             app_name,
             working_dir.display(),
             environment
-        );
-        println!("  Command: {}", final_command);
-        println!("  Log file: {}", log_path.display());
-    }
-
-    // Step 5: Prepare payload for internal-spawner
-    use crate::commands::internal_spawner::SpawnerPayload;
-    let payload = SpawnerPayload {
-        app_name: app_name.clone(),
-        alternative_name: resolved_app.app.alternative_name.clone(),
-        command: final_command.clone(),
-        working_dir: working_dir.clone(),
-        env_vars,
-        project: Some(resolved_app.project.clone()),
-        environment: Some(environment.clone()),
-        command_variant: Some(default_command.clone()),
-        stage: effective_stage.clone(),
-        log_file_path: log_path.clone(),
-    };
-
-    // Serialize and encode payload
-    let payload_json = serde_json::to_vec(&payload)?;
-    use base64::{engine::general_purpose, Engine as _};
-    let payload_base64 = general_purpose::STANDARD.encode(&payload_json);
-
-    // Get path to devcli binary
-    let devcli_binary = crate::process::monitor::get_devcli_binary_path()?;
-
-    // Spawn internal-spawner as a detached process
-    let mut cmd = tokio::process::Command::new(&devcli_binary);
-    cmd.arg("internal-spawner");
-    cmd.arg("--payload");
-    cmd.arg(&payload_base64);
-
-    // Configure stdio based on show_output
-    cmd.stdin(std::process::Stdio::null());
-    if show_output {
-        // Pipe stdout/stderr so we can capture and stream logs
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-    } else {
-        // Detached mode: discard output
-        cmd.stdout(std::process::Stdio::null());
-        cmd.stderr(std::process::Stdio::null());
-    }
-
-    #[cfg(unix)]
-    {
-        #[allow(unused_imports)]
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-
-    // Step 6: Spawn the spawner process
-    let mut spawner_child = cmd.spawn().context("Failed to spawn internal-spawner")?;
-    let spawner_pid = spawner_child
-        .id()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get spawner PID"))?;
-
-    // Verify spawner is running
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    let tracker = ProcessTracker::new()?;
-    if !tracker.is_running(spawner_pid) {
-        tracing::error!(
-            app = %app_name,
-            spawner_pid = spawner_pid,
-            log_file = %log_path.display(),
-            "Spawner failed to start"
-        );
-        anyhow::bail!(
-            "Spawner for '{}' failed to start (PID: {}). Check the log file: {}",
-            app_name,
-            spawner_pid,
-            log_path.display()
-        );
-    }
-
-    tracing::info!(
-        app = %app_name,
-        spawner_pid = spawner_pid,
-        "Spawner verified running"
+        ),
+    );
+    emit_line(
+        !show_output,
+        output_tx.as_ref(),
+        format!("  Command: {}", final_command),
+    );
+    emit_line(
+        !show_output,
+        output_tx.as_ref(),
+        format!("  Log file: {}", log_path.display()),
     );
 
-    // Step 7: If show_output is true, stream stdout/stderr from spawner
-    // This keeps the command running so the TUI can capture logs
-    if show_output {
-        use tokio::io::{AsyncBufReadExt, BufReader};
+    let id = process_id(&resolved_app.project, &app_name, &environment);
+    let task = Task {
+        id: id.clone(),
+        command: final_command,
+        args: vec![],
+        working_dir: working_dir.clone(),
+        env: env_vars,
+        is_detached: true,
+        log_file: Some(log_path),
+        health_check: to_pm_health_check(resolved_app.app.health_check.as_ref()),
+        restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
+    };
 
-        // Use alternative_name for display if present
+    // Spawn through process-manager
+    let running = engine::spawn(&task).await?;
+    if !running.is_alive() {
+        anyhow::bail!("Failed to start process '{}'", app_name);
+    }
+
+    let process_manager::engine::RunningProcess {
+        pid,
+        pgid,
+        child: _,
+        output_rx,
+    } = running;
+
+    // Persist managed process metadata
+    let mut metadata = HashMap::new();
+    metadata.insert("project".to_string(), resolved_app.project.clone());
+    metadata.insert("app_config_name".to_string(), app_name.clone());
+    metadata.insert("environment".to_string(), environment.clone());
+    metadata.insert("command_variant".to_string(), default_command);
+    if let Some(stage) = &effective_stage {
+        metadata.insert("stage".to_string(), stage.clone());
+    }
+    if let Some(alt) = &resolved_app.app.alternative_name {
+        metadata.insert("alternative_name".to_string(), alt.clone());
+    }
+
+    let managed = ManagedProcess {
+        id,
+        pid,
+        pgid,
+        task,
+        start_time: chrono::Utc::now(),
+        metadata,
+        runtime: ProcessRuntime::default(),
+    };
+
+    let store = state_store()?;
+    store.save(&managed)?;
+    store.ensure_daemon_running()?;
+
+    // Stream output to terminal and/or TUI if requested
+    if show_output || output_tx.is_some() {
         let display_name = resolved_app
             .app
             .alternative_name
             .clone()
             .unwrap_or_else(|| app_name.clone());
-        let colored_name = crate::utils::colors::colorize_app_name(&display_name);
-
-        // Capture stdout
-        if let Some(stdout) = spawner_child.stdout.take() {
-            let colored_name_clone = colored_name.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    println!("[{}] {}", colored_name_clone, line);
-                }
-            });
-        }
-
-        // Capture stderr
-        if let Some(stderr) = spawner_child.stderr.take() {
-            let colored_name_clone = colored_name.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    eprintln!("[{}] {}", colored_name_clone, line);
-                }
-            });
-        }
-
-        // Wait for spawner to exit (which happens when app exits or is killed)
-        // We spawn a task to wait for it so we don't block the main thread
-        // This ensures the process is properly reaped (avoiding zombies)
+        let output_tx_clone = output_tx.clone();
         tokio::spawn(async move {
-            let _ = spawner_child.wait().await;
+            stream_output(output_rx, show_output, &display_name, output_tx_clone.as_ref()).await;
         });
+    } else {
+        drop(output_rx);
     }
 
-    // Step 8: Success! Return the app name for reporting
     Ok(app_name)
+}
+
+fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -> HealthCheck {
+    match health {
+        Some(crate::config::models::HealthCheck::Http {
+            url,
+            timeout_secs,
+            expected_status,
+        }) => HealthCheck::Http {
+            url: url.clone(),
+            timeout_secs: *timeout_secs,
+            expected_status: *expected_status,
+        },
+        Some(crate::config::models::HealthCheck::Tcp {
+            host,
+            port,
+            timeout_secs,
+        }) => HealthCheck::Tcp {
+            host: host.clone(),
+            port: *port,
+            timeout_secs: *timeout_secs,
+        },
+        Some(crate::config::models::HealthCheck::Command {
+            command,
+            timeout_secs,
+            expected_exit_code,
+        }) => HealthCheck::Command {
+            command: command.clone(),
+            timeout_secs: *timeout_secs,
+            expected_exit_code: *expected_exit_code,
+        },
+        Some(crate::config::models::HealthCheck::Process {}) | None => HealthCheck::Process {},
+    }
+}
+
+fn to_pm_restart_policy(policy: Option<&crate::config::models::RestartPolicy>) -> RestartPolicy {
+    match policy {
+        Some(policy) => RestartPolicy {
+            enabled: policy.enabled,
+            max_restarts: policy.max_restarts,
+            restart_window_secs: policy.restart_window_secs,
+            initial_backoff_secs: policy.initial_backoff_secs,
+            max_backoff_secs: policy.max_backoff_secs,
+            backoff_multiplier: policy.backoff_multiplier,
+            restart_on_exit_codes: policy.restart_on_exit_codes.clone(),
+        },
+        None => RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    }
 }
 
 /// Helper function for internal use (starting dependencies)
@@ -379,20 +380,20 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
 
     let app_name = &args.app_names[0];
 
-    // Step 1: Load configuration files
+    // Load configuration files
     let config = load_config()?;
     let preferences = load_preferences()?;
 
-    // Step 2: Resolve which app to start
+    // Resolve which app to start
     let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
 
-    // Step 3: Determine which environment to use
+    // Determine which environment to use
     let environment = args
         .env
         .clone()
         .unwrap_or_else(|| preferences.default_env.clone());
 
-    // Step 4: Get the commands HashMap for the selected environment
+    // Get the commands HashMap for the selected environment
     let commands = resolved_app.app.commands.get(&environment).ok_or_else(|| {
         use crate::config::models::Environment;
         if Environment::from_string(&environment).is_none() {
@@ -406,7 +407,7 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         }
     })?;
 
-    // Step 5: Get the default command name for this environment
+    // Get the default command name for this environment
     let default_command = resolved_app
         .app
         .defaults
@@ -420,7 +421,7 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         })?
         .clone();
 
-    // Step 6: Look up the actual command string from the commands HashMap
+    // Look up the actual command string from the commands HashMap
     let command = commands
         .get(&default_command)
         .ok_or_else(|| {
@@ -432,35 +433,33 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         })?
         .clone();
 
-    // Step 7: Initialize process tracker and clean up stale PIDs
-    let tracker = ProcessTracker::new()?;
-    tracker.cleanup_dead()?;
+    // Initialize state store and clean stale entries
+    let store = state_store()?;
+    store.cleanup_dead()?;
 
-    // Step 8: Check if this dependency is already running
-    if let Some(existing) =
-        tracker.get_process(&resolved_app.project, app_name, Some(&environment))?
-    {
-        if tracker.is_running(existing.pid) {
+    // Check if this dependency is already running
+    if let Some(existing) = find_process(&store, &resolved_app.project, app_name, Some(&environment))? {
+        if store.is_running(&existing) {
             // Already running - no need to start again
             return Ok(());
         } else {
-            // Stale PID file - clean it up
-            tracker.remove_process(&resolved_app.project, app_name, Some(&environment))?;
+            // Stale state file - clean it up
+            store.delete(&existing.id)?;
         }
     }
 
-    // Step 9: Check if this dependency has its own dependencies
+    // Check if this dependency has its own dependencies
     if !args.skip_deps {
         let dependencies = resolve_dependency_chain(&config, &resolved_app)?;
         if !dependencies.is_empty() {
-            let missing = check_dependencies_running(&tracker, &dependencies)?;
+            let missing = check_dependencies_running(&store, &dependencies)?;
             if !missing.is_empty() {
                 anyhow::bail!("Missing dependencies: {}", missing.join(", "));
             }
         }
     }
 
-    // Step 10: Start the single app using our helper function
+    // Start the single app using our helper function
     start_single_app_process(
         resolved_app,
         command,
@@ -468,12 +467,10 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
         environment,
         show_output,
         args.stage,
+        args.output_tx,
     )
     .await?;
 
-    // Step 11: Ensure background monitor is running
-    let binary_path = crate::process::monitor::get_devcli_binary_path()?;
-    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
-
     Ok(())
 }
+

@@ -1,14 +1,14 @@
 // Metrics collector - aggregates metrics from various sources
 //
 // This module:
-// - Collects process metrics from ProcessTracker
+// - Collects process metrics from process-manager state
 // - Tracks operation timings (start, stop, restart, health checks)
 // - Aggregates system-level statistics
 // - Calculates performance averages
 
 use super::types::*;
 use crate::config::load_config;
-use crate::process::ProcessTracker;
+use crate::process_manager_support::state_store;
 use crate::Result;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -71,11 +71,11 @@ impl MetricsCollector {
     pub async fn collect_all(&self) -> Result<AllMetrics> {
         tracing::debug!("Collecting all metrics");
 
-        let tracker = ProcessTracker::new()?;
+        let store = state_store()?;
         let config = load_config()?;
 
         Ok(AllMetrics {
-            processes: self.collect_process_metrics(&tracker, &config).await?,
+            processes: self.collect_process_metrics(&store, &config).await?,
             system: self.collect_system_metrics(&config).await?,
             performance: self.collect_performance_metrics().await?,
             timestamp: Utc::now(),
@@ -85,14 +85,14 @@ impl MetricsCollector {
     /// Collect process metrics from tracker
     async fn collect_process_metrics(
         &self,
-        tracker: &ProcessTracker,
+        store: &process_manager::StateStore,
         _config: &crate::config::Config,
     ) -> Result<ProcessMetrics> {
-        let processes = tracker.list_processes()?;
+        let processes = store.list()?;
 
         let running_processes: Vec<_> = processes
             .iter()
-            .filter(|p| tracker.is_running(p.pid))
+            .filter(|p| store.is_running(p))
             .collect();
 
         let total_processes = processes.len();
@@ -100,18 +100,18 @@ impl MetricsCollector {
         let stopped_count = total_processes - running_count;
 
         // Calculate total restarts
-        let total_restarts: u64 = processes.iter().map(|p| p.restart_count as u64).sum();
+        let total_restarts: u64 = processes.iter().map(|p| p.runtime.restart_count as u64).sum();
 
         // Calculate restarts in last hour
         let one_hour_ago = Utc::now() - chrono::Duration::hours(1);
         let restarts_last_hour: u64 = processes
             .iter()
-            .flat_map(|p| &p.restart_history)
+            .flat_map(|p| &p.runtime.history)
             .filter(|entry| entry.timestamp > one_hour_ago)
             .count() as u64;
 
         // Calculate health check success rate
-        let total_health_checks: u32 = processes.iter().map(|p| p.health_check_failures).sum();
+        let total_health_checks: u32 = processes.iter().map(|p| p.runtime.health_failures).sum();
         let health_check_success_rate = if total_health_checks > 0 {
             // Estimate based on failures (rough approximation)
             let estimated_total = total_health_checks * 10; // Assume 10x checks vs failures
@@ -126,14 +126,14 @@ impl MetricsCollector {
         // Build app metrics
         let mut app_metrics = Vec::new();
         for process in &processes {
-            let is_running = tracker.is_running(process.pid);
+            let is_running = store.is_running(process);
             let uptime_seconds = if is_running {
                 Some((Utc::now() - process.start_time).num_seconds() as u64)
             } else {
                 None
             };
 
-            let health_status = if process.health_check_failures > 0 {
+            let health_status = if process.runtime.health_failures > 0 {
                 "unhealthy".to_string()
             } else if is_running {
                 "healthy".to_string()
@@ -143,16 +143,21 @@ impl MetricsCollector {
 
             app_metrics.push(AppMetrics {
                 project: process
-                    .project
-                    .clone()
+                    .metadata
+                    .get("project")
+                    .cloned()
                     .unwrap_or_else(|| "unknown".to_string()),
-                name: process.app_name.clone(),
+                name: process
+                    .metadata
+                    .get("app_config_name")
+                    .cloned()
+                    .unwrap_or_else(|| process.id.clone()),
                 status: if is_running { "running" } else { "stopped" }.to_string(),
                 uptime_seconds,
-                restart_count: process.restart_count,
-                last_exit_code: process.last_exit_code,
+                restart_count: process.runtime.restart_count,
+                last_exit_code: process.runtime.last_exit_code,
                 health_status,
-                health_check_failures: process.health_check_failures,
+                health_check_failures: process.runtime.health_failures,
             });
         }
 

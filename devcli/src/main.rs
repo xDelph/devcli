@@ -452,6 +452,7 @@ async fn run() -> Result<()> {
                 skip_deps,
                 silent: false, // CLI mode - show output to terminal
                 stage,
+                output_tx: None,
             };
 
             // Call the start command from our core library
@@ -474,6 +475,7 @@ async fn run() -> Result<()> {
                 env,
                 skip_deps,
                 silent: false, // CLI mode - show output
+                output_tx: None,
             };
 
             restart_command(args).await?;
@@ -492,6 +494,7 @@ async fn run() -> Result<()> {
                 all,
                 force,
                 silent: false, // CLI mode - show output
+                output_tx: None,
             };
 
             stop_command(args).await?;
@@ -512,6 +515,8 @@ async fn run() -> Result<()> {
                 project,
                 env,
                 skip_deps,
+                silent: false,
+                output_tx: None,
             };
             run_command(args).await?;
         }

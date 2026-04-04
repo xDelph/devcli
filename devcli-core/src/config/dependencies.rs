@@ -3,7 +3,7 @@
 
 use super::models::Config;
 use super::resolver::{get_app_by_project, ResolvedApp};
-use crate::process::ProcessTracker;
+use process_manager::StateStore;
 use crate::Result;
 use std::collections::{HashSet, VecDeque};
 
@@ -102,7 +102,7 @@ pub fn resolve_dependency_chain(
 //
 // Example: If Redis should be running but isn't, returns ["infrastructure/redis"]
 pub fn check_dependencies_running(
-    tracker: &ProcessTracker,
+    store: &StateStore,
     dependencies: &[ResolvedApp],
 ) -> Result<Vec<String>> {
     // Vec to collect missing dependencies
@@ -113,18 +113,20 @@ pub fn check_dependencies_running(
         // Build the key "project/app" for display
         let app_key = format!("{}/{}", dep.project, dep.app_name);
 
-        // Try to get the process info for this dependency
-        // .get_process() returns Option<ProcessInfo>
-        if let Some(process) = tracker.get_process(&dep.project, &dep.app_name, None)? {
-            // Process info exists, but is it still running?
-            // Check if the PID is still active
-            if !tracker.is_running(process.pid) {
-                // Process died - treat as missing
-                missing.push(app_key);
+        // Dependency is considered running if we find any alive process
+        // with matching project + app metadata.
+        let mut running = false;
+        let project_processes = store.find_by_metadata("project", &dep.project)?;
+        for process in project_processes {
+            if process.metadata.get("app_config_name").map(String::as_str) == Some(&dep.app_name)
+                && store.is_running(&process)
+            {
+                running = true;
+                break;
             }
-            // else: process is running, all good!
-        } else {
-            // No process info found - never started
+        }
+
+        if !running {
             missing.push(app_key);
         }
     }

@@ -6,7 +6,7 @@
 // Flow: Find running process → Stop it → Start same process with same config
 
 use crate::config::load_preferences;
-use crate::process::ProcessTracker;
+use crate::process_manager_support::{emit_line, find_process, state_store, OutputChannel};
 use crate::Result;
 
 // Arguments for the restart command
@@ -16,171 +16,123 @@ pub struct RestartCommandArgs {
     pub env: Option<String>,     // Optional: "local" or "docker" (overrides existing config)
     pub skip_deps: bool,         // If true, don't check/start dependencies
     pub silent: bool,            // If true, don't print to terminal (for TUI mode)
+    pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
 // Main implementation of the restart command
-// Restart means: stop existing process → start same process with same config
 #[tracing::instrument(skip(args), fields(app_name = %args.app_name, project = ?args.project, env = ?args.env, skip_deps = args.skip_deps))]
 pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let silent = args.silent;
+    let store = state_store()?;
+    store.cleanup_dead()?;
 
-    tracing::info!(
-        app_name = %args.app_name,
-        project = ?args.project,
-        env = ?args.env,
-        "Restart command initiated"
-    );
-
-    // Step 0: Load config and resolve app to get project name and actual app name
-    // We need the project name to find the PID file
-    // We also need the actual app name (in case user provided alternative_name)
+    // Resolve app to get project and actual app name
     let config = crate::config::load_config()?;
     let resolved_app =
         crate::config::resolve_app(&config, &args.app_name, args.project.as_deref())?;
     let project_name = resolved_app.project.clone();
     let actual_app_name = resolved_app.app_name.clone();
 
-    // Step 1: Get the process tracker and clean up dead processes
-    let tracker = ProcessTracker::new()?;
-    tracker.cleanup_dead()?;
-
-    // Step 2: Check if the process is currently running
-    let existing_process = if let Some(process) =
-        tracker.get_process(&project_name, &actual_app_name, args.env.as_deref())?
-    {
-        // Check if process is still actually running
-        if tracker.is_running(process.pid) {
-            Some(process)
-        } else {
-            // Process died but we have PID file - clean it up
-            tracker.remove_process(
-                &project_name,
-                &actual_app_name,
-                process.environment.as_deref(),
-            )?;
-            if !silent {
-                println!(
-                    "Process '{}' was not running (cleaning up stale PID file)",
-                    args.app_name
+    // Check if process exists and is running
+    let existing_process =
+        if let Some(process) = find_process(&store, &project_name, &actual_app_name, args.env.as_deref())? {
+            if store.is_running(&process) {
+                Some(process)
+            } else {
+                store.delete(&process.id)?;
+                emit_line(
+                    silent,
+                    args.output_tx.as_ref(),
+                    format!(
+                        "Process '{}' was not running (cleaning up stale state file)",
+                        args.app_name
+                    ),
                 );
+                None
             }
+        } else {
             None
-        }
-    } else {
-        None
-    };
+        };
 
-    // Step 3: If process is not running, we can't restart it - suggest starting instead
     let Some(process) = existing_process else {
-        tracing::warn!(
-            app_name = %args.app_name,
-            project = %project_name,
-            "Cannot restart - process not running"
-        );
         anyhow::bail!(
             "Process '{}' is not currently running. Use 'start' command instead.",
             args.app_name
         );
     };
 
-    tracing::debug!(
-        app_name = %args.app_name,
-        pid = process.pid,
-        environment = ?process.environment,
-        "Found running process to restart"
-    );
-
-    // Step 4: Determine environment and project for restart
-    // Use --env flag if provided, otherwise use existing process's environment
+    // Determine environment and project for restart
     let preferences = load_preferences()?;
     let environment = args.env.clone().unwrap_or_else(|| {
         process
-            .environment
-            .clone()
+            .metadata
+            .get("environment")
+            .cloned()
             .unwrap_or_else(|| preferences.default_env.clone())
     });
-
-    // Use --project flag if provided, otherwise use existing process's project
-    // Note: we already resolved the project above, but we keep this logic for consistency with args
     let project = Some(project_name.clone());
 
-    tracing::info!(
-        app_name = %args.app_name,
-        environment = %environment,
-        "Restarting process"
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!("Restarting process '{}'...", args.app_name),
     );
 
-    if !silent {
-        println!("Restarting process '{}'...", args.app_name);
-    }
-
-    // Step 5: Stop the existing process using stop_command
+    // Stop current process first
     let stop_args = crate::commands::stop::StopCommandArgs {
         app_name: Some(args.app_name.clone()),
         project: project.clone(),
         all: false,
         force: false,
         silent,
+        output_tx: args.output_tx.clone(),
     };
-
     crate::commands::stop::stop_command(stop_args).await?;
 
-    // Step 6: Determine if we should use start or run command
-    // If command_variant exists and is not the default, use run command
-    // Otherwise, use start command
-    // We already have resolved_app from Step 0
-
-    let use_run_command = if let Some(ref variant) = process.command_variant {
-        // Check if this variant is the default for this environment
+    // Decide restart path (run vs start)
+    let command_variant = process.metadata.get("command_variant").cloned();
+    let use_run_command = if let Some(ref variant) = command_variant {
         if let Some(default_variant) = resolved_app.app.defaults.get(&environment) {
             variant != default_variant
         } else {
-            // No default set, assume it was run with a specific variant
             true
         }
     } else {
-        // No variant stored, use start
         false
     };
 
     if use_run_command {
-        // Use run command with the specific variant
-        let command_variant = process
-            .command_variant
-            .clone()
-            .unwrap_or_else(|| "start".to_string());
-
         let run_args = crate::commands::run::RunCommandArgs {
             app_name: args.app_name.clone(),
-            command_variant,
+            command_variant: command_variant.unwrap_or_else(|| "start".to_string()),
             project,
             env: Some(environment),
             skip_deps: args.skip_deps,
+            silent,
+            output_tx: args.output_tx.clone(),
         };
 
         crate::commands::run::run_command(run_args).await?;
     } else {
-        // Use start command (default behavior)
         let start_args = crate::commands::start::StartCommandArgs {
             app_names: vec![args.app_name.clone()],
             project,
             env: Some(environment),
             skip_deps: args.skip_deps,
             silent,
-            stage: process.stage, // Use the same stage as before
+            stage: process.metadata.get("stage").cloned(),
+            output_tx: args.output_tx.clone(),
         };
 
         crate::commands::start::start_command(start_args).await?;
     }
 
-    tracing::info!(
-        app_name = %args.app_name,
-        "Process restarted successfully"
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!("✓ Process '{}' restarted successfully", args.app_name),
     );
-
-    if !silent {
-        println!("✓ Process '{}' restarted successfully", args.app_name);
-    }
 
     Ok(())
 }
+

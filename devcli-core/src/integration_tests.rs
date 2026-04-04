@@ -5,10 +5,13 @@
 mod tests {
     use crate::config::*;
     use crate::detection::*;
-    use crate::process::*;
+    use crate::process_manager_support::{process_id, state_store};
     use crate::test_utils::AppBuilder;
+    use process_manager::state::{ManagedProcess, ProcessRuntime};
+    use process_manager::{HealthCheck, RestartPolicy, Task};
     use std::collections::HashMap;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     // Helper: Create a test Node.js project
@@ -111,64 +114,73 @@ mod tests {
         assert_eq!(resolved_with_project.app_name, "test-app");
     }
 
-    // Test: Process tracker workflow
+    // Test: Process manager state workflow
     #[test]
     fn test_integration_process_tracking() {
-        let tracker = ProcessTracker::new().unwrap();
+        let store = state_store().unwrap();
         let current_pid = std::process::id();
+        let id = process_id("test-project", "integration-test-app", "local");
 
         // Step 1: Register a test process
-        let process = ProcessInfo {
-            app_name: "integration-test-app".to_string(),
-            pid: current_pid,
+        let task = Task {
+            id: id.clone(),
             command: "test command".to_string(),
-            working_dir: "/tmp".to_string(),
-            start_time: chrono::Utc::now(),
-            env_vars: HashMap::new(),
-            project: Some("test-project".to_string()),
-            app_config_name: Some("integration-test-app".to_string()),
-            environment: Some("local".to_string()),
-            command_variant: Some("start".to_string()),
-            stage: None,
-            restart_count: 0,
-            restart_history: Vec::new(),
-            last_exit_code: None,
-            last_exit_time: None,
-            health_check_failures: 0,
-            last_health_check: None,
+            args: vec![],
+            working_dir: PathBuf::from("/tmp"),
+            env: HashMap::new(),
+            is_detached: true,
+            log_file: None,
+            health_check: HealthCheck::Process {},
+            restart_policy: RestartPolicy {
+                enabled: false,
+                ..RestartPolicy::default()
+            },
         };
 
-        tracker.register_process(process).unwrap();
+        let mut metadata = HashMap::new();
+        metadata.insert("project".to_string(), "test-project".to_string());
+        metadata.insert("app_config_name".to_string(), "integration-test-app".to_string());
+        metadata.insert("environment".to_string(), "local".to_string());
+        metadata.insert("command_variant".to_string(), "start".to_string());
+
+        let process = ManagedProcess {
+            id: id.clone(),
+            pid: current_pid,
+            pgid: None,
+            task,
+            start_time: chrono::Utc::now(),
+            metadata,
+            runtime: ProcessRuntime::default(),
+        };
+
+        store.save(&process).unwrap();
 
         // Step 2: Verify process is tracked
-        let retrieved = tracker
-            .get_process("test-project", "integration-test-app", None)
-            .unwrap();
+        let retrieved = store.load(&id).unwrap();
         assert!(retrieved.is_some());
 
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.app_name, "integration-test-app");
+        assert_eq!(
+            retrieved.metadata.get("app_config_name").map(String::as_str),
+            Some("integration-test-app")
+        );
         assert_eq!(retrieved.pid, current_pid);
 
         // Step 3: Verify process is running
-        assert!(tracker.is_running(current_pid));
+        assert!(store.is_running(&retrieved));
 
         // Step 4: List all processes (should include ours)
-        let processes = tracker.list_processes().unwrap();
+        let processes = store.list().unwrap();
         let our_process = processes
             .iter()
-            .find(|p| p.app_name == "integration-test-app");
+            .find(|p| p.id == id);
         assert!(our_process.is_some());
 
         // Step 5: Clean up
-        tracker
-            .remove_process("test-project", "integration-test-app", None)
-            .unwrap();
+        store.delete(&id).unwrap();
 
         // Step 6: Verify it's removed
-        let retrieved_after = tracker
-            .get_process("test-project", "integration-test-app", None)
-            .unwrap();
+        let retrieved_after = store.load(&id).unwrap();
         assert!(retrieved_after.is_none());
     }
 
@@ -600,7 +612,7 @@ CMD ["node", "server.js"]
         }
 
         // Exit code distribution should be tracked
-        // (Actual verification would require collect_all() which needs ProcessTracker)
+    // (Actual verification would require collect_all() with deterministic state snapshots)
     }
 
     #[test]

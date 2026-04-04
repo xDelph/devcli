@@ -31,6 +31,7 @@ pub use executor::{start_apps_in_parallel, start_single_app_internal};
 pub use logging::setup_log_monitoring;
 pub use resolver::{resolve_apps_to_start, validate_and_get_command, AppToStart, StartCommandArgs};
 
+use crate::process_manager_support::{find_process, state_store};
 use crate::Result;
 
 /// Main implementation of the start command
@@ -64,14 +65,17 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     }
 
     // Step 2.5: Filter out apps that are now running (started as dependencies)
-    let tracker = crate::process::ProcessTracker::new()?;
+    let store = state_store()?;
     let mut apps_to_start_filtered = Vec::new();
     for app in apps_to_start {
         let app_name = &app.resolved_app.app_name;
-        if let Some(existing) =
-            tracker.get_process(&app.resolved_app.project, app_name, Some(&environment))?
-        {
-            if tracker.is_running(existing.pid) {
+        if let Some(existing) = find_process(
+            &store,
+            &app.resolved_app.project,
+            app_name,
+            Some(&environment),
+        )? {
+            if store.is_running(&existing) {
                 tracing::info!(
                     app = %app_name,
                     pid = existing.pid,
@@ -95,15 +99,12 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         &environment,
         silent,
         args.stage.clone(),
+        args.output_tx.clone(),
     )
     .await?;
 
     // Step 4: Handle different modes and keep process alive for log viewing
     setup_log_monitoring(&started_apps, silent).await?;
-
-    // Step 5: Ensure background monitor is running
-    let binary_path = crate::process::monitor::get_devcli_binary_path()?;
-    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
 
     Ok(())
 }

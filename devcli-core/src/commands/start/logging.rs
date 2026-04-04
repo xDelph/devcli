@@ -6,6 +6,7 @@
 //! - Handling Ctrl+C signal for graceful exit
 
 use crate::config::load_preferences;
+use crate::process_manager_support::state_store;
 use crate::Result;
 
 /// Setup log monitoring based on detached mode preference
@@ -47,9 +48,7 @@ pub async fn setup_log_monitoring(started_apps: &[String], silent: bool) -> Resu
 /// Wait for Ctrl+C signal or all processes to exit
 #[tracing::instrument(skip(started_apps), fields(app_count = started_apps.len()))]
 async fn wait_for_interrupt_or_exit(started_apps: &[String]) -> Result<()> {
-    use crate::process::ProcessTracker;
-
-    let tracker = ProcessTracker::new()?;
+    let store = state_store()?;
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
 
     loop {
@@ -73,10 +72,12 @@ async fn wait_for_interrupt_or_exit(started_apps: &[String]) -> Result<()> {
                 // Check if any of the started processes are still running
                 let mut any_running = false;
                 // We list all processes to avoid needing project name for lookup
-                if let Ok(processes) = tracker.list_processes() {
+                if let Ok(processes) = store.list() {
                     for app_name in started_apps {
-                        if let Some(process) = processes.iter().find(|p| p.app_name == *app_name) {
-                            if tracker.is_running(process.pid) {
+                        if let Some(process) = processes.iter().find(|p| {
+                            p.metadata.get("app_config_name").map(String::as_str) == Some(app_name.as_str())
+                        }) {
+                            if store.is_running(process) {
                                 any_running = true;
                                 break;
                             }

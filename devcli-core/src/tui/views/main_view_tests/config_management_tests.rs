@@ -7,7 +7,6 @@
 
 use crate::config::loader::save_config;
 use crate::config::models::{App, Commands, Config, Defaults, Project};
-use crate::process::tracker::ProcessTracker;
 use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -65,8 +64,7 @@ fn create_test_config() -> Config {
     });
     Config { projects }
 fn create_test_state_arc(config: &Config) -> Arc<Mutex<AppState>> {
-    let tracker = ProcessTracker::new().unwrap();
-    let state = AppState::from_config(config, &tracker).unwrap();
+    let state = AppState::from_config(config).unwrap();
     Arc::new(Mutex::new(state))
 #[test]
 fn test_config_mode_starts_in_view() {

@@ -10,7 +10,7 @@ use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},
     load_config, load_preferences,
 };
-use crate::process::ProcessTracker;
+use crate::process_manager_support::state_store;
 use crate::Result;
 
 /// Handle dependencies for all apps collectively
@@ -31,7 +31,7 @@ pub async fn handle_dependencies(
 ) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
-    let tracker = ProcessTracker::new()?;
+    let store = state_store()?;
 
     // Collect dependencies for all apps
     let mut all_dependencies = Vec::new();
@@ -61,7 +61,7 @@ pub async fn handle_dependencies(
     }
 
     // Check which dependencies are NOT running
-    let missing = check_dependencies_running(&tracker, &all_dependencies)?;
+    let missing = check_dependencies_running(&store, &all_dependencies)?;
 
     if missing.is_empty() {
         tracing::info!("All dependencies are running");
@@ -148,6 +148,7 @@ async fn start_missing_dependencies(
                     skip_deps: false,
                     silent,
                     stage: None, // Dependencies use their own configured stage, not parent's override
+                    output_tx: None,
                 };
 
                 super::executor::start_single_app_internal(dep_args, show_output)

@@ -34,6 +34,7 @@ mod tests {
             skip_deps: false,
             silent: false,
             stage: None,
+            output_tx: None,
         };
 
         // Empty app_names should be handled by the caller
@@ -49,6 +50,7 @@ mod tests {
             skip_deps: true,
             silent: false,
             stage: Some("dev".to_string()),
+            output_tx: None,
         };
 
         assert_eq!(args.app_names.len(), 1);
@@ -68,6 +70,7 @@ mod tests {
             skip_deps: false,
             silent: false,
             stage: None,
+            output_tx: None,
         };
 
         assert_eq!(args.app_names.len(), 3);

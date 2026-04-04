@@ -5,11 +5,13 @@
 // This runs the "build:production" command instead of the default
 
 use crate::config::{load_config, load_preferences, resolve_app};
-use crate::process::{spawn_process, ProcessInfo, ProcessOptions, ProcessTracker};
+use crate::process_manager_support::{
+    emit_line, find_process, log_file_path, process_id, state_store, stream_output, OutputChannel,
+};
 use crate::utils::path::expand_path;
 use crate::Result;
-use anyhow::Context;
-use chrono::Utc;
+use process_manager::state::{ManagedProcess, ProcessRuntime};
+use process_manager::{engine, HealthCheck, RestartPolicy, Task};
 use std::collections::HashMap;
 
 // Arguments for the run command
@@ -19,6 +21,8 @@ pub struct RunCommandArgs {
     pub project: Option<String>, // Optional: specify project if ambiguous
     pub env: Option<String>,     // Optional: environment override
     pub skip_deps: bool,         // If true, skip dependency checks
+    pub silent: bool,            // If true, don't print to terminal (for TUI mode)
+    pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
 // Main implementation of the run command
@@ -35,6 +39,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Load config and preferences (same as start command)
     let config = load_config()?;
     let preferences = load_preferences()?;
+    let silent = args.silent;
+    let show_output = !silent && !preferences.detached_mode;
 
     // Resolve the app in the config
     let resolved_app = resolve_app(&config, &args.app_name, args.project.as_deref())?;
@@ -46,7 +52,6 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         .unwrap_or_else(|| preferences.default_env.clone());
 
     // Get the commands for the chosen environment
-    // Check if the app has commands defined for this environment
     let commands = resolved_app.app.commands.get(&environment).ok_or_else(|| {
         use crate::config::models::Environment;
         if Environment::from_string(&environment).is_none() {
@@ -65,10 +70,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         }
     })?;
 
-    // DIFFERENCE FROM START: Look up the SPECIFIC command variant
-    // Instead of using the default, we use the variant provided by the user
-    // Example: If user runs "devcli run api build:prod"
-    // We look for "build:prod" in the commands HashMap
+    // Look up the specific command variant
     let command = commands
         .get(&args.command_variant)
         .ok_or_else(|| {
@@ -81,51 +83,36 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         })?
         .clone();
 
-    let tracker = ProcessTracker::new()?;
+    let store = state_store()?;
+    store.cleanup_dead()?;
 
-    // Clean up any stale PID files from crashed processes
-    tracker.cleanup_dead()?;
-
-    // DIFFERENCE FROM START: Process name includes the variant
-    // This allows running multiple commands for the same app simultaneously
-    // Example: "api-private:build" and "api-private:start" can both run
-    // The format is "appName:variantName"
-    let process_name = format!("{}:{}", args.app_name, args.command_variant);
-
-    // Check if THIS SPECIFIC command is already running for this app
-    if let Ok(Some(process)) = tracker.get_process(
+    // Check if this app/environment is already running
+    if let Some(process) = find_process(
+        &store,
         &resolved_app.project,
         &resolved_app.app_name,
         Some(&environment),
-    ) {
-        if tracker.is_running(process.pid) {
+    )? {
+        if store.is_running(&process) {
             anyhow::bail!(
-                "Process '{}' is already running with PID {}",
-                process_name,
+                "Process '{}:{}' is already running with PID {}",
+                args.app_name,
+                args.command_variant,
                 process.pid
             );
         } else {
-            // Clean up stale PID file
-            tracker.remove_process(
-                &resolved_app.project,
-                &resolved_app.app_name,
-                Some(&environment),
-            )?;
+            store.delete(&process.id)?;
         }
     }
 
     // Dependency checking
-    // We reuse the shared `handle_dependencies` function from the start command
-    // This ensures consistent behavior: dependencies are checked and optionally auto-started
     if !args.skip_deps {
         use crate::commands::start::handle_dependencies;
-        // Pass a slice of references to ResolvedApp, as expected by the generic handler
-        handle_dependencies(&[&resolved_app], &environment, !preferences.detached_mode).await?;
+        handle_dependencies(&[&resolved_app], &environment, silent).await?;
     }
 
     // Expand path and verify it exists
     let working_dir = expand_path(&resolved_app.app.path);
-
     if !working_dir.exists() {
         anyhow::bail!(
             "Working directory does not exist: {}",
@@ -133,27 +120,15 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         );
     }
 
-    // Create log file path using the full process name (includes variant)
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    let log_dir = home.join(".devcli").join("logs");
-    tokio::fs::create_dir_all(&log_dir)
-        .await
-        .context("Failed to create log directory")?;
-
-    let date = Utc::now().format("%Y%m%d");
-    let filename = format!(
-        "{}_{}_{}_{}.log",
-        resolved_app.project, args.app_name, environment, date
-    );
-    let log_path = log_dir.join(filename);
+    // Create log file path
+    let log_path = log_file_path(&resolved_app.project, &args.app_name, &environment)?;
 
     // Determine which stage to use for env file resolution
-    // Priority: app default_stages > preferences default_stage > None
     let stage = resolved_app
         .app
         .get_default_stage(&environment, preferences.default_stage.as_deref());
 
-    // Step 3: Prepare command and environment variables
+    // Prepare command and environment variables
     let prepared = crate::commands::prepare::prepare_command(
         &command,
         &environment,
@@ -161,25 +136,12 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         stage.as_deref(),
         &working_dir,
         &preferences,
-        !preferences.detached_mode, // show_output logic for run command
+        show_output,
     )?;
 
     let final_command = prepared.final_command;
     let env_vars = prepared.env_vars;
 
-    // Build process options
-    let options = ProcessOptions {
-        app_name: process_name.clone(),
-        alternative_name: resolved_app.app.alternative_name.clone(),
-        working_dir: working_dir.clone(),
-        command: final_command.clone(),
-        env_vars,
-        detached: true,                          // Always detached (with setsid)
-        show_output: !preferences.detached_mode, // Show output based on preference
-    };
-
-    // Display what we're doing
-    // Note: We show the command variant being executed
     tracing::info!(
         app_name = %args.app_name,
         command_variant = %args.command_variant,
@@ -190,116 +152,235 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         "Running command"
     );
 
-    println!(
-        "Running command '{}' for app '{}' (environment: {})",
-        args.command_variant, args.app_name, environment
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!(
+            "Running command '{}' for app '{}' (environment: {})",
+            args.command_variant, args.app_name, environment
+        ),
     );
-    println!("Working directory: {}", working_dir.display());
-    println!("Command: {}", final_command);
-    println!("Log file: {}", log_path.display());
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!("Working directory: {}", working_dir.display()),
+    );
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!("Command: {}", final_command),
+    );
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!("Log file: {}", log_path.display()),
+    );
 
-    // Spawn the process
-    let spawned = spawn_process(options, log_path.clone(), None).await?;
+    // Build process-manager task
+    let id = process_id(&resolved_app.project, &resolved_app.app_name, &environment);
+    let task = Task {
+        id: id.clone(),
+        command: final_command.clone(),
+        args: vec![],
+        working_dir: working_dir.clone(),
+        env: env_vars,
+        is_detached: true,
+        log_file: Some(log_path),
+        health_check: to_pm_health_check(resolved_app.app.health_check.as_ref()),
+        restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
+    };
+
+    // Spawn process via process-manager
+    let running = engine::spawn(&task).await?;
+    let pid = running.pid;
+    let pgid = running.pgid;
+    let output_rx = running.output_rx;
+
+    if show_output || args.output_tx.is_some() {
+        let display_name = resolved_app
+            .app
+            .alternative_name
+            .clone()
+            .unwrap_or_else(|| args.app_name.clone());
+        let output_tx = args.output_tx.clone();
+        tokio::spawn(async move {
+            stream_output(output_rx, show_output, &display_name, output_tx.as_ref()).await;
+        });
+    } else {
+        drop(output_rx);
+    }
 
     // Wait a moment to check if the process completed or crashed
-    // For build commands, completing quickly is expected behavior
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
-    // Check if the process is still running
-    let process_still_running = tracker.is_running(spawned.pid);
-
-    if !process_still_running {
-        // Process completed - check if it was successful or crashed
-        // For short-running commands like builds, this is normal
-        tracing::info!(
-            app_name = %args.app_name,
-            command_variant = %args.command_variant,
-            pid = spawned.pid,
-            "Process completed quickly"
+    if !is_pid_running(pid) {
+        emit_line(
+            silent,
+            args.output_tx.as_ref(),
+            format!(
+                "✓ Process '{}:{}' completed (PID: {}). Check log for details.",
+                args.app_name, args.command_variant, pid
+            ),
         );
-
-        println!(
-            "✓ Process '{}' completed (PID: {}). Check log for details: {}",
-            process_name,
-            spawned.pid,
-            log_path.display()
-        );
-
-        // If not in detached mode, we already showed the output during spawn_process
-        // Don't register completed processes in the tracker
         return Ok(());
     }
 
     // Save process metadata
-    // Note: command_variant field stores the specific variant used
-    let process_info = ProcessInfo {
-        app_name: process_name.clone(),
-        pid: spawned.pid,
-        command: final_command,
-        working_dir: working_dir.to_string_lossy().to_string(),
-        start_time: Utc::now(),
-        env_vars: HashMap::new(),
-        project: Some(resolved_app.project.clone()),
-        app_config_name: Some(resolved_app.app_name.clone()),
-        environment: Some(environment.clone()),
-        command_variant: Some(args.command_variant.clone()), // Store the variant!
-        stage: None, // Stage tracking will be added in future task
-        restart_count: 0,
-        restart_history: Vec::new(),
-        last_exit_code: None,
-        last_exit_time: None,
-        health_check_failures: 0,
-        last_health_check: None,
+    let mut metadata = HashMap::new();
+    metadata.insert("project".to_string(), resolved_app.project.clone());
+    metadata.insert("app_config_name".to_string(), resolved_app.app_name.clone());
+    metadata.insert("environment".to_string(), environment.clone());
+    metadata.insert("command_variant".to_string(), args.command_variant.clone());
+    if let Some(stage_name) = &stage {
+        metadata.insert("stage".to_string(), stage_name.clone());
+    }
+    if let Some(alt) = &resolved_app.app.alternative_name {
+        metadata.insert("alternative_name".to_string(), alt.clone());
+    }
+
+    let process_info = ManagedProcess {
+        id,
+        pid,
+        pgid,
+        task,
+        start_time: chrono::Utc::now(),
+        metadata,
+        runtime: ProcessRuntime::default(),
     };
 
-    tracker.register_process(process_info)?;
+    store.save(&process_info)?;
+    store.ensure_daemon_running()?;
 
-    tracing::info!(
-        app_name = %args.app_name,
-        command_variant = %args.command_variant,
-        pid = spawned.pid,
-        "Process started successfully"
+    emit_line(
+        silent,
+        args.output_tx.as_ref(),
+        format!(
+            "✓ Process '{}:{}' started successfully with PID {}",
+            args.app_name, args.command_variant, pid
+        ),
     );
 
-    println!(
-        "✓ Process '{}' started successfully with PID {}",
-        process_name, spawned.pid
-    );
-
-    // Ensure background monitor is running
-    // The monitor keeps process status up-to-date and cleans up dead processes
-    let binary_path = crate::process::monitor::get_devcli_binary_path()?;
-    let _ = crate::process::monitor::spawn_monitor_if_needed(&binary_path);
-
-    // Setup log monitoring based on detached mode preference
-    // If not in detached mode, this will wait for Ctrl+C while streaming logs
+    // Non-detached mode: keep viewing until Ctrl+C or process exits
     if !preferences.detached_mode {
-        println!("\nRunning in background with output streaming (use Ctrl+C to stop viewing)");
-        println!("Press Ctrl+C to stop viewing logs (process will continue running)...\n");
+        emit_line(
+            silent,
+            args.output_tx.as_ref(),
+            "\nRunning in background with output streaming (use Ctrl+C to stop viewing)".to_string(),
+        );
+        emit_line(
+            silent,
+            args.output_tx.as_ref(),
+            "Press Ctrl+C to stop viewing logs (process will continue running)...\n".to_string(),
+        );
 
-        // Poll for process exit or Ctrl+C
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\n\nStopped viewing logs. Process is still running in the background.");
-                    println!("Use 'devcli status' to check process status.");
+                    emit_line(
+                        silent,
+                        args.output_tx.as_ref(),
+                        "\n\nStopped viewing logs. Process is still running in the background.".to_string(),
+                    );
+                    emit_line(
+                        silent,
+                        args.output_tx.as_ref(),
+                        "Use 'devcli status' to check process status.".to_string(),
+                    );
                     break;
                 }
                 _ = interval.tick() => {
-                    // Check if process is still running
-                    if !tracker.is_running(spawned.pid) {
-                        println!("\n\nProcess exited.");
-                        // Clean up the process from tracker
-                     tracker.remove_process(&resolved_app.project, &resolved_app.app_name, Some(&environment))?;
+                    if let Some(latest) = store.load(&process_info.id)? {
+                        if !store.is_running(&latest) {
+                            emit_line(
+                                silent,
+                                args.output_tx.as_ref(),
+                                "\n\nProcess exited.".to_string(),
+                            );
+                            let _ = store.delete(&process_info.id);
+                            break;
+                        }
+                    } else {
                         break;
                     }
                 }
             }
         }
     } else {
-        println!("\nRunning in background (detached mode, no terminal output)");
+        emit_line(
+            silent,
+            args.output_tx.as_ref(),
+            "\nRunning in background (detached mode, no terminal output)".to_string(),
+        );
     }
 
     Ok(())
 }
+
+fn is_pid_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -> HealthCheck {
+    match health {
+        Some(crate::config::models::HealthCheck::Http {
+            url,
+            timeout_secs,
+            expected_status,
+        }) => HealthCheck::Http {
+            url: url.clone(),
+            timeout_secs: *timeout_secs,
+            expected_status: *expected_status,
+        },
+        Some(crate::config::models::HealthCheck::Tcp {
+            host,
+            port,
+            timeout_secs,
+        }) => HealthCheck::Tcp {
+            host: host.clone(),
+            port: *port,
+            timeout_secs: *timeout_secs,
+        },
+        Some(crate::config::models::HealthCheck::Command {
+            command,
+            timeout_secs,
+            expected_exit_code,
+        }) => HealthCheck::Command {
+            command: command.clone(),
+            timeout_secs: *timeout_secs,
+            expected_exit_code: *expected_exit_code,
+        },
+        Some(crate::config::models::HealthCheck::Process {}) | None => HealthCheck::Process {},
+    }
+}
+
+fn to_pm_restart_policy(policy: Option<&crate::config::models::RestartPolicy>) -> RestartPolicy {
+    match policy {
+        Some(policy) => RestartPolicy {
+            enabled: policy.enabled,
+            max_restarts: policy.max_restarts,
+            restart_window_secs: policy.restart_window_secs,
+            initial_backoff_secs: policy.initial_backoff_secs,
+            max_backoff_secs: policy.max_backoff_secs,
+            backoff_multiplier: policy.backoff_multiplier,
+            restart_on_exit_codes: policy.restart_on_exit_codes.clone(),
+        },
+        None => RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    }
+}
+

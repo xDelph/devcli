@@ -6,7 +6,7 @@ pub mod config;
 pub mod detection;
 pub mod logging;
 pub mod metrics;
-pub mod process;
+pub mod process_manager_support;
 pub mod tui;
 pub mod utils;
 

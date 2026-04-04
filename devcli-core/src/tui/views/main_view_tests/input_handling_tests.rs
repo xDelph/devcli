@@ -1,6 +1,5 @@
 // Tests for input handling functionality
 
-use crate::process::tracker::ProcessTracker;
 use crate::test_utils::{AppBuilder, ConfigBuilder};
 use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
@@ -18,8 +17,7 @@ fn create_test_state() -> Arc<Mutex<AppState>> {
         .with_app("test-project", "test-app", app)
         .build();
     
-    let tracker = ProcessTracker::new().unwrap();
-    let state = AppState::from_config(&config, &tracker).unwrap();
+    let state = AppState::from_config(&config).unwrap();
     Arc::new(Mutex::new(state))
 }
 #[test]

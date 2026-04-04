@@ -3,7 +3,7 @@
 // Follows an Elm-like architecture for predictable state updates
 
 use crate::config::models::{App, Config};
-use crate::process::tracker::ProcessTracker;
+use crate::process_manager_support::{find_process, state_store};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
@@ -41,7 +41,9 @@ pub struct AppState {
 impl AppState {
     /// Creates a new AppState from the configuration
     /// Loads all projects and apps, and queries their running status
-    pub fn from_config(config: &Config, process_tracker: &ProcessTracker) -> Result<Self> {
+    pub fn from_config(config: &Config) -> Result<Self> {
+        let store = state_store()?;
+        let _ = store.cleanup_dead();
         let mut projects: Vec<ProjectState> = Vec::new();
 
         // Iterate through each project in the config
@@ -50,33 +52,44 @@ impl AppState {
 
             // Iterate through each app in the project
             for (app_name, app_config) in &project_config.apps {
-                // Determine if the app is running by checking the process tracker
-                let status = Self::determine_status(project_name, app_name, process_tracker);
-
-                // Get process info for health and restart data
-                let process_info = process_tracker
-                    .get_process(project_name, app_name, None)
-                    .ok()
-                    .flatten();
+                // Determine status and runtime details from process-manager state.
+                let process_info = find_process(&store, project_name, app_name, None)?;
+                let status = if let Some(info) = &process_info {
+                    if store.is_running(info) {
+                        AppStatus::Running {
+                            pid: info.pid,
+                            uptime: Utc::now().signed_duration_since(info.start_time),
+                            start_time: info.start_time,
+                        }
+                    } else {
+                        AppStatus::Stopped
+                    }
+                } else {
+                    AppStatus::Stopped
+                };
 
                 // Get the active stage from the running process (if any)
-                let active_stage = process_info.as_ref().and_then(|info| info.stage.clone());
+                let active_stage = process_info
+                    .as_ref()
+                    .and_then(|info| info.metadata.get("stage").cloned());
 
                 // Extract restart count and exit code
                 let restart_count = process_info
                     .as_ref()
-                    .map(|info| info.restart_count)
+                    .map(|info| info.runtime.restart_count)
                     .unwrap_or(0);
-                let last_exit_code = process_info.as_ref().and_then(|info| info.last_exit_code);
+                let last_exit_code = process_info
+                    .as_ref()
+                    .and_then(|info| info.runtime.last_exit_code);
 
                 // Determine health status
                 let health_status = if let Some(info) = process_info.as_ref() {
-                    if info.health_check_failures > 0 {
+                    if info.runtime.health_failures > 0 {
                         HealthStatus::Unhealthy {
-                            failures: info.health_check_failures,
-                            last_check: info.last_health_check.unwrap_or_else(Utc::now),
+                            failures: info.runtime.health_failures,
+                            last_check: info.runtime.last_health_check.unwrap_or_else(Utc::now),
                         }
-                    } else if info.last_health_check.is_some() {
+                    } else if info.runtime.last_health_check.is_some() {
                         // Health check has run and is passing
                         HealthStatus::Healthy
                     } else {
@@ -145,31 +158,6 @@ impl AppState {
             env_selection_requested: false,
             status_updated: false,
         })
-    }
-
-    /// Determines the running status of an app by checking the process tracker
-    fn determine_status(
-        project_name: &str,
-        app_name: &str,
-        process_tracker: &ProcessTracker,
-    ) -> AppStatus {
-        // Check if there's a running process for this app
-        match process_tracker.get_process(project_name, app_name, None) {
-            Ok(Some(process_info)) => {
-                // Verify the process is actually still running
-                if process_tracker.is_running(process_info.pid) {
-                    AppStatus::Running {
-                        pid: process_info.pid,
-                        uptime: Utc::now().signed_duration_since(process_info.start_time),
-                        start_time: process_info.start_time,
-                    }
-                } else {
-                    AppStatus::Stopped
-                }
-            }
-            Ok(None) => AppStatus::Stopped,
-            Err(_) => AppStatus::Unknown,
-        }
     }
 
     /// Extracts commands from app configuration

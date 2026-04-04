@@ -21,6 +21,7 @@ mod tests {
             skip_deps: true,
             silent: false,
             stage: Some("dev".to_string()),
+            output_tx: None,
         };
 
         let cloned = args.clone();

@@ -300,6 +300,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[Getting Started](./docs/getting-started.md)** - Quick start guide with examples (5-minute setup)
 - **[Configuration Reference](./docs/configuration-reference.md)** - Complete config file documentation
 - **[Commands Reference](./docs/commands-reference.md)** - All CLI commands with examples
+- **[devcli-core Lifecycle Deep Dive](./docs/devcli-core-command-lifecycle.md)** - Internal flow for start/run/stop/restart and log handling (CLI + TUI)
 - **[Advanced Features](./docs/advanced-features.md)** - Health checks, metrics, logging, dependencies
 - **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
 
@@ -308,6 +309,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **Installation**: See [Getting Started](./docs/getting-started.md#installation)
 - **Config Format**: See [Configuration Reference](./docs/configuration-reference.md#file-structure)
 - **All Commands**: See [Commands Reference](./docs/commands-reference.md)
+- **Command Internals**: See [devcli-core Lifecycle Deep Dive](./docs/devcli-core-command-lifecycle.md)
 - **Health Checks**: See [Advanced Features](./docs/advanced-features.md#health-checks)
 - **Metrics**: See [Advanced Features](./docs/advanced-features.md#metrics--monitoring)
 - **Help**: See [Troubleshooting](./docs/troubleshooting.md)

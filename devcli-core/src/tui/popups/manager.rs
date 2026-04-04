@@ -4,6 +4,7 @@ use ratatui::Frame;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use crate::process_manager_support::{find_process, state_store};
 use crate::tui::app::{CommandRequest, CommandResult, CommandType};
 use crate::tui::state::AppState;
 use crate::tui::theme::Theme;
@@ -268,11 +269,15 @@ impl PopupManager {
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
-                    let env = if let Ok(tracker) = crate::process::ProcessTracker::new() {
+                    let env = if let Ok(store) = state_store() {
                         if let Ok(Some(process)) =
-                            tracker.get_process(&app.project, &app.name, None)
+                            find_process(&store, &app.project, &app.name, None)
                         {
-                            process.environment.unwrap_or_else(|| "local".to_string())
+                            process
+                                .metadata
+                                .get("environment")
+                                .cloned()
+                                .unwrap_or_else(|| "local".to_string())
                         } else {
                             "local".to_string()
                         }

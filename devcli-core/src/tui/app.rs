@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::config::loader::load_config;
-use crate::process::tracker::ProcessTracker;
+use crate::process_manager_support::{find_process, state_store};
 
 use anyhow::{Context, Result};
 use crossterm::event::KeyEvent;
@@ -77,9 +77,9 @@ pub struct TuiApp {
     pub(crate) main_view: MainView,
     /// Log viewer instance (created when viewing a log file)
     pub(crate) log_viewer: Option<LogViewerView>,
-    /// Process tracker for checking app status
+    /// Shared state store for checking app status
     /// Shared across threads for background status polling
-    pub(crate) process_tracker: Arc<ProcessTracker>,
+    pub(crate) state_store: Arc<process_manager::StateStore>,
     /// Flag to indicate the app should quit
     pub(crate) should_quit: bool,
     /// Manager for popup dialogs
@@ -140,12 +140,12 @@ impl TuiApp {
         // Load configuration from disk
         let config = load_config().context("Failed to load configuration")?;
 
-        // Initialize process tracker wrapped in Arc for shared ownership
-        let process_tracker = Arc::new(ProcessTracker::new()?);
+        // Initialize shared process-manager state store
+        let state_store = Arc::new(state_store()?);
+        let _ = state_store.cleanup_dead();
 
         // Create initial state from config
-        let state = AppState::from_config(&config, &process_tracker)
-            .context("Failed to create application state")?;
+        let state = AppState::from_config(&config).context("Failed to create application state")?;
 
         // Wrap state in Arc<Mutex<>> for thread-safe access from background polling
         let state = Arc::new(Mutex::new(state));
@@ -188,7 +188,7 @@ impl TuiApp {
             theme,
             main_view,
             log_viewer: None,
-            process_tracker,
+            state_store,
             should_quit: false,
             popup_manager,
             help_overlay: HelpOverlay::new(),
@@ -319,12 +319,8 @@ impl TuiApp {
 
         // We might fail to create directory in some test envs, but usually it's fine.
         // If it fails, tests will panic.
-        let process_tracker = Arc::new(ProcessTracker::new().unwrap_or_else(|_| {
-            // Fallback if we can't create real tracker?
-            // Ideally we shouldn't depend on FS in unit tests.
-            // But ProcessTracker is hard to mock without traits.
-            // We'll trust the env.
-            panic!("Failed to create ProcessTracker for test");
+        let state_store = Arc::new(state_store().unwrap_or_else(|_| {
+            panic!("Failed to create StateStore for test");
         }));
 
         let (req_tx, _req_rx) = mpsc::unbounded_channel();
@@ -338,7 +334,7 @@ impl TuiApp {
             theme: Theme::default(),
             main_view: MainView::new().expect("Failed to create MainView for test"),
             log_viewer: None,
-            process_tracker,
+            state_store,
             should_quit: false,
             popup_manager,
             help_overlay: HelpOverlay::new(),
@@ -626,66 +622,27 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Starts a background task that polls process status
-    ///
-    /// Uses a hybrid approach:
-    /// 1. Checks notification file every 250ms for instant updates when monitor detects changes
-    /// 2. Falls back to full status check every 2 seconds as a safety net
-    ///
-    /// This keeps the UI updated with current running states without blocking user interaction
-    ///
-    /// Returns a JoinHandle that can be used to abort the task when the app exits
-    ///
-    /// Optimization: Uses try_lock to avoid blocking the main thread
+    /// Starts a background task that polls process status every 2 seconds.
+    /// Returns a JoinHandle that can be used to abort the task when the app exits.
     fn start_status_polling(&self) -> tokio::task::JoinHandle<()> {
         // Clone Arc references so they can be moved into the async task
         let state = Arc::clone(&self.state);
-        let process_tracker = Arc::clone(&self.process_tracker);
-
-        // We can't easily move status_update_rx out of self, so we'll use a simpler approach:
-        // Just set needs_redraw in the state when status changes
-        // The main event loop already checks for redraws frequently
+        let state_store = Arc::clone(&self.state_store);
 
         tokio::spawn(async move {
-            // Track the last known modification time of the status notification file
-            let mut last_notification_time =
-                process_tracker.get_last_status_change().ok().flatten();
-
-            // Create intervals for different polling strategies
-            let mut fast_check_interval = interval(Duration::from_millis(250)); // Check notification file frequently
-            let mut full_check_interval = interval(Duration::from_secs(2)); // Full status check as fallback
+            let mut poll_interval = interval(Duration::from_secs(2));
 
             loop {
-                tokio::select! {
-                    // Fast check: Look for notification file changes every 250ms
-                    _ = fast_check_interval.tick() => {
-                        // Check if the notification file has been updated
-                        if let Ok(Some(current_time)) = process_tracker.get_last_status_change() {
-                            // If this is the first check or the time has changed, update status
-                            if last_notification_time.is_none() || last_notification_time != Some(current_time) {
-                                last_notification_time = Some(current_time);
-
-                                // Status change detected - update immediately
-                                Self::update_all_app_statuses(&state, &process_tracker).await;
-                            }
-                        }
-                    }
-
-                    // Full check: Update all statuses every 2 seconds as a safety net
-                    // This ensures we catch any changes even if notification system fails
-                    _ = full_check_interval.tick() => {
-                        Self::update_all_app_statuses(&state, &process_tracker).await;
-                    }
-                }
+                poll_interval.tick().await;
+                Self::update_all_app_statuses(&state, &state_store).await;
             }
         })
     }
 
-    /// Updates the status of all apps by checking the process tracker
-    /// This is called both when notification file changes and periodically as a fallback
+    /// Updates the status of all apps by checking the process-manager state store.
     async fn update_all_app_statuses(
         state: &Arc<Mutex<AppState>>,
-        process_tracker: &Arc<ProcessTracker>,
+        state_store: &Arc<process_manager::StateStore>,
     ) {
         // Try to acquire the state lock with a non-blocking approach
         // If we can't get it immediately, skip this update cycle
@@ -699,7 +656,7 @@ impl TuiApp {
                 for app in &mut project.apps {
                     let old_status = app.status.clone();
                     // Check if the app is currently running
-                    app.status = Self::check_app_status(&project.name, &app.name, process_tracker);
+                    app.status = Self::check_app_status(&project.name, &app.name, state_store);
 
                     // Track if any status changed
                     if old_status != app.status {
@@ -715,20 +672,17 @@ impl TuiApp {
         }
     }
 
-    /// Checks the current status of an app by querying the process tracker
-    /// Returns the updated AppStatus (Running with details or Stopped)
+    /// Checks the current status of an app by querying process-manager state.
     fn check_app_status(
         project_name: &str,
         app_name: &str,
-        process_tracker: &ProcessTracker,
+        state_store: &process_manager::StateStore,
     ) -> crate::tui::state::AppStatus {
         use crate::tui::state::AppStatus;
 
-        // Try to get process info from the tracker
-        match process_tracker.get_process(project_name, app_name, None) {
+        match find_process(state_store, project_name, app_name, None) {
             Ok(Some(process_info)) => {
-                // Verify the process is actually still running
-                if process_tracker.is_running(process_info.pid) {
+                if state_store.is_running(&process_info) {
                     // Calculate uptime from start time to now
                     let uptime = chrono::Utc::now().signed_duration_since(process_info.start_time);
 
@@ -738,18 +692,11 @@ impl TuiApp {
                         start_time: process_info.start_time,
                     }
                 } else {
-                    // Process is in tracker but not running anymore
                     AppStatus::Stopped
                 }
             }
-            Ok(None) => {
-                // No process info found - app is stopped
-                AppStatus::Stopped
-            }
-            Err(_) => {
-                // Error checking status - mark as unknown
-                AppStatus::Unknown
-            }
+            Ok(None) => AppStatus::Stopped,
+            Err(_) => AppStatus::Unknown,
         }
     }
 

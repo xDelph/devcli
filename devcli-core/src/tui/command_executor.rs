@@ -1,13 +1,11 @@
 use anyhow::Result;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use crate::tui::app::{CommandRequest, CommandResult, CommandType};
 
 /// Executes a command asynchronously in a background task
 /// This runs in a separate tokio task to avoid blocking the UI
-/// Captures stdout/stderr directly from the spawned process
+/// Uses shared core commands (same code path as CLI)
 pub(crate) async fn execute_command_async(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
@@ -27,58 +25,17 @@ async fn execute_start_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    // Get the CLI binary path
-    let binary_path = std::env::current_exe()?;
-
-    // Build the command: devcli start <app> --project <project> --env <env>
-    let mut cmd = Command::new(binary_path);
-    cmd.arg("start")
-        .arg(&request.app_name)
-        .arg("--project")
-        .arg(&request.project)
-        .arg("--env")
-        .arg(&request.environment)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    // Capture stdout
-    if let Some(stdout) = child.stdout.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(line));
-            }
-        });
-    }
-
-    // Capture stderr
-    // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
-    if let Some(stderr) = child.stderr.take() {
-        let output_tx_clone = output_tx.clone();
-        let env = request.environment.clone();
-        let is_docker_like = env == "docker" || env == "orbstack";
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let formatted = if is_docker_like {
-                    line // Don't prefix for docker/orbstack
-                } else {
-                    format!("[stderr] {}", line)
-                };
-                let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
-            }
-        });
-    }
-
-    // Wait for the command to complete
-    let status = child.wait().await?;
-
-    if !status.success() {
-        anyhow::bail!("Start command failed with status: {}", status);
-    }
+    let core_output = spawn_output_bridge(output_tx.clone());
+    let args = crate::commands::start::StartCommandArgs {
+        app_names: vec![request.app_name.clone()],
+        project: Some(request.project),
+        env: Some(request.environment),
+        skip_deps: false,
+        silent: true,
+        stage: None,
+        output_tx: Some(core_output),
+    };
+    crate::commands::start::start_command(args).await?;
 
     crate::debug!("execute_command_async: Start command finished");
     Ok(format!("Successfully started {}", request.app_name))
@@ -97,58 +54,17 @@ async fn execute_run_command(
         ("local", request.environment.as_str())
     };
 
-    // Get the CLI binary path
-    let binary_path = std::env::current_exe()?;
-
-    // Build the command: devcli run <app> <command> --project <project> --env <env>
-    let mut cmd = Command::new(binary_path);
-    cmd.arg("run")
-        .arg(&request.app_name)
-        .arg(command_name)
-        .arg("--project")
-        .arg(&request.project)
-        .arg("--env")
-        .arg(env)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    // Capture stdout
-    if let Some(stdout) = child.stdout.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(line));
-            }
-        });
-    }
-
-    // Capture stderr
-    // Note: Docker/OrbStack write normal output to stderr, so don't prefix for those
-    if let Some(stderr) = child.stderr.take() {
-        let output_tx_clone = output_tx.clone();
-        let is_docker_like = env == "docker" || env == "orbstack";
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let formatted = if is_docker_like {
-                    line // Don't prefix for docker/orbstack
-                } else {
-                    format!("[stderr] {}", line)
-                };
-                let _ = output_tx_clone.send(CommandResult::LogLine(formatted));
-            }
-        });
-    }
-
-    // Wait for the command to complete
-    let status = child.wait().await?;
-
-    if !status.success() {
-        anyhow::bail!("Run command failed with status: {}", status);
-    }
+    let core_output = spawn_output_bridge(output_tx.clone());
+    let args = crate::commands::run::RunCommandArgs {
+        app_name: request.app_name.clone(),
+        command_variant: command_name.to_string(),
+        project: Some(request.project),
+        env: Some(env.to_string()),
+        skip_deps: false,
+        silent: true,
+        output_tx: Some(core_output),
+    };
+    crate::commands::run::run_command(args).await?;
 
     crate::debug!("execute_command_async: Run command finished");
     Ok(format!("Successfully ran command for {}", request.app_name))
@@ -158,48 +74,16 @@ async fn execute_stop_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    // Get the CLI binary path
-    let binary_path = std::env::current_exe()?;
-
-    // Build the command: devcli stop <app> --project <project>
-    let mut cmd = Command::new(binary_path);
-    cmd.arg("stop")
-        .arg(&request.app_name)
-        .arg("--project")
-        .arg(&request.project)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    // Capture stdout
-    if let Some(stdout) = child.stdout.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(line));
-            }
-        });
-    }
-
-    // Capture stderr
-    if let Some(stderr) = child.stderr.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
-            }
-        });
-    }
-
-    // Wait for the command to complete
-    let status = child.wait().await?;
-
-    if !status.success() {
-        anyhow::bail!("Stop command failed with status: {}", status);
-    }
+    let core_output = spawn_output_bridge(output_tx.clone());
+    let args = crate::commands::stop::StopCommandArgs {
+        app_name: Some(request.app_name.clone()),
+        project: Some(request.project),
+        all: false,
+        force: false,
+        silent: true,
+        output_tx: Some(core_output),
+    };
+    crate::commands::stop::stop_command(args).await?;
 
     crate::debug!("execute_command_async: Stop command finished");
     Ok(format!("Successfully stopped {}", request.app_name))
@@ -209,51 +93,33 @@ async fn execute_restart_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    // Get the CLI binary path
-    let binary_path = std::env::current_exe()?;
-
-    // Build the command: devcli restart <app> --project <project> --env <env>
-    let mut cmd = Command::new(binary_path);
-    cmd.arg("restart")
-        .arg(&request.app_name)
-        .arg("--project")
-        .arg(&request.project)
-        .arg("--env")
-        .arg(&request.environment)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    // Capture stdout
-    if let Some(stdout) = child.stdout.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(line));
-            }
-        });
-    }
-
-    // Capture stderr
-    if let Some(stderr) = child.stderr.take() {
-        let output_tx_clone = output_tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let _ = output_tx_clone.send(CommandResult::LogLine(format!("[stderr] {}", line)));
-            }
-        });
-    }
-
-    // Wait for the command to complete
-    let status = child.wait().await?;
-
-    if !status.success() {
-        anyhow::bail!("Restart command failed with status: {}", status);
-    }
+    let core_output = spawn_output_bridge(output_tx.clone());
+    let args = crate::commands::restart::RestartCommandArgs {
+        app_name: request.app_name.clone(),
+        project: Some(request.project),
+        env: if request.environment.is_empty() {
+            None
+        } else {
+            Some(request.environment)
+        },
+        skip_deps: false,
+        silent: true,
+        output_tx: Some(core_output),
+    };
+    crate::commands::restart::restart_command(args).await?;
 
     crate::debug!("execute_command_async: Restart command finished");
     Ok(format!("Successfully restarted {}", request.app_name))
+}
+
+fn spawn_output_bridge(
+    output_tx: mpsc::UnboundedSender<CommandResult>,
+) -> crate::process_manager_support::OutputChannel {
+    let (core_tx, mut core_rx) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        while let Some(line) = core_rx.recv().await {
+            let _ = output_tx.send(CommandResult::LogLine(line));
+        }
+    });
+    core_tx
 }

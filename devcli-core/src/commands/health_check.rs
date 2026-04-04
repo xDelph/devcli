@@ -1,10 +1,11 @@
 // Health check command - manually check the health of a running application
-// Executes the configured health check and displays the result
 
 use crate::config::{load_config, resolve_app};
-use crate::process::{HealthCheckEngine, ProcessTracker};
+use crate::process_manager_support::{find_process, state_store, to_pm_health_check};
 use crate::Result;
 use anyhow::Context;
+use chrono::Utc;
+use process_manager::HealthCheckEngine;
 
 /// Arguments for the health-check command
 #[derive(Debug)]
@@ -18,12 +19,8 @@ pub struct HealthCheckArgs {
 /// Execute a manual health check on a running application
 #[tracing::instrument(skip(args), fields(app_name = %args.app_name, environment = ?args.environment))]
 pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
-    // Load configuration
     let config = load_config()?;
-
-    // Resolve the app name to find the correct project/app
-    let resolved = resolve_app(&config, &args.app_name, args.environment.as_deref())
-        .context("Failed to resolve app")?;
+    let resolved = resolve_app(&config, &args.app_name, None).context("Failed to resolve app")?;
 
     tracing::info!(
         project = %resolved.project,
@@ -35,18 +32,14 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         resolved.project, resolved.app_name
     );
 
-    // Get app configuration
     let project_config = config
         .projects
         .get(&resolved.project)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved.project))?;
-
     let app_config = project_config
         .apps
         .get(&resolved.app_name)
         .ok_or_else(|| anyhow::anyhow!("App '{}' not found", resolved.app_name))?;
-
-    // Check if health check is configured
     let health_check = app_config.health_check.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "No health check configured for {}/{}",
@@ -55,15 +48,24 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         )
     })?;
 
-    // Check if process is running
-    let tracker = ProcessTracker::new()?;
-    let process_info = tracker.get_process(
+    let store = state_store()?;
+    store.cleanup_dead()?;
+    let mut process = find_process(
+        &store,
         &resolved.project,
         &resolved.app_name,
-        None, // Will find any running instance regardless of environment
-    )?;
+        args.environment.as_deref(),
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "App {}/{} is not currently running",
+            resolved.project,
+            resolved.app_name
+        )
+    })?;
 
-    if process_info.is_none() {
+    if !store.is_running(&process) {
+        store.delete(&process.id)?;
         anyhow::bail!(
             "App {}/{} is not currently running",
             resolved.project,
@@ -71,26 +73,30 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         );
     }
 
-    let process_info = process_info.unwrap();
+    let pm_check = to_pm_health_check(Some(health_check));
 
     tracing::debug!(
-        pid = process_info.pid,
-        health_check = ?health_check,
+        pid = process.pid,
+        health_check = ?pm_check,
         "Starting health check execution"
     );
 
-    println!("Process ID: {}", process_info.pid);
-    println!("Health check type: {:?}", health_check);
+    println!("Process ID: {}", process.pid);
+    println!("Health check type: {:?}", pm_check);
     println!();
     println!("Executing health check...");
 
-    // Execute the health check
     let engine = HealthCheckEngine::new();
     let start = std::time::Instant::now();
+    let check_result = engine.check(&pm_check).await;
+    let duration = start.elapsed();
 
-    match engine.check(health_check).await {
+    process.runtime.last_health_check = Some(Utc::now());
+    match check_result {
         Ok(true) => {
-            let duration = start.elapsed();
+            process.runtime.health_failures = 0;
+            store.save(&process)?;
+
             tracing::info!(
                 project = %resolved.project,
                 app = %resolved.app_name,
@@ -102,24 +108,17 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
             println!("✅ Health check PASSED ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Status: Healthy");
-
-            // Show current health statistics from process info
-            if process_info.health_check_failures > 0 {
-                println!(
-                    "Note: Process has {} recent failure(s)",
-                    process_info.health_check_failures
-                );
-            }
-
             Ok(())
         }
         Ok(false) => {
-            let duration = start.elapsed();
+            process.runtime.health_failures += 1;
+            store.save(&process)?;
+
             tracing::warn!(
                 project = %resolved.project,
                 app = %resolved.app_name,
                 duration_secs = %duration.as_secs_f64(),
-                failures = process_info.health_check_failures,
+                failures = process.runtime.health_failures,
                 result = "failed",
                 "Health check failed"
             );
@@ -127,23 +126,19 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
             println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Status: Unhealthy");
-
-            // Show current health statistics from process info
-            if process_info.health_check_failures > 0 {
-                println!(
-                    "Consecutive failures: {}",
-                    process_info.health_check_failures
-                );
-            }
-
-            if let Some(last_check) = process_info.last_health_check {
+            println!(
+                "Consecutive failures: {}",
+                process.runtime.health_failures
+            );
+            if let Some(last_check) = process.runtime.last_health_check {
                 println!("Last check: {}", last_check.format("%Y-%m-%d %H:%M:%S"));
             }
-
             anyhow::bail!("Health check failed");
         }
         Err(e) => {
-            let duration = start.elapsed();
+            process.runtime.health_failures += 1;
+            store.save(&process)?;
+
             tracing::error!(
                 project = %resolved.project,
                 app = %resolved.app_name,
@@ -156,7 +151,6 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
             println!("⚠️  Health check ERROR ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Error: {}", e);
-
             anyhow::bail!("Health check encountered an error: {}", e);
         }
     }

@@ -4,7 +4,6 @@
 use super::MainView;
 use crate::config::loader::{load_config, save_config};
 use crate::config::models::{App, Commands, Defaults, Project};
-use crate::process::tracker::ProcessTracker;
 use crate::tui::state::{AppState, AppStateData};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -158,8 +157,7 @@ impl MainView {
         state: &mut std::sync::MutexGuard<AppState>,
     ) -> Result<()> {
         let config = load_config()?;
-        let tracker = ProcessTracker::new()?;
-        let new_state = AppState::from_config(&config, &tracker)?;
+        let new_state = AppState::from_config(&config)?;
 
         let selected_project_idx = state.selected_project_idx;
         let selected_app_idx = state.selected_app_idx;

@@ -7,7 +7,7 @@
 //! - Checking for already running processes
 
 use crate::config::{load_config, load_preferences, resolve_app};
-use crate::process::ProcessTracker;
+use crate::process_manager_support::{find_process, state_store, OutputChannel};
 use crate::Result;
 
 /// Arguments passed to the start command
@@ -20,6 +20,7 @@ pub struct StartCommandArgs {
     pub skip_deps: bool,        // If true, don't check/start dependencies
     pub silent: bool,           // If true, don't show output to terminal (for TUI mode)
     pub stage: Option<String>,  // Optional: deployment stage override (dev, qa, preprod, prod)
+    pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
 /// Information about an app that's ready to start
@@ -56,8 +57,8 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
     );
 
     // Step 3: Initialize process tracker and clean up any dead processes
-    let tracker = ProcessTracker::new()?;
-    tracker.cleanup_dead()?;
+    let store = state_store()?;
+    store.cleanup_dead()?;
 
     // Step 4: Collect all apps to start and validate them
     let mut apps_to_start = Vec::new();
@@ -68,10 +69,9 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
 
         // Check if this app is already running
-        if let Some(existing) =
-            tracker.get_process(&resolved_app.project, app_name, Some(&environment))?
+        if let Some(existing) = find_process(&store, &resolved_app.project, app_name, Some(&environment))?
         {
-            if tracker.is_running(existing.pid) {
+            if store.is_running(&existing) {
                 tracing::info!(
                     app = %app_name,
                     pid = existing.pid,
@@ -96,7 +96,7 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
                         app_name, existing.pid
                     );
                 }
-                tracker.remove_process(&resolved_app.project, app_name, Some(&environment))?;
+                store.delete(&existing.id)?;
             }
         }
 
