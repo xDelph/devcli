@@ -421,14 +421,12 @@ async fn main() {
 // Main application logic
 // Separated from main() so we can use ? for error handling
 async fn run() -> Result<()> {
-    // Initialize structured logging with tracing
-    // This sets up JSON file logging and console output
-    // Ignore errors from tracing initialization - non-critical
-    let _ = init_tracing();
-
-    // Parse command-line arguments into our Cli struct
-    // This automatically handles --help, --version, validation, etc.
+    // Parse first so TUI mode can disable stderr tracing (it corrupts ratatui).
     let cli = Cli::parse();
+
+    let enable_console = !matches!(cli.command, Commands::Ui);
+    // JSON file logging always; stderr console only for CLI commands.
+    let _ = init_tracing(enable_console);
 
     // Match on which command was provided
     // This is like a switch statement but more powerful

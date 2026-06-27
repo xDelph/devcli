@@ -3,7 +3,10 @@ use anyhow::Context;
 use tracing_appender::rolling;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-/// Initialize tracing with JSON file output and console output
+/// Initialize tracing with JSON file output and optional console output.
+///
+/// When `enable_console` is `false` (TUI mode), logs are written to the JSON
+/// log file only. Console output would corrupt the ratatui alternate screen.
 ///
 /// Log level can be controlled via environment variable:
 /// - `LOG_LEVEL=off` - Disable all logging
@@ -14,7 +17,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 /// - `LOG_LEVEL=trace` - All logs including trace
 ///
 /// Example: `LOG_LEVEL=error devcli start my-app`
-pub fn init_tracing() -> crate::Result<()> {
+pub fn init_tracing(enable_console: bool) -> crate::Result<()> {
     let log_dir = dirs::home_dir()
         .context("No home directory found")?
         .join(".devcli")
@@ -27,9 +30,6 @@ pub fn init_tracing() -> crate::Result<()> {
 
     // JSON formatter for files - structured, machine-readable
     let file_layer = fmt::layer().json().with_writer(file_appender);
-
-    // Console layer - human-readable format for stderr
-    let console_layer = fmt::layer().compact().with_writer(std::io::stderr);
 
     // Parse log level from LOG_LEVEL environment variable
     // Falls back to INFO if not set or invalid
@@ -45,19 +45,24 @@ pub fn init_tracing() -> crate::Result<()> {
         "debug" => EnvFilter::new("debug"),
         "trace" => EnvFilter::new("trace"),
         _ => {
-            eprintln!(
-                "Warning: Invalid LOG_LEVEL '{}'. Valid values: off, error, warn, info, debug, trace. Using 'info' as default.",
-                log_level
-            );
+            if enable_console {
+                eprintln!(
+                    "Warning: Invalid LOG_LEVEL '{}'. Valid values: off, error, warn, info, debug, trace. Using 'info' as default.",
+                    log_level
+                );
+            }
             EnvFilter::new("info")
         }
     };
 
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(file_layer)
-        .with(console_layer)
-        .init();
+    let registry = tracing_subscriber::registry().with(filter).with(file_layer);
+
+    if enable_console {
+        let console_layer = fmt::layer().compact().with_writer(std::io::stderr);
+        registry.with(console_layer).init();
+    } else {
+        registry.init();
+    }
 
     Ok(())
 }

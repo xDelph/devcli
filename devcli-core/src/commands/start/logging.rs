@@ -15,6 +15,12 @@ use crate::Result;
 /// In non-detached mode: keeps process alive to show logs until Ctrl+C or all processes exit
 #[tracing::instrument(skip(started_apps), fields(app_count = started_apps.len()))]
 pub async fn setup_log_monitoring(started_apps: &[String], silent: bool) -> Result<()> {
+    // TUI runs start in-process with silent=true and streams output into the popup.
+    // Skip CLI log monitoring to avoid stderr/stdout writes and blocking the UI worker.
+    if silent {
+        return Ok(());
+    }
+
     let preferences = load_preferences()?;
 
     if preferences.detached_mode {
