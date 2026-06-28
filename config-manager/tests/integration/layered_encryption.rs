@@ -1,7 +1,7 @@
 //! Integration tests for layered configuration with encryption.
 
 use config_manager::loader::{
-    AsyncConfigLoader, ConfigLoader, EncryptedLoader, JsonLoader, LayeredLoader, MergeStrategy,
+    ConfigLoader, EncryptedLoader, JsonLoader, LayeredLoader, MergeStrategy,
 };
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;

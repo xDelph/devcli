@@ -22,24 +22,20 @@ pub use yaml_loader::YamlLoader;
 mod layered;
 pub use layered::{LayeredLoader, MergeStrategy};
 
-#[cfg(feature = "async")]
 mod async_traits;
-#[cfg(feature = "async")]
 pub use async_traits::AsyncConfigLoader;
 
-#[cfg(feature = "async")]
 mod async_json;
-#[cfg(feature = "async")]
 pub use async_json::AsyncJsonLoader;
 
-#[cfg(all(feature = "async", feature = "toml"))]
+#[cfg(feature = "toml")]
 mod async_toml;
-#[cfg(all(feature = "async", feature = "toml"))]
+#[cfg(feature = "toml")]
 pub use async_toml::AsyncTomlLoader;
 
-#[cfg(all(feature = "async", feature = "yaml"))]
+#[cfg(feature = "yaml")]
 mod async_yaml;
-#[cfg(all(feature = "async", feature = "yaml"))]
+#[cfg(feature = "yaml")]
 pub use async_yaml::AsyncYamlLoader;
 
 #[cfg(feature = "http")]

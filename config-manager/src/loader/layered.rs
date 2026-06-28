@@ -301,7 +301,7 @@ mod tests {
         // Deep merge: override values win
         assert_eq!(result.name, "override");
         assert_eq!(result.settings.port, 8080);
-        assert_eq!(result.settings.debug, true);
+        assert!(result.settings.debug);
     }
 
     #[test]

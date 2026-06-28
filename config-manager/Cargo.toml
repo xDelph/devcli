@@ -29,9 +29,9 @@ inquire = { version = "0.7", optional = true }
 notify = { version = "6.1", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
 
-# Async support (optional)
-tokio = { version = "1.0", features = ["fs", "io-util"], optional = true }
-async-trait = { version = "0.1", optional = true }
+# Async support (always enabled)
+tokio = { version = "1.0", features = ["fs", "io-util"] }
+async-trait = "0.1"
 
 # HTTP support (optional)
 reqwest = { version = "0.12", features = ["json"], optional = true }
@@ -70,11 +70,8 @@ interactive = ["dep:inquire"]
 # File watching
 watch = ["dep:notify", "dep:crossbeam-channel"]
 
-# Async support
-async = ["dep:tokio", "dep:async-trait"]
-
-# HTTP support (requires async)
-http = ["async", "dep:reqwest"]
+# HTTP support
+http = ["dep:reqwest"]
 
 # Encryption support
 encryption = ["dep:aes-gcm", "dep:argon2", "dep:rand", "dep:base64"]
@@ -82,11 +79,11 @@ encryption = ["dep:aes-gcm", "dep:argon2", "dep:rand", "dep:base64"]
 # Schema generation and validation
 schema = ["dep:schemars", "dep:jsonschema"]
 
-# S3 support (requires async)
-s3 = ["async", "dep:aws-config", "dep:aws-sdk-s3"]
+# S3 support
+s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
 
 # Full feature set
-full = ["all-formats", "interactive", "watch", "async", "http", "encryption", "schema", "s3"]
+full = ["all-formats", "interactive", "watch", "http", "encryption", "schema", "s3"]
 
 [lib]
 name = "config_manager"
