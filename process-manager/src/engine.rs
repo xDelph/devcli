@@ -163,6 +163,52 @@ pub async fn restart(
     spawn(task).await
 }
 
+fn spawn_output_handler<R>(
+    stream: R,
+    source: OutputSource,
+    log_file: Option<PathBuf>,
+    tx: OutputSender,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let file = if let Some(path) = log_file {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await
+                .ok()
+                .map(|f| std::sync::Arc::new(tokio::sync::Mutex::new(f)))
+        } else {
+            None
+        };
+
+        let mut reader = BufReader::new(stream).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let msg = OutputMessage {
+                source: source.clone(),
+                content: line.clone(),
+                timestamp: chrono::Utc::now(),
+            };
+
+            let _ = tx.send(msg);
+
+            if let Some(ref f) = file {
+                let mut guard = f.lock().await;
+                let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S.%3f");
+                let tag = match source {
+                    OutputSource::Stdout => "STDOUT",
+                    OutputSource::Stderr => "STDERR",
+                };
+                let _ = guard
+                    .write_all(format!("[{}] [{}] {}\n", ts, tag, line).as_bytes())
+                    .await;
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,50 +256,4 @@ mod tests {
         let rp = make_running_process(current_pid);
         assert_eq!(rp.is_alive(), rp.is_alive());
     }
-}
-
-fn spawn_output_handler<R>(
-    stream: R,
-    source: OutputSource,
-    log_file: Option<PathBuf>,
-    tx: OutputSender,
-) where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let file = if let Some(path) = log_file {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .await
-                .ok()
-                .map(|f| std::sync::Arc::new(tokio::sync::Mutex::new(f)))
-        } else {
-            None
-        };
-
-        let mut reader = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            let msg = OutputMessage {
-                source: source.clone(),
-                content: line.clone(),
-                timestamp: chrono::Utc::now(),
-            };
-
-            let _ = tx.send(msg);
-
-            if let Some(ref f) = file {
-                let mut guard = f.lock().await;
-                let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S.%3f");
-                let tag = match source {
-                    OutputSource::Stdout => "STDOUT",
-                    OutputSource::Stderr => "STDERR",
-                };
-                let _ = guard
-                    .write_all(format!("[{}] [{}] {}\n", ts, tag, line).as_bytes())
-                    .await;
-            }
-        }
-    });
 }

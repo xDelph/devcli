@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn test_health_check_engine_default() {
         let engine1 = HealthCheckEngine::new();
-        let engine2 = HealthCheckEngine::default();
+        let engine2 = HealthCheckEngine;
 
         // Both should work (no state to compare)
         assert!(std::mem::size_of_val(&engine1) == std::mem::size_of_val(&engine2));
