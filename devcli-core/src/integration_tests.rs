@@ -5,9 +5,9 @@
 mod tests {
     use crate::config::*;
     use crate::detection::*;
-    use crate::process_manager_support::{process_id, state_store};
+    use crate::process_manager_support::process_id;
     use crate::test_utils::AppBuilder;
-    use process_manager::state::{ManagedProcess, ProcessRuntime};
+    use process_manager::state::{ManagedProcess, ProcessRuntime, StateStore};
     use process_manager::{HealthCheck, RestartPolicy, Task};
     use std::collections::HashMap;
     use std::fs;
@@ -114,14 +114,14 @@ mod tests {
         assert_eq!(resolved_with_project.app_name, "test-app");
     }
 
-    // Test: Process manager state workflow
+    // Test: Process manager state workflow (isolated temp store)
     #[test]
     fn test_integration_process_tracking() {
-        let store = state_store().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
         let current_pid = std::process::id();
         let id = process_id("test-project", "integration-test-app", "local");
 
-        // Step 1: Register a test process
         let task = Task {
             id: id.clone(),
             command: "test command".to_string(),
@@ -155,33 +155,19 @@ mod tests {
 
         store.save(&process).unwrap();
 
-        // Step 2: Verify process is tracked
-        let retrieved = store.load(&id).unwrap();
-        assert!(retrieved.is_some());
-
-        let retrieved = retrieved.unwrap();
+        let retrieved = store.load(&id).unwrap().expect("process should exist");
         assert_eq!(
             retrieved.metadata.get("app_config_name").map(String::as_str),
             Some("integration-test-app")
         );
         assert_eq!(retrieved.pid, current_pid);
-
-        // Step 3: Verify process is running
         assert!(store.is_running(&retrieved));
 
-        // Step 4: List all processes (should include ours)
         let processes = store.list().unwrap();
-        let our_process = processes
-            .iter()
-            .find(|p| p.id == id);
-        assert!(our_process.is_some());
+        assert!(processes.iter().any(|p| p.id == id));
 
-        // Step 5: Clean up
         store.delete(&id).unwrap();
-
-        // Step 6: Verify it's removed
-        let retrieved_after = store.load(&id).unwrap();
-        assert!(retrieved_after.is_none());
+        assert!(store.load(&id).unwrap().is_none());
     }
 
     // Test: Dependency chain resolution
@@ -714,5 +700,98 @@ CMD ["node", "server.js"]
         // Step 4: Verify values preserved
         assert_eq!(deserialized.avg_startup_time_ms, 150.0);
         assert_eq!(deserialized.recent_operations.len(), 3);
+    }
+
+    #[cfg(unix)]
+    mod monitor_restart {
+        use super::*;
+        use process_manager::engine;
+        use std::path::{Path, PathBuf};
+        use std::time::Duration;
+
+        fn locate_pm_daemon_dir() -> Option<PathBuf> {
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let workspace_root = manifest.parent()?;
+            for profile in ["debug", "release"] {
+                let candidate = workspace_root.join("target").join(profile).join("pm-daemon");
+                if candidate.exists() {
+                    return candidate.parent().map(Path::to_path_buf);
+                }
+            }
+            None
+        }
+
+        #[tokio::test]
+        async fn test_monitor_restarts_crashed_process() {
+            let Some(daemon_dir) = locate_pm_daemon_dir() else {
+                eprintln!("Skipping monitor restart test: pm-daemon binary not built yet");
+                return;
+            };
+
+            let temp_dir = TempDir::new().unwrap();
+            let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+            let id = process_id("test-project", "monitor-restart-app", "local");
+
+            let task = Task {
+                id: id.clone(),
+                command: "sleep 120".to_string(),
+                args: vec![],
+                working_dir: PathBuf::from("/tmp"),
+                env: HashMap::new(),
+                is_detached: true,
+                log_file: None,
+                health_check: HealthCheck::Process {},
+                restart_policy: RestartPolicy::default(),
+            };
+
+            let running = engine::spawn(&task).await.expect("spawn sleep");
+            let original_pid = running.pid;
+            let pgid = running.pgid;
+            drop(running.output_rx);
+
+            let mut metadata = HashMap::new();
+            metadata.insert("project".to_string(), "test-project".to_string());
+            metadata.insert("app_config_name".to_string(), "monitor-restart-app".to_string());
+            metadata.insert("environment".to_string(), "local".to_string());
+
+            let process = ManagedProcess {
+                id: id.clone(),
+                pid: original_pid,
+                pgid,
+                task: task.clone(),
+                start_time: chrono::Utc::now(),
+                metadata,
+                runtime: ProcessRuntime::default(),
+            };
+            store.save(&process).unwrap();
+
+            let original_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{}", daemon_dir.display(), original_path));
+            store.ensure_daemon_running().expect("start pm-daemon");
+
+            engine::terminate(original_pid, pgid, true)
+                .await
+                .expect("kill original process");
+
+            let mut restarted = false;
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if let Some(updated) = store.load(&id).unwrap() {
+                    if updated.pid != original_pid && store.is_running(&updated) {
+                        restarted = true;
+                        let _ = engine::terminate(updated.pid, updated.pgid, true).await;
+                        break;
+                    }
+                }
+            }
+
+            store.delete(&id).unwrap();
+            std::env::set_var("PATH", original_path);
+
+            assert!(
+                restarted,
+                "pm-daemon should restart the crashed process with a new PID"
+            );
+        }
     }
 }
