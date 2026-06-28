@@ -255,8 +255,15 @@ let options = ProcessOptions {
 - Run with appropriate permissions on macOS/Linux
 
 **Process Not Tracked**
-- Verify PID file exists: `ls ~/.devcli/pids/`
+- Verify process state file exists: `ls ~/.devcli/processes/`
+- Ensure `pm-daemon` is on `PATH` or next to the `devcli` binary (required for monitoring)
 - Check for JSON parsing errors in logs
+
+**Dependencies**
+- Dependency checks match `project/app` and treat a dependency as running in **any** environment (e.g. DB in Docker satisfies a local app)
+
+**Binary path**
+- Override subprocess binary location with `DEVCLI_BIN` if needed; otherwise `devcli_binary_path()` uses `current_exe()`
 
 ## Future Development
 

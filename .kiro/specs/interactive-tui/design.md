@@ -80,7 +80,7 @@ pub struct TuiApp {
     state: AppState,
     view_stack: Vec<View>,
     config_manager: ConfigManager,
-    process_tracker: ProcessTracker,
+    state_store: Arc<process_manager::StateStore>,
     log_manager: LogManager,
     should_quit: bool,
 }
@@ -453,16 +453,14 @@ pub struct ConfigManager {
 }
 ```
 
-### 11. Process Tracker Integration
+### 11. process-manager Integration
 
-Reuses existing `ProcessTracker` to check app status.
+Uses `process-manager` `StateStore` (via `process_manager_support`) to check app status.
 
 ```rust
-// From devcli-core/src/process/tracker.rs
-pub struct ProcessTracker {
-    pub fn list_processes() -> Result<Vec<ProcessInfo>>;
-    pub fn is_running(&self, pid: u32) -> bool;
-}
+// ~/.devcli/processes/{project}.{app}.{environment}.json
+let store = state_store()?;
+store.is_running(&managed_process);
 ```
 
 ## Data Models

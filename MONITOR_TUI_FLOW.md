@@ -21,34 +21,35 @@
                   │                         │
                   ▼                         ▼
         ┌─────────────────────────────────────────────┐
-        │         ProcessTracker                      │
-        │  ~/.devcli/pids/                          │
+        │      process-manager StateStore             │
+        │  ~/.devcli/processes/                       │
         │                                             │
-        │  • app1.json (PID, start time, etc.)       │
-        │  • app2.json                                │
-        │  • .monitor.json                            │
+        │  • {project}.{app}.{env}.json               │
         │  • .status_changed (notification file)      │
+        │  • .daemon.lock (pm-daemon singleton)       │
         └─────────────────────────────────────────────┘
                   │                         │
                   │                         │
         ┌─────────▼─────────┐     ┌─────────▼─────────┐
-        │  Monitor Process  │     │   TUI Polling     │
+        │     pm-daemon       │     │   TUI Polling     │
+        │  (Monitor loop)     │     │                   │
         │                   │     │                   │
-        │  Every 3 seconds: │     │  Every 250ms:     │
+        │  Every ~3 seconds:│     │  Every 250ms:     │
         │  1. Check PIDs    │     │  1. Check file    │
-        │  2. Clean dead    │     │     mtime         │
-        │  3. Notify if     │     │  2. Update status │
-        │     changed       │     │     if changed    │
-        │                   │     │                   │
-        │  Writes to:       │     │  Reads from:      │
-        │  .status_changed  │────▶│  .status_changed  │
+        │  2. Health checks │     │     mtime         │
+        │  3. Auto-restart  │     │  2. Update status │
+        │  4. save() touch  │     │     if changed    │
+        │     .status_changed│    │                   │
+        │                   │     │  Every 2s:        │
+        │  Writes via       │     │  full fallback    │
+        │  StateStore       │────▶│  refresh          │
         └───────────────────┘     └───────────────────┘
 ```
 
 ## Sequence Diagram: Process Stops
 
 ```
-User          CLI/TUI       ProcessTracker    Monitor       TUI Polling
+User          CLI/TUI       StateStore      pm-daemon     TUI Polling
  │              │                │              │               │
  │─stop app────▶│                │              │               │
  │              │─remove_process─▶│              │               │
@@ -71,7 +72,7 @@ User          CLI/TUI       ProcessTracker    Monitor       TUI Polling
 ## Sequence Diagram: Process Crashes (Monitor Detects)
 
 ```
-Process       Monitor         ProcessTracker    TUI Polling
+Process       pm-daemon       StateStore      TUI Polling
  │              │                  │               │
  │──crashes     │                  │               │
  │              │                  │               │
@@ -118,13 +119,13 @@ Process       Monitor         ProcessTracker    TUI Polling
 ```rust
 // When status changes (any process start/stop/crash)
 notify_status_change() {
-    touch ~/.devcli/pids/.status_changed
+    touch ~/.devcli/processes/.status_changed
     // Updates file modification time
 }
 
 // TUI checks every 250ms
 get_last_status_change() {
-    stat ~/.devcli/pids/.status_changed
+    stat ~/.devcli/processes/.status_changed
     return mtime
 }
 ```

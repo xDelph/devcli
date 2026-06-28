@@ -84,14 +84,14 @@
 1. **Check the notification file exists**:
 
    ```bash
-   ls -la ~/.devcli/pids/.status_changed
+   ls -la ~/.devcli/processes/.status_changed
    ```
 
 2. **Watch it change in real-time**:
 
    ```bash
    # Terminal 1
-   watch -n 0.1 'stat ~/.devcli/pids/.status_changed'
+   watch -n 0.1 'stat ~/.devcli/processes/.status_changed'
 
    # Terminal 2
    cargo run --release -- start <app-name>
@@ -152,20 +152,20 @@ cargo run --release -- monitor --daemon &
 
 ```bash
 # See when it was last modified
-stat ~/.devcli/pids/.status_changed
+stat ~/.devcli/processes/.status_changed
 
 # Watch for changes
-watch -n 0.1 'stat ~/.devcli/pids/.status_changed | grep Modify'
+watch -n 0.1 'stat ~/.devcli/processes/.status_changed | grep Modify'
 ```
 
 ### Check PID Files
 
 ```bash
 # List all tracked processes
-ls -la ~/.devcli/pids/
+ls -la ~/.devcli/processes/
 
 # View a specific process
-cat ~/.devcli/pids/<app-name>.json
+cat ~/.devcli/processes/<app-name>.json
 ```
 
 ### Enable Debug Logging
@@ -237,13 +237,13 @@ tail -f tui-debug.log
 1. Check if notification file exists:
 
    ```bash
-   ls ~/.devcli/pids/.status_changed
+   ls ~/.devcli/processes/.status_changed
    ```
 
 2. Check if file is being touched:
 
    ```bash
-   watch -n 0.1 'stat ~/.devcli/pids/.status_changed'
+   watch -n 0.1 'stat ~/.devcli/processes/.status_changed'
    ```
 
 3. Check TUI debug log:
@@ -262,7 +262,7 @@ tail -f tui-debug.log
 2. Check monitor PID file:
 
    ```bash
-   cat ~/.devcli/pids/.monitor.json
+   cat ~/.devcli/processes/.monitor.json
    ```
 
 3. Restart monitor:

@@ -12,7 +12,8 @@ It is based on the current code in:
 
 - `devcli/src/main.rs`
 - `devcli-core/src/commands/*`
-- `devcli-core/src/process/*`
+- `devcli-core/src/process_manager_support.rs`
+- `process-manager/` (standalone crate)
 - `devcli-core/src/tui/*`
 - `devcli-core/src/config/*`
 
@@ -27,26 +28,17 @@ It is based on the current code in:
 
 ### TUI path
 
-TUI does **not** call `start_command()`/`run_command()` directly in-process.
+TUI command actions (start, run, stop, restart) call the same `devcli-core` command functions **in-process** via `tui/command_executor.rs` — not subprocesses. Managed processes outlive the TUI session.
 
-It uses a request/result channel and shells out to the same binary:
-
-- `TuiApp` creates command worker channels (`CommandRequest`, `CommandResult`)
-- `PopupManager` creates requests from UI actions
-- `tui/command_executor.rs` runs `std::env::current_exe()` with subcommands:
-  - `devcli start ...`
-  - `devcli run ...`
-  - `devcli stop ...`
-  - `devcli restart ...`
-- stdout/stderr lines are streamed back to popup as `CommandResult::LogLine`
+For any code that must spawn a devcli subprocess, use `process_manager_support::devcli_binary_path()` (honours `DEVCLI_BIN`, otherwise `current_exe()`).
 
 ```mermaid
 flowchart TD
   A["Key input in TUI"] --> B["AppState request flag"]
   B --> C["PopupManager builds CommandRequest"]
   C --> D["Background command worker"]
-  D --> E["command_executor spawns devcli subcommand"]
-  E --> F["stdout/stderr lines"]
+  D --> E["command_executor calls core start/run/stop/restart"]
+  E --> F["OutputChannel lines"]
   F --> G["CommandResult::LogLine"]
   G --> H["CommandPopup output buffer"]
 ```
@@ -60,8 +52,8 @@ flowchart TD
 | `commands/stop.rs` | Graceful + forced termination and PID cleanup |
 | `commands/restart.rs` | Stop + re-launch with prior runtime metadata |
 | `commands/internal_spawner.rs` | Detached child process wrapper, stream + persist logs |
-| `process/tracker.rs` | PID metadata persistence (`~/.devcli/pids`) |
-| `process/monitor.rs` + `commands/monitor.rs` | Background daemon lifecycle and health/restart loop |
+| `process_manager_support.rs` | Bridge to `process-manager` (`~/.devcli/processes`) |
+| `process-manager` + `pm-daemon` | Spawn, persist, monitor, health-check, and auto-restart managed processes |
 | `commands/prepare.rs` | Env file resolution + env var injection + docker command adaptation |
 | `tui/log_manager.rs` | Discover log files in `~/.devcli/logs` |
 | `tui/views/log_viewer/*` | Read and render persisted logs, refresh/search/json panel |
@@ -78,13 +70,14 @@ Loaded via `config/loader.rs` with priority:
 
 ### Process tracking metadata
 
-Stored in `~/.devcli/pids`:
+Stored in `~/.devcli/processes`:
 
-- Monitor: `monitor.json` (special `.monitor` entry)
-- App process (env-aware): `{project}.{app}.{env}.json`
-- Legacy/no-env fallback: `{project}.{app}.json`
+- One JSON file per managed process: `{project}.{app}.{environment}.json`
+- `.status_changed` — mtime touch on every save/delete (TUI fast polling)
+- `.daemon.lock` — exclusive lock held by `pm-daemon` while the monitor is alive
+- `locks/{id}.lock` — per-process restart coordination
 
-`ProcessTracker` also updates `~/.devcli/pids/.status_changed` (mtime touch) so TUI can react quickly to status changes.
+`process-manager` `StateStore::save()` and `delete()` touch `.status_changed` so the TUI can react within ~250ms.
 
 ### Runtime logs
 
@@ -361,13 +354,13 @@ When tracker metadata changes, UI marks state as updated and re-renders app stat
 
 These are current behaviors in code (useful when debugging):
 
-1. Monitor auto-restart path is scaffolded but actual restart execution is still TODO in `commands/monitor.rs`.
-2. Command parsing in spawn paths uses `split_whitespace()`, so complex shell quoting is not interpreted like a shell parser.
-3. Dependency running checks are app-based and do not enforce same environment as target app.
-4. In dependency deduplication, entries are deduped by app name only (not full `project/app` key).
-5. `run` process metadata and `status` filtering are not perfectly aligned in all paths (variant-named process metadata can interact unexpectedly with status grouping logic).
-6. `start` and `run` write to the same daily app/env log file (variant is not included in log filename).
-7. TUI executes commands by spawning CLI subprocesses; behavior depends on current preferences (`detached_mode` in particular).
+1. Monitor auto-restart runs in `process-manager` (`Monitor` + `pm-daemon`). `devcli monitor --daemon` runs the same loop in the foreground for debugging.
+2. Docker command rewriting in `utils/command.rs` uses `shell_words` for tokenization; OrbStack env prefixes remain shell-style strings.
+3. **Dependency checks are cross-environment by design** — a dependency counts as running in any environment (e.g. Redis in Docker satisfies a local app). See `config/dependencies.rs`.
+4. `run` and `start` share one process slot per `{project}.{app}.{environment}`; `status` and the TUI show environment and command variant when running.
+5. `start` and `run` write to the same daily app/env log file (variant is not included in the log filename).
+6. TUI command actions call shared core commands in-process (`command_executor.rs`); processes outlive the TUI. For any future subprocess spawn, use `process_manager_support::devcli_binary_path()` (`DEVCLI_BIN` or `current_exe()`).
+7. In dependency deduplication, entries are keyed by `project/app` (not app name alone).
 
 ## 13) Quick Code Map
 
@@ -384,9 +377,8 @@ These are current behaviors in code (useful when debugging):
   - `devcli-core/src/commands/restart.rs`
 - Internal spawner: `devcli-core/src/commands/internal_spawner.rs`
 - Process layer:
-  - `devcli-core/src/process/spawner.rs`
-  - `devcli-core/src/process/tracker.rs`
-  - `devcli-core/src/process/monitor.rs`
+  - `devcli-core/src/process_manager_support.rs`
+  - `process-manager/` + `pm-daemon`
   - `devcli-core/src/commands/monitor.rs`
 - TUI execution and logs:
   - `devcli-core/src/tui/app.rs`

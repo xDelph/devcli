@@ -139,9 +139,9 @@ anyhow::bail!("Process '{}' is already running with PID {}", name, pid);
 
 #### PID Tracking
 - JSON format for extensibility
-- Store in `~/.devcli/pids/`
-- One file per process
-- Auto-cleanup dead processes
+- Store in `~/.devcli/processes/`
+- One file per managed process (`{project}.{app}.{environment}.json`)
+- Auto-cleanup dead processes via `process-manager` and `pm-daemon`
 
 #### Log Management
 - All logs in `~/.devcli/logs/`

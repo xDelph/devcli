@@ -26,26 +26,25 @@ The monitor process and TUI now communicate in real-time, providing **instant st
 
 1. **File-Based Notification System**
 
-   - Notification file: `~/.devcli/pids/.status_changed`
+   - Notification file: `~/.devcli/processes/.status_changed`
    - Lightweight, portable, efficient
    - No external dependencies or IPC complexity
 
-2. **ProcessTracker Enhancements**
+2. **process-manager `StateStore`**
 
-   - `notify_status_change()` - Touch notification file
-   - `get_last_status_change()` - Read file modification time
-   - Integrated into register/remove/cleanup operations
+   - `save()` / `delete()` touch `.status_changed` automatically
+   - `last_status_change()` exposes mtime for TUI polling
+   - State persisted under `~/.devcli/processes/`
 
 3. **TUI Hybrid Polling**
 
-   - Fast check: 250ms (notification file)
+   - Fast check: 250ms (notification file mtime)
    - Full check: 2s (safety net)
    - Non-blocking state updates
 
-4. **Monitor Integration**
-   - Automatically notifies on dead process cleanup
-   - No code changes needed
-   - Works seamlessly with existing logic
+4. **pm-daemon Integration**
+   - Runs `process-manager::Monitor` health/restart loop
+   - Persists updates via `StateStore`, touching `.status_changed`
 
 ## 📈 Test Results
 
@@ -189,8 +188,8 @@ The monitor and TUI now communicate in **real-time**, providing users with **ins
 
 ### Key Files
 
-- `~/.devcli/pids/.status_changed` - Notification file
-- `~/.devcli/pids/<app>.json` - Process tracking files
+- `~/.devcli/processes/.status_changed` - Notification file
+- `~/.devcli/processes/<app>.json` - Process tracking files
 
 ### Key Timings
 
@@ -211,7 +210,7 @@ cargo run --release -- start <app>
 cargo run --release -- stop <app>
 
 # Check notification file
-stat ~/.devcli/pids/.status_changed
+stat ~/.devcli/processes/.status_changed
 ```
 
 ---

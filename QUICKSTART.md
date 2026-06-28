@@ -70,10 +70,13 @@ Example:
 tail -f ~/.devcli/logs/my-app_20251024_120000.log
 ```
 
-### PID Files
+### Process State Files
 ```
-~/.devcli/pids/<app-name>.json
+~/.devcli/processes/<project>.<app>.<environment>.json
+~/.devcli/processes/.status_changed
 ```
+
+Install `pm-daemon` alongside `devcli` for health monitoring and auto-restart.
 
 ## Common Workflows
 

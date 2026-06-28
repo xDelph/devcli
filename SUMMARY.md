@@ -39,11 +39,11 @@ This enables:
 - Full process independence
 
 #### Process Tracking
-- PID persistence in `~/.devcli/pids/<app-name>.json`
-- Stores metadata: PID, command, directory, start time, env vars
+- State persistence in `~/.devcli/processes/{project}.{app}.{environment}.json` via `process-manager`
+- Stores metadata: PID, PGID, command, directory, start time, restart history
 - Automatic detection of running/stopped processes
-- Auto-cleanup of dead process entries
-- Prevents duplicate process names
+- Auto-cleanup of dead process entries via `pm-daemon`
+- Prevents duplicate process IDs per project/app/environment
 
 #### Log Management
 - All logs saved to `~/.devcli/logs/<app-name>_<timestamp>.log`

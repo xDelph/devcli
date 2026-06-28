@@ -277,19 +277,28 @@ Logs include timestamps and are preserved for review.
 
 ### Process Tracking
 
-Process information is stored in:
+Process state is managed by the standalone `process-manager` crate and stored in:
+
 ```
-~/.devcli/pids/<app-name>.json
+~/.devcli/processes/<project>.<app>.<environment>.json
 ```
 
-This includes:
-- Process ID (PID)
-- Command and working directory
-- Environment variables
-- Start time
-- Project and app metadata
-- Environment type (local/docker)
-- Command variant used
+Supporting files in the same directory:
+
+```
+~/.devcli/processes/.status_changed   # mtime notification for TUI polling
+~/.devcli/processes/.daemon.lock      # held by pm-daemon while running
+```
+
+Each process file includes:
+
+- Process ID (PID) and process group (PGID)
+- Command, working directory, and environment
+- Start time and restart history
+- Project, app, and environment metadata
+- Health check and restart policy from config
+
+Health monitoring and auto-restart run in `pm-daemon`, which must be installed alongside `devcli` (release tarballs include both binaries).
 
 ## Documentation
 

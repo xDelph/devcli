@@ -173,7 +173,7 @@ Manages dependency chains between apps.
 - `resolve_dependency_chain()` - Builds list of dependencies (BFS traversal)
 - Detects circular dependencies using `in_progress` set
 - `check_dependencies_running()` - Verifies deps are actually running
-- Uses ProcessTracker to check PID status
+- Uses `process-manager` `StateStore` to check process status
 
 ### commands/start.rs
 Starts apps using config.
