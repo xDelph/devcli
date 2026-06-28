@@ -134,4 +134,25 @@ mod tests {
         // Verify D is only included once (not duplicated)
         assert_eq!(dep_names.iter().filter(|&&n| n == "d").count(), 1);
     }
+
+    #[test]
+    fn test_dedup_dependencies_by_project_and_app() {
+        let dep_a = crate::config::resolver::ResolvedApp {
+            app: AppBuilder::new("redis", "/tmp/a").build(),
+            app_name: "redis".to_string(),
+            project: "project-a".to_string(),
+        };
+        let dep_b = crate::config::resolver::ResolvedApp {
+            app: AppBuilder::new("redis", "/tmp/b").build(),
+            app_name: "redis".to_string(),
+            project: "project-b".to_string(),
+        };
+
+        let mut deps = vec![dep_a.clone(), dep_b.clone(), dep_a];
+        dependencies::dedup_dependencies(&mut deps);
+
+        assert_eq!(deps.len(), 2);
+        assert!(deps.iter().any(|d| d.project == "project-a" && d.app_name == "redis"));
+        assert!(deps.iter().any(|d| d.project == "project-b" && d.app_name == "redis"));
+    }
 }

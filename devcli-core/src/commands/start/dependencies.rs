@@ -7,7 +7,7 @@
 
 use super::resolver::StartCommandArgs;
 use crate::config::{
-    dependencies::{check_dependencies_running, resolve_dependency_chain},
+    dependencies::{check_dependencies_running, dedup_dependencies, resolve_dependency_chain},
     load_config, load_preferences,
 };
 use crate::process_manager_support::state_store;
@@ -47,9 +47,7 @@ pub async fn handle_dependencies(
         return Ok(());
     }
 
-    // Remove duplicates by app name
-    all_dependencies.sort_by(|a, b| a.app_name.cmp(&b.app_name));
-    all_dependencies.dedup_by(|a, b| a.app_name == b.app_name);
+    dedup_dependencies(&mut all_dependencies);
 
     tracing::debug!(
         dependency_count = all_dependencies.len(),

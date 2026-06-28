@@ -7,6 +7,12 @@ use process_manager::StateStore;
 use crate::Result;
 use std::collections::{HashSet, VecDeque};
 
+/// Remove duplicate dependencies, keyed by `project/app` (not app name alone).
+pub fn dedup_dependencies(dependencies: &mut Vec<ResolvedApp>) {
+    dependencies.sort_by(|a, b| (&a.project, &a.app_name).cmp(&(&b.project, &b.app_name)));
+    dependencies.dedup_by(|a, b| a.project == b.project && a.app_name == b.app_name);
+}
+
 // Resolve the full dependency chain for an app
 // Returns all dependencies in the correct order (dependencies-first)
 //
@@ -97,8 +103,11 @@ pub fn resolve_dependency_chain(
     Ok(chain)
 }
 
-// Check which dependencies are NOT currently running
-// Returns a list of missing dependencies in "project/app" format
+// Check which dependencies are NOT currently running.
+// Returns a list of missing dependencies in "project/app" format.
+//
+// A dependency is satisfied when it is running in **any** environment (local, docker, …).
+// This is intentional: e.g. MongoDB in Docker can satisfy a local Node app that connects to it.
 //
 // Example: If Redis should be running but isn't, returns ["infrastructure/redis"]
 pub fn check_dependencies_running(

@@ -25,6 +25,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-appender = "0.2"
 process-manager = { path = "../process-manager" }
+shell-words = "1.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
