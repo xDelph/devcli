@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedProcess {
@@ -126,8 +127,22 @@ impl StateStore {
         }
     }
 
+    /// Path to the mtime-based notification file used by TUI status polling.
+    pub fn status_changed_path(&self) -> PathBuf {
+        self.base_dir.join(".status_changed")
+    }
+
+    /// Returns the last modification time of `.status_changed`, if the file exists.
+    pub fn last_status_change(&self) -> Result<Option<SystemTime>> {
+        let path = self.status_changed_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        Ok(fs::metadata(&path)?.modified().ok())
+    }
+
     fn notify_change(&self) -> Result<()> {
-        let path = self.base_dir.join(".status_changed");
+        let path = self.status_changed_path();
         if path.exists() {
             let now = std::time::SystemTime::now();
             filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(now))?;

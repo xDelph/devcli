@@ -16,4 +16,6 @@ mod health_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]
+mod restart_tests;
+#[cfg(test)]
 mod state_tests;

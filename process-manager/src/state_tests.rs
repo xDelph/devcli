@@ -204,8 +204,10 @@ mod tests {
         let mut proc = create_test_process("test", 123);
         proc.runtime.last_exit_code = Some(1);
 
-        let mut policy = RestartPolicy::default();
-        policy.enabled = false;
+        let policy = RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        };
 
         assert!(!proc.should_restart(&policy));
     }
@@ -310,5 +312,23 @@ mod tests {
         assert!(runtime.last_exit_code.is_none());
         assert!(runtime.last_exit_time.is_none());
         assert!(runtime.last_health_check.is_none());
+    }
+
+    #[test]
+    fn test_status_changed_updated_on_save_and_delete() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        let status_path = store.status_changed_path();
+
+        let process = create_test_process("status-app", 12345);
+        store.save(&process).unwrap();
+        assert!(status_path.exists());
+
+        let mtime_after_save = std::fs::metadata(&status_path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        store.delete("status-app").unwrap();
+        let mtime_after_delete = std::fs::metadata(&status_path).unwrap().modified().unwrap();
+        assert!(mtime_after_delete >= mtime_after_save);
     }
 }
