@@ -186,7 +186,7 @@ impl DetectionEngine {
                 if !monorepo_info.workspaces.is_empty() {
                     return monorepo_info.workspaces.iter().map(|path| WorkspaceInfo {
                         path: path.clone(),
-                        name: path.split('/').last().map(|s| s.to_string()),
+                        name: path.split('/').next_back().map(|s| s.to_string()),
                         should_detect: true,
                     }).collect();
                 }

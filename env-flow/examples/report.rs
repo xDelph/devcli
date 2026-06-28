@@ -273,7 +273,7 @@ fn build_probe_contexts(detected: &[detector::DetectedFile]) -> Vec<RuntimeConte
 // Browser
 // ─────────────────────────────────────────────────────────────
 
-fn open_browser(path: &PathBuf) {
+fn open_browser(path: &std::path::Path) {
     let url = format!("file://{}", path.display());
     #[cfg(target_os = "macos")]
     { let _ = std::process::Command::new("open").arg(&url).spawn(); }
@@ -998,13 +998,13 @@ fn now_utc() -> String {
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let mut y = 1970u64;
     loop {
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+        let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
         let dy = if leap { 366 } else { 365 };
         if days < dy { break; }
         days -= dy;
         y += 1;
     }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
     let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut mo = 1u64;
     for dm in months {

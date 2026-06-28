@@ -110,8 +110,8 @@ fn print_header(count: usize) {
 
     println!();
     println!("{}", cyan(&format!("╔{line}╗")));
-    println!("{}", cyan(&format!("║{:^w$}║", bold(&title.trim()))));
-    println!("{}", cyan(&format!("║{:^w$}║", dim(&sub.trim()))));
+    println!("{}", cyan(&format!("║{title:^w$}║", title = bold(title.trim()))));
+    println!("{}", cyan(&format!("║{sub:^w$}║", sub = dim(sub.trim()))));
     println!("{}", cyan(&format!("╚{line}╝")));
     println!();
 }

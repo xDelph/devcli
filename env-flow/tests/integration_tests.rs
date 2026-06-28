@@ -1,5 +1,5 @@
 /// Integration tests using the on-disk fixture directories.
-use env_flow::{EnvFlow, EnvVars, LayerType, RuntimeContext, Stage};
+use env_flow::{EnvFlow, LayerType, RuntimeContext, Stage};
 use std::path::Path;
 
 fn fixtures() -> &'static Path {

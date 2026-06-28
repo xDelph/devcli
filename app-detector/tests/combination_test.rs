@@ -119,7 +119,7 @@ fn print_data(data: &DetectionData, pad: &str) {
 
 #[test]
 fn test_rust_binary() {
-    let report = engine().detect(&fixture("rust-binary")).expect("Detection failed");
+    let report = engine().detect(fixture("rust-binary")).expect("Detection failed");
     summarize("rust-binary: Rust [[bin]] project", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -151,7 +151,7 @@ fn test_rust_binary() {
 
 #[test]
 fn test_rust_docker() {
-    let report = engine().detect(&fixture("rust-docker")).expect("Detection failed");
+    let report = engine().detect(fixture("rust-docker")).expect("Detection failed");
     summarize("rust-docker: Rust + single-stage Dockerfile", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -189,7 +189,7 @@ fn test_rust_docker() {
 
 #[test]
 fn test_python_poetry() {
-    let report = engine().detect(&fixture("python-poetry")).expect("Detection failed");
+    let report = engine().detect(fixture("python-poetry")).expect("Detection failed");
     summarize("python-poetry: Python + Poetry", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -220,7 +220,7 @@ fn test_python_poetry() {
 
 #[test]
 fn test_python_docker_compose() {
-    let report = engine().detect(&fixture("python-docker-compose")).expect("Detection failed");
+    let report = engine().detect(fixture("python-docker-compose")).expect("Detection failed");
     summarize("python-docker-compose: Python + docker-compose (no Dockerfile)", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -244,7 +244,7 @@ fn test_python_docker_compose() {
 
 #[test]
 fn test_nodejs_docker_compose_only() {
-    let report = engine().detect(&fixture("nodejs-docker-compose")).expect("Detection failed");
+    let report = engine().detect(fixture("nodejs-docker-compose")).expect("Detection failed");
     summarize("nodejs-docker-compose: Node.js + docker-compose (no Dockerfile)", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -278,7 +278,7 @@ fn test_nodejs_docker_compose_only() {
 
 #[test]
 fn test_nodejs_full_all_envs() {
-    let report = engine().detect(&fixture("nodejs-full")).expect("Detection failed");
+    let report = engine().detect(fixture("nodejs-full")).expect("Detection failed");
     summarize("nodejs-full: Node.js + Dockerfile + docker-compose + k8s", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -328,7 +328,7 @@ fn test_nodejs_full_all_envs() {
 
 #[test]
 fn test_nodejs_no_scripts() {
-    let report = engine().detect(&fixture("nodejs-no-scripts")).expect("Detection failed");
+    let report = engine().detect(fixture("nodejs-no-scripts")).expect("Detection failed");
     summarize("nodejs-no-scripts: package.json without scripts", &report);
 
     let lang = report.by_app_type(&AppTypeCategory::Language);
@@ -353,7 +353,7 @@ fn test_nodejs_no_scripts() {
 
 #[test]
 fn test_docker_only() {
-    let report = engine().detect(&fixture("docker-only")).expect("Detection failed");
+    let report = engine().detect(fixture("docker-only")).expect("Detection failed");
     summarize("docker-only: Only Dockerfile, no recognized language", &report);
 
     // No app type should be detected
@@ -384,7 +384,7 @@ fn test_docker_only() {
 
 #[test]
 fn test_nx_monorepo_task_runner() {
-    let report = engine().detect(&fixture("nx-monorepo")).expect("Detection failed");
+    let report = engine().detect(fixture("nx-monorepo")).expect("Detection failed");
     summarize("nx-monorepo: Nx task runner commands from targetDefaults + project.json", &report);
 
     // Root: Nx detected
@@ -446,7 +446,7 @@ fn test_nx_monorepo_task_runner() {
 
 #[test]
 fn test_nx_with_root_compose() {
-    let report = engine().detect(&fixture("nx-with-root-compose")).expect("Detection failed");
+    let report = engine().detect(fixture("nx-with-root-compose")).expect("Detection failed");
     summarize("nx-with-root-compose: Nx + root docker-compose.yml (infra)", &report);
 
     // Root: Nx detected
@@ -510,7 +510,7 @@ fn test_nx_with_root_compose() {
 
 #[test]
 fn test_nx_mixed_workspaces() {
-    let report = engine().detect(&fixture("nx-mixed-workspaces")).expect("Detection failed");
+    let report = engine().detect(fixture("nx-mixed-workspaces")).expect("Detection failed");
     summarize("nx-mixed-workspaces: Nx with Node.js frontend + Rust backend", &report);
 
     // Root: Nx detected
@@ -600,7 +600,9 @@ fn test_all_fixtures_structural_validity() {
 
     for name in fixtures {
         let path = fixture(name);
-        let report = engine().detect(&path).expect(&format!("Detection failed for {}", name));
+        let report = engine()
+            .detect(&path)
+            .unwrap_or_else(|e| panic!("Detection failed for {name}: {e}"));
 
         for r in report.all_reports() {
             for result in &r.results {
@@ -631,7 +633,9 @@ fn test_env_capabilities_always_have_commands() {
     ];
 
     for name in fixtures {
-        let report = engine().detect(&fixture(name)).expect(&format!("Detection failed for {}", name));
+        let report = engine()
+            .detect(fixture(name))
+            .unwrap_or_else(|e| panic!("Detection failed for {name}: {e}"));
 
         for r in report.all_reports() {
             for result in &r.results {
