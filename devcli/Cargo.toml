@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lib]
+name = "devcli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "devcli"
 path = "src/main.rs"

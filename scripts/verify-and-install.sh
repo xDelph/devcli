@@ -3,7 +3,7 @@
 # verify-and-install.sh — Run workspace checks via RTK, then install devcli + pm-daemon.
 #
 # Usage:
-#   ./scripts/verify-and-install.sh              # test + clippy + install
+#   ./scripts/verify-and-install.sh              # per-crate tests + clippy + install
 #   ./scripts/verify-and-install.sh --test-only  # checks only
 #   ./scripts/verify-and-install.sh --install-only
 #   ./scripts/verify-and-install.sh --skip-clippy
@@ -18,6 +18,7 @@ RUN_TESTS=true
 RUN_CLIPPY=true
 RUN_INSTALL=true
 RTK_VERBOSE=()
+declare -a WORKSPACE_CRATES=()
 
 # ── Colors (disabled when not a TTY) ──────────────────────────────────────────
 
@@ -45,6 +46,7 @@ declare -a STEP_NAMES=()
 declare -a STEP_STATUS=()
 declare -a STEP_DETAIL=()
 declare -a STEP_DURATION=()
+declare -a TESTED_CRATES=()
 
 usage() {
   sed -n '3,12p' "$0" | sed 's/^# \?//'
@@ -70,10 +72,44 @@ require_cmd() {
   fi
 }
 
+discover_workspace_crates() {
+  local members_line crate
+  members_line="$(grep -E '^members\s*=' "$REPO_ROOT/Cargo.toml" | head -1)"
+  if [[ -z "$members_line" ]]; then
+    echo -e "${RED}✗${RESET} Could not find workspace members in Cargo.toml" >&2
+    exit 1
+  fi
+
+  WORKSPACE_CRATES=()
+  # shellcheck disable=SC2206
+  local raw=($(echo "$members_line" | sed 's/members = \[//; s/\].*//; s/"//g; s/,/ /g'))
+  for crate in "${raw[@]}"; do
+    crate="${crate// /}"
+    [[ -n "$crate" ]] && WORKSPACE_CRATES+=("$crate")
+  done
+
+  if [[ ${#WORKSPACE_CRATES[@]} -eq 0 ]]; then
+    echo -e "${RED}✗${RESET} No workspace crates discovered" >&2
+    exit 1
+  fi
+}
+
+crate_label() {
+  case "$1" in
+    app-detector) echo "App detector" ;;
+    config-manager) echo "Config manager" ;;
+    devcli) echo "CLI (devcli)" ;;
+    devcli-core) echo "Core (devcli-core)" ;;
+    env-flow) echo "Env flow" ;;
+    process-manager) echo "Process manager" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 print_banner() {
   local width=62
   local title="devcli · verify & install"
-  local subtitle="RTK-powered workspace checks + local install"
+  local subtitle="RTK-powered per-crate checks + local install"
   local pad_title=$(( (width - ${#title} - 2) / 2 ))
 
   echo
@@ -88,9 +124,14 @@ print_banner() {
 }
 
 print_context() {
-  echo -e "${DIM}repo${RESET}   ${BLUE}${REPO_ROOT}${RESET}"
-  echo -e "${DIM}rtk${RESET}    $(rtk --version 2>/dev/null | head -1 || echo "rtk")"
-  echo -e "${DIM}rust${RESET}   $(rustc --version 2>/dev/null || echo "unknown")"
+  local crate_list
+  crate_list="$(printf '%s, ' "${WORKSPACE_CRATES[@]}")"
+  crate_list="${crate_list%, }"
+
+  echo -e "${DIM}repo${RESET}    ${BLUE}${REPO_ROOT}${RESET}"
+  echo -e "${DIM}rtk${RESET}     $(rtk --version 2>/dev/null | head -1 || echo "rtk")"
+  echo -e "${DIM}rust${RESET}    $(rustc --version 2>/dev/null || echo "unknown")"
+  echo -e "${DIM}crates${RESET}  ${crate_list} ${DIM}(${#WORKSPACE_CRATES[@]})${RESET}"
   echo
 }
 
@@ -107,12 +148,12 @@ step_end() {
   local status="$2"
   local detail="$3"
   local duration="$4"
-  local icon color bg
+  local icon color
 
   if [[ "$status" == "ok" ]]; then
-    icon="✓"; color="$GREEN"; bg="$BG_GREEN"
+    icon="✓"; color="$GREEN"
   else
-    icon="✗"; color="$RED"; bg="$BG_RED"
+    icon="✗"; color="$RED"
   fi
 
   echo -e "${MAGENTA}└─${RESET} ${color}${icon}${RESET} ${detail} ${DIM}(${duration}s)${RESET}"
@@ -193,10 +234,41 @@ extract_summary() {
 
 count_planned_steps() {
   local n=0
-  $RUN_TESTS && n=$((n + 1))
+  if $RUN_TESTS; then
+    n=$((n + ${#WORKSPACE_CRATES[@]}))
+  fi
   $RUN_CLIPPY && n=$((n + 1))
   $RUN_INSTALL && n=$((n + 2))
   echo "$n"
+}
+
+verify_all_crates_tested() {
+  local crate
+  local missing=()
+
+  for crate in "${WORKSPACE_CRATES[@]}"; do
+    local found=false
+    local tested
+    for tested in "${TESTED_CRATES[@]}"; do
+      if [[ "$tested" == "$crate" ]]; then
+        found=true
+        break
+      fi
+    done
+    $found || missing+=("$crate")
+  done
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo -e "${RED}✗${RESET} Missing test runs for: ${missing[*]}" >&2
+    return 1
+  fi
+
+  if [[ ${#TESTED_CRATES[@]} -ne ${#WORKSPACE_CRATES[@]} ]]; then
+    echo -e "${RED}✗${RESET} Crate coverage mismatch: tested ${#TESTED_CRATES[@]} / ${#WORKSPACE_CRATES[@]}" >&2
+    return 1
+  fi
+
+  return 0
 }
 
 print_summary() {
@@ -225,6 +297,11 @@ print_summary() {
 
   echo -e "${CYAN}╠$(printf '═%.0s' $(seq 1 "$width"))╣${RESET}"
 
+  if $RUN_TESTS && [[ ${#TESTED_CRATES[@]} -gt 0 ]]; then
+    printf "${CYAN}║${RESET}  ${DIM}Test coverage:${RESET} %d/%d workspace crates%*s${CYAN}║${RESET}\n" \
+      "${#TESTED_CRATES[@]}" "${#WORKSPACE_CRATES[@]}" $(( width - 38 )) ""
+  fi
+
   if $all_ok; then
     printf "${CYAN}║${RESET}  ${BG_GREEN}${WHITE}${BOLD} ALL CHECKS PASSED ${RESET}%*s${CYAN}║${RESET}\n" $(( width - 21 )) ""
     if $RUN_INSTALL; then
@@ -249,6 +326,8 @@ main() {
   require_cmd cargo
   require_cmd rustc
 
+  discover_workspace_crates
+
   STEP_TOTAL="$(count_planned_steps)"
   if [[ "$STEP_TOTAL" -eq 0 ]]; then
     echo "Nothing to do (all steps skipped)." >&2
@@ -262,16 +341,25 @@ main() {
   local failed=false
 
   if $RUN_TESTS; then
-    idx=$((idx + 1))
-    if ! run_rtk_step "$idx" "Workspace tests" \
-      rtk "${RTK_VERBOSE[@]+"${RTK_VERBOSE[@]}"}" cargo test --workspace --all-features; then
+    local crate
+    for crate in "${WORKSPACE_CRATES[@]}"; do
+      idx=$((idx + 1))
+      if run_rtk_step "$idx" "Tests · $(crate_label "$crate")" \
+        rtk "${RTK_VERBOSE[@]+"${RTK_VERBOSE[@]}"}" cargo test -p "$crate" --all-features; then
+        TESTED_CRATES+=("$crate")
+      else
+        failed=true
+      fi
+    done
+
+    if ! verify_all_crates_tested; then
       failed=true
     fi
   fi
 
   if $RUN_CLIPPY; then
     idx=$((idx + 1))
-    if ! run_rtk_step "$idx" "Clippy (deny warnings)" \
+    if ! run_rtk_step "$idx" "Clippy · workspace" \
       rtk "${RTK_VERBOSE[@]+"${RTK_VERBOSE[@]}"}" cargo clippy --workspace --all-features --all-targets -- -D warnings; then
       failed=true
     fi
@@ -280,13 +368,13 @@ main() {
   if $RUN_INSTALL; then
     if ! $failed; then
       idx=$((idx + 1))
-      if ! run_rtk_step "$idx" "Install devcli" \
+      if ! run_rtk_step "$idx" "Install · devcli" \
         rtk "${RTK_VERBOSE[@]+"${RTK_VERBOSE[@]}"}" cargo install --path devcli --force; then
         failed=true
       fi
 
       idx=$((idx + 1))
-      if ! run_rtk_step "$idx" "Install pm-daemon" \
+      if ! run_rtk_step "$idx" "Install · pm-daemon" \
         rtk "${RTK_VERBOSE[@]+"${RTK_VERBOSE[@]}"}" cargo install --path process-manager --force; then
         failed=true
       fi
