@@ -12,6 +12,5 @@ pub use main_view::{ConfigField, ConfigForm, ConfigMode, MainTab, MainView, Pane
 #[cfg(test)]
 mod tests;
 
-// TODO: Fix unclosed delimiters in main_view_tests
-// #[cfg(test)]
-// mod main_view_tests;
+#[cfg(test)]
+mod main_view_tests;

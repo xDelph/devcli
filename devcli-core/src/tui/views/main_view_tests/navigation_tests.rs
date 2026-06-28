@@ -79,11 +79,11 @@ fn test_get_command_by_index_multiple_environments() {
 }
 
 #[test]
-fn test_get_selected_command() {
+fn test_get_selected_config_command() {
     let app = create_test_app_state_data();
     let mut view = MainView::new().unwrap();
-    view.selected_command_idx = 2;
-    let result = view.get_selected_command(&app);
+    view.selected_config_command_idx = 2;
+    let result = view.get_selected_config_command(&app);
     assert!(result.is_some());
     let (_, cmd) = result.unwrap();
     assert_eq!(cmd.name, "cmd2");

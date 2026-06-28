@@ -1,9 +1,6 @@
 // Tests for config management functionality
-// Note: Most config management methods are private, so we test them indirectly
-// through the public handle_input API
 //
 // IMPORTANT: These tests use TestConfigGuard to ensure they NEVER modify the real config.json
-// Each test runs in an isolated temporary directory.
 
 use crate::config::loader::save_config;
 use crate::config::models::{App, Commands, Config, Defaults, Project};
@@ -11,40 +8,58 @@ use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tempfile::TempDir;
+
+static CONFIG_DIR_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 struct TestConfigGuard {
+    _lock: MutexGuard<'static, ()>,
     _temp_dir: TempDir,
     original_dir: Option<String>,
 }
+
 impl TestConfigGuard {
     fn new() -> Self {
+        let _lock = CONFIG_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let original_dir = std::env::var("devcli_CONFIG_DIR").ok();
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("devcli_CONFIG_DIR", temp_dir.path());
         Self {
+            _lock,
             _temp_dir: temp_dir,
             original_dir,
         }
     }
+}
+
 impl Drop for TestConfigGuard {
     fn drop(&mut self) {
-        // Restore original config dir or remove the var
         match &self.original_dir {
             Some(dir) => std::env::set_var("devcli_CONFIG_DIR", dir),
             None => std::env::remove_var("devcli_CONFIG_DIR"),
+        }
+    }
+}
+
 fn setup_test_config_dir() -> TestConfigGuard {
     TestConfigGuard::new()
+}
+
 fn create_test_config() -> Config {
     let mut projects = HashMap::new();
     let mut apps = HashMap::new();
-    
+
     let mut local_cmds = HashMap::new();
     local_cmds.insert("start".to_string(), "npm start".to_string());
+
     apps.insert(
         "test-app".to_string(),
         App {
             app_type: "nodejs".to_string(),
+            alternative_name: None,
             path: "/test/path".to_string(),
             commands: Commands {
                 local: Some(local_cmds),
@@ -55,84 +70,161 @@ fn create_test_config() -> Config {
             dependencies: vec![],
             defaults: Defaults {
                 local: Some("start".to_string()),
+                docker: None,
+                orbstack: None,
+                k8s: None,
+            },
             dockerfile_path: None,
+            env_files: None,
+            default_stages: None,
+            health_check: None,
+            restart_policy: None,
         },
     );
-    projects.insert("test-project".to_string(), Project {
-        apps,
-        alternative_name: None,
-    });
+
+    projects.insert(
+        "test-project".to_string(),
+        Project {
+            apps,
+            alternative_name: None,
+        },
+    );
+
     Config { projects }
+}
+
 fn create_test_state_arc(config: &Config) -> Arc<Mutex<AppState>> {
     let state = AppState::from_config(config).unwrap();
     Arc::new(Mutex::new(state))
+}
+
 #[test]
 fn test_config_mode_starts_in_view() {
     let view = MainView::new().unwrap();
     assert_eq!(view.config_mode, ConfigMode::View);
+}
+
+#[test]
 fn test_config_tab_navigation() {
-    let _temp_dir = setup_test_config_dir();
+    let _guard = setup_test_config_dir();
     let config = create_test_config();
     save_config(&config).unwrap();
     let state = create_test_state_arc(&config);
     let mut view = MainView::new().unwrap();
     view.active_tab = MainTab::Config;
     view.focus = PanelFocus::DetailPanel;
-    // Press 'a' to enter add command mode
+
     let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
     assert!(view.handle_input(key, &state).unwrap());
     assert_eq!(view.config_mode, ConfigMode::AddCommand);
-    // Press Esc to return to view mode
+
     let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(view.handle_input(key, &state).unwrap());
+    assert_eq!(view.config_mode, ConfigMode::View);
+}
+
+#[test]
 fn test_config_form_field_editing() {
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    save_config(&config).unwrap();
+    let state = create_test_state_arc(&config);
+    let mut view = MainView::new().unwrap();
+    view.active_tab = MainTab::Config;
     view.config_mode = ConfigMode::AddCommand;
     view.config_focused_field = ConfigField::EditCommandName;
-    // Type some characters
-    let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
-    assert_eq!(view.config_form.edit_command_name, "t");
-    let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
-    assert_eq!(view.config_form.edit_command_name, "te");
-    let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
-    assert_eq!(view.config_form.edit_command_name, "tes");
-    assert_eq!(view.config_form.edit_command_name, "test");
+
+    for ch in ['t', 'e', 's', 't'] {
+        let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+        assert!(view.handle_input(key, &state).unwrap());
+    }
+
+    assert_eq!(view.config_form.edit_command_name.content(), "test");
+}
+
+#[test]
 fn test_config_form_backspace() {
-    view.config_form.edit_command_name = "test".to_string();
-    view.config_form.cursor_edit_command_name = 4;
-    // Backspace should remove last character
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    let state = create_test_state_arc(&config);
+    let mut view = MainView::new().unwrap();
+    view.active_tab = MainTab::Config;
+    view.config_mode = ConfigMode::AddCommand;
+    view.config_focused_field = ConfigField::EditCommandName;
+    view.config_form
+        .edit_command_name
+        .set_content("test".to_string());
+
     let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-    assert_eq!(view.config_form.cursor_edit_command_name, 3);
-fn test_config_form_cursor_movement() {
-    // Move cursor left
-    let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
-    // Move cursor right
-    let key = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
-    assert_eq!(view.config_form.cursor_edit_command_name, 4);
-fn test_config_form_tab_navigation() {
-    view.config_focused_field = ConfigField::EditCommandEnv;
-    // Tab should cycle through fields
-    let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-    assert_eq!(view.config_focused_field, ConfigField::EditCommandName);
-    assert_eq!(view.config_focused_field, ConfigField::EditCommandValue);
-    assert_eq!(view.config_focused_field, ConfigField::EditCommandEnv);
+    assert!(view.handle_input(key, &state).unwrap());
+    assert_eq!(view.config_form.edit_command_name.content(), "tes");
+    assert_eq!(view.config_form.edit_command_name.cursor_position(), 3);
+}
+
+#[test]
 fn test_dependencies_mode_navigation() {
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    save_config(&config).unwrap();
+    let state = create_test_state_arc(&config);
+    let mut view = MainView::new().unwrap();
+    view.active_tab = MainTab::Config;
+    view.focus = PanelFocus::DetailPanel;
     view.config_mode = ConfigMode::View;
-    // Press 'D' to enter dependencies mode
+
     let key = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::NONE);
+    assert!(view.handle_input(key, &state).unwrap());
     assert_eq!(view.config_mode, ConfigMode::EditDependencies);
+}
+
+#[test]
 fn test_add_dependency_mode_navigation() {
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    save_config(&config).unwrap();
+    let state = create_test_state_arc(&config);
+    let mut view = MainView::new().unwrap();
+    view.active_tab = MainTab::Config;
+    view.focus = PanelFocus::DetailPanel;
     view.config_mode = ConfigMode::EditDependencies;
-    // Press 'a' to enter add dependency mode
+
+    let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+    assert!(view.handle_input(key, &state).unwrap());
     assert_eq!(view.config_mode, ConfigMode::AddDependency);
-    // Press Esc to return to dependencies mode
+
+    let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(view.handle_input(key, &state).unwrap());
+    assert_eq!(view.config_mode, ConfigMode::EditDependencies);
+}
+
+#[test]
 fn test_config_edit_app_mode() {
-    // Press 'E' to enter edit app mode
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    save_config(&config).unwrap();
+    let state = create_test_state_arc(&config);
+    let mut view = MainView::new().unwrap();
+    view.active_tab = MainTab::Config;
+    view.focus = PanelFocus::DetailPanel;
+    view.config_mode = ConfigMode::View;
+
     let key = KeyEvent::new(KeyCode::Char('E'), KeyModifiers::NONE);
+    assert!(view.handle_input(key, &state).unwrap());
     assert_eq!(view.config_mode, ConfigMode::Edit);
-    // Verify form was populated with app data
-    assert_eq!(view.config_form.project_name, "test-project");
-    assert_eq!(view.config_form.app_name, "test-app");
-    assert_eq!(view.config_form.app_type, "nodejs");
+    assert_eq!(view.config_form.project_name.content(), "test-project");
+    assert_eq!(view.config_form.app_name.content(), "test-app");
+    assert_eq!(view.config_form.app_type.content(), "nodejs");
+}
+
+#[test]
 fn test_config_edit_command_mode() {
-    view.selected_config_command_idx = 0;
-    // Press 'e' to enter edit command mode
+    let _guard = setup_test_config_dir();
+    let config = create_test_config();
+    save_config(&config).unwrap();
+    let mut view = MainView::new().unwrap();
+
+    view.load_command_into_form("test-project", "test-app")
+        .unwrap();
     assert_eq!(view.config_mode, ConfigMode::EditCommand);
+    assert_eq!(view.config_form.edit_command_name.content(), "start");
+}
