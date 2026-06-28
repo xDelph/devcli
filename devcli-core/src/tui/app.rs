@@ -61,7 +61,7 @@ use ratatui::{
 };
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -602,7 +602,7 @@ impl TuiApp {
             let app_status = if self.popup_manager.is_active() {
                 state
                     .selected_app()
-                    .map(|app| app.status.as_str().to_string())
+                    .map(|app| app.status.display_label())
             } else {
                 None
             };
@@ -622,7 +622,8 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Starts a background task that polls process status every 2 seconds.
+    /// Starts a background task that polls process status using a hybrid strategy:
+    /// fast checks on `.status_changed` every 250ms, plus a full refresh every 2s.
     /// Returns a JoinHandle that can be used to abort the task when the app exits.
     fn start_status_polling(&self) -> tokio::task::JoinHandle<()> {
         // Clone Arc references so they can be moved into the async task
@@ -630,11 +631,28 @@ impl TuiApp {
         let state_store = Arc::clone(&self.state_store);
 
         tokio::spawn(async move {
-            let mut poll_interval = interval(Duration::from_secs(2));
+            let mut fast_interval = interval(Duration::from_millis(250));
+            let mut full_interval = interval(Duration::from_secs(2));
+            let mut last_mtime: Option<SystemTime> =
+                state_store.last_status_change().ok().flatten();
 
             loop {
-                poll_interval.tick().await;
-                Self::update_all_app_statuses(&state, &state_store).await;
+                tokio::select! {
+                    _ = fast_interval.tick() => {
+                        match state_store.last_status_change() {
+                            Ok(Some(mtime)) if last_mtime != Some(mtime) => {
+                                last_mtime = Some(mtime);
+                                Self::update_all_app_statuses(&state, &state_store).await;
+                            }
+                            Ok(None) | Err(_) => {}
+                            Ok(Some(_)) => {}
+                        }
+                    }
+                    _ = full_interval.tick() => {
+                        Self::update_all_app_statuses(&state, &state_store).await;
+                        last_mtime = state_store.last_status_change().ok().flatten();
+                    }
+                }
             }
         })
     }
@@ -681,20 +699,7 @@ impl TuiApp {
         use crate::tui::state::AppStatus;
 
         match find_process(state_store, project_name, app_name, None) {
-            Ok(Some(process_info)) => {
-                if state_store.is_running(&process_info) {
-                    // Calculate uptime from start time to now
-                    let uptime = chrono::Utc::now().signed_duration_since(process_info.start_time);
-
-                    AppStatus::Running {
-                        pid: process_info.pid,
-                        uptime,
-                        start_time: process_info.start_time,
-                    }
-                } else {
-                    AppStatus::Stopped
-                }
-            }
+            Ok(Some(process_info)) => AppStatus::from_process(state_store, &process_info),
             Ok(None) => AppStatus::Stopped,
             Err(_) => AppStatus::Unknown,
         }

@@ -33,6 +33,19 @@ pub fn log_file_path(project: &str, app_name: &str, environment: &str) -> Result
     Ok(log_dir.join(filename))
 }
 
+/// Path to the devcli binary for subprocess invocation.
+///
+/// Prefers `DEVCLI_BIN` when set, otherwise uses `current_exe()`.
+/// Use this instead of hardcoding `"devcli"` so installs, wrappers, and aliases work.
+pub fn devcli_binary_path() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("DEVCLI_BIN") {
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    std::env::current_exe().context("Could not determine devcli binary path")
+}
+
 pub fn process_id(project: &str, app_name: &str, environment: &str) -> String {
     format!("{}.{}.{}", project, app_name, environment)
 }

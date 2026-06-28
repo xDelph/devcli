@@ -67,7 +67,7 @@ impl PopupManager {
                 let app_status = if self.active_popup.is_some() {
                     state
                         .selected_app()
-                        .map(|app| app.status.as_str().to_string())
+                        .map(|app| app.status.display_label())
                 } else {
                     None
                 };
@@ -174,7 +174,7 @@ impl PopupManager {
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
+                        popup.update_status(app.status.display_label());
                     }
                 }
             }
@@ -225,7 +225,7 @@ impl PopupManager {
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
+                        popup.update_status(app.status.display_label());
                     }
                 }
             }
@@ -305,7 +305,7 @@ impl PopupManager {
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
+                        popup.update_status(app.status.display_label());
                     }
                 }
             }
@@ -375,7 +375,7 @@ impl PopupManager {
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
                 if let Some(app) = state.selected_app() {
                     if app.name == app_name {
-                        popup.update_status(app.status.as_str().to_string());
+                        popup.update_status(app.status.display_label());
                     }
                 }
             }

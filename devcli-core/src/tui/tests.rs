@@ -28,6 +28,8 @@ fn test_app_status_is_running() {
         pid: 1234,
         uptime: Duration::seconds(60),
         start_time: Utc::now(),
+        environment: None,
+        command_variant: None,
     };
     assert!(running.is_running());
     assert_eq!(running.as_str(), "Running");
@@ -70,6 +72,8 @@ fn test_app_status_uptime_formatting() {
         pid: 1234,
         uptime,
         start_time,
+        environment: None,
+        command_variant: None,
     };
     assert!(status.is_running());
 

@@ -54,19 +54,10 @@ impl AppState {
             for (app_name, app_config) in &project_config.apps {
                 // Determine status and runtime details from process-manager state.
                 let process_info = find_process(&store, project_name, app_name, None)?;
-                let status = if let Some(info) = &process_info {
-                    if store.is_running(info) {
-                        AppStatus::Running {
-                            pid: info.pid,
-                            uptime: Utc::now().signed_duration_since(info.start_time),
-                            start_time: info.start_time,
-                        }
-                    } else {
-                        AppStatus::Stopped
-                    }
-                } else {
-                    AppStatus::Stopped
-                };
+                let status = process_info
+                    .as_ref()
+                    .map(|info| AppStatus::from_process(&store, info))
+                    .unwrap_or(AppStatus::Stopped);
 
                 // Get the active stage from the running process (if any)
                 let active_stage = process_info
@@ -385,6 +376,10 @@ pub enum AppStatus {
         uptime: Duration,
         /// When the app was started
         start_time: DateTime<Utc>,
+        /// Environment the process was started in (local, docker, …)
+        environment: Option<String>,
+        /// Command variant last used to start/run (e.g. start, test)
+        command_variant: Option<String>,
     },
     /// App is not running
     Stopped,
@@ -393,17 +388,50 @@ pub enum AppStatus {
 }
 
 impl AppStatus {
+    /// Build status from a managed process entry.
+    pub fn from_process(store: &process_manager::StateStore, process: &process_manager::state::ManagedProcess) -> Self {
+        if !store.is_running(process) {
+            return AppStatus::Stopped;
+        }
+
+        AppStatus::Running {
+            pid: process.pid,
+            uptime: Utc::now().signed_duration_since(process.start_time),
+            start_time: process.start_time,
+            environment: process.metadata.get("environment").cloned(),
+            command_variant: process.metadata.get("command_variant").cloned(),
+        }
+    }
+
     /// Returns true if the app is running
     pub fn is_running(&self) -> bool {
         matches!(self, AppStatus::Running { .. })
     }
 
-    /// Returns a human-readable status string
+    /// Short status label (Running / Stopped / Unknown)
     pub fn as_str(&self) -> &str {
         match self {
             AppStatus::Running { .. } => "Running",
             AppStatus::Stopped => "Stopped",
             AppStatus::Unknown => "Unknown",
+        }
+    }
+
+    /// Human-readable label including environment and command variant when running.
+    pub fn display_label(&self) -> String {
+        match self {
+            AppStatus::Running {
+                environment,
+                command_variant,
+                ..
+            } => match (environment.as_deref(), command_variant.as_deref()) {
+                (Some(env), Some(variant)) => format!("Running ({env}: {variant})"),
+                (Some(env), None) => format!("Running ({env})"),
+                (None, Some(variant)) => format!("Running ({variant})"),
+                (None, None) => "Running".to_string(),
+            },
+            AppStatus::Stopped => "Stopped".to_string(),
+            AppStatus::Unknown => "Unknown".to_string(),
         }
     }
 }
@@ -446,8 +474,11 @@ mod tests {
             pid: 1234,
             uptime: Duration::seconds(60),
             start_time: Utc::now(),
+            environment: Some("local".to_string()),
+            command_variant: Some("start".to_string()),
         };
         assert!(running.is_running());
+        assert_eq!(running.display_label(), "Running (local: start)");
 
         let stopped = AppStatus::Stopped;
         assert!(!stopped.is_running());
@@ -459,6 +490,8 @@ mod tests {
             pid: 1234,
             uptime: Duration::seconds(60),
             start_time: Utc::now(),
+            environment: None,
+            command_variant: None,
         };
         assert_eq!(running.as_str(), "Running");
 

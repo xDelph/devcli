@@ -95,6 +95,11 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
                     .get("environment")
                     .map(|e| format!(" ({})", e))
                     .unwrap_or_default();
+                let variant_display = process
+                    .metadata
+                    .get("command_variant")
+                    .map(|v| format!(" [{}]", v))
+                    .unwrap_or_default();
                 let display_name = process
                     .metadata
                     .get("app_config_name")
@@ -102,8 +107,8 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
                     .unwrap_or(&process.id);
 
                 println!(
-                    "  [{}{}]  PID: {}  {}  {}  {}",
-                    display_name, env_display, process.pid, status, uptime, process.task.command
+                    "  [{}{}{}]  PID: {}  {}  {}  {}",
+                    display_name, env_display, variant_display, process.pid, status, uptime, process.task.command
                 );
             }
         }
@@ -148,7 +153,7 @@ async fn show_with_dependencies(
             let dep_key = format!("{}/{}", dep.project, dep.app_name);
             let is_running = if let Some(process) = find_process(store, &dep.project, &dep.app_name, None)? {
                 if store.is_running(&process) {
-                    format!("✓ running (PID: {})", process.pid)
+                    format_running_detail(&process)
                 } else {
                     "✗ stopped".to_string()
                 }
@@ -165,7 +170,7 @@ async fn show_with_dependencies(
         println!("\nStatus: {}", status);
 
         if is_running {
-            println!("PID: {}", process.pid);
+            println!("{}", format_running_detail(&process));
             println!("Uptime: {}", format_uptime(true, process.start_time));
         }
     } else {
@@ -174,6 +179,20 @@ async fn show_with_dependencies(
 
     println!();
     Ok(())
+}
+
+fn format_running_detail(process: &ManagedProcess) -> String {
+    let env = process
+        .metadata
+        .get("environment")
+        .map(|e| format!(", env: {e}"))
+        .unwrap_or_default();
+    let variant = process
+        .metadata
+        .get("command_variant")
+        .map(|v| format!(", cmd: {v}"))
+        .unwrap_or_default();
+    format!("✓ running (PID: {}{}{})", process.pid, env, variant)
 }
 
 fn format_uptime(is_running: bool, start_time: chrono::DateTime<Utc>) -> String {

@@ -179,7 +179,7 @@ impl MainView {
         ]));
         lines.push(Line::from(""));
 
-        let status_text = app.status.as_str();
+        let status_text = app.status.display_label();
         let status_color = if app.status.is_running() {
             theme.running
         } else {
@@ -192,7 +192,14 @@ impl MainView {
             Span::styled(status_text, Style::default().fg(status_color)),
         ]));
 
-        if let crate::tui::state::AppStatus::Running { pid, uptime, .. } = &app.status {
+        if let crate::tui::state::AppStatus::Running {
+            pid,
+            uptime,
+            environment,
+            command_variant,
+            ..
+        } = &app.status
+        {
             lines.push(Line::from(vec![
                 Span::styled("PID:         ", theme.style_text_dim()),
                 Span::styled(pid.to_string(), theme.style_text()),
@@ -203,6 +210,20 @@ impl MainView {
                 Span::styled("Uptime:      ", theme.style_text_dim()),
                 Span::styled(uptime_str, theme.style_text()),
             ]));
+
+            if let Some(env) = environment {
+                lines.push(Line::from(vec![
+                    Span::styled("Environment: ", theme.style_text_dim()),
+                    Span::styled(env.clone(), theme.style_text()),
+                ]));
+            }
+
+            if let Some(variant) = command_variant {
+                lines.push(Line::from(vec![
+                    Span::styled("Command:     ", theme.style_text_dim()),
+                    Span::styled(variant.clone(), theme.style_text()),
+                ]));
+            }
         }
 
         lines.push(Line::from(vec![
