@@ -1,12 +1,19 @@
 //! Adapter between devcli-core and the `env-flow` crate.
 //!
-//! Handles type bridges, devcli-specific quirks (empty → `"XXX"`), and will
-//! eventually own cascade / config-map loading for `prepare.rs`.
+//! Handles type bridges, devcli-specific quirks (empty → `"XXX"`), cascade
+//! loading for local runs, and strict config-map single-file loads.
 
 use crate::Result;
-use env_flow::{EnvFlow, EnvVars, RuntimeContext, Stage};
+use env_flow::{EnvFlow, EnvVars, ResolvedLayer, RuntimeContext, Stage};
 use std::collections::HashMap;
 use std::path::Path;
+
+/// Result of loading env vars for a local runtime.
+pub struct LocalEnvLoad {
+    pub vars: HashMap<String, String>,
+    /// Human-readable summary for CLI output (path or `cascade (N files)`).
+    pub summary: String,
+}
 
 /// Map a devcli stage string to env-flow's `Stage`.
 pub fn stage_from_opt(stage: Option<&str>) -> Option<Stage> {
@@ -56,6 +63,59 @@ pub fn load_cascade(
 
     let vars = builder.load().map_err(map_error)?;
     Ok(env_vars_to_map(vars))
+}
+
+/// Load env vars for local runtime.
+///
+/// - When `env_files_map` is set: strict single-file load from the configured path.
+/// - Otherwise: cascade merge via env-flow (`.env` + stage + `.env.local` layers).
+pub fn load_local_runtime(
+    working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+) -> Result<Option<LocalEnvLoad>> {
+    if env_files_map.is_some() {
+        let path = crate::detection::resolve_env_file_path(
+            working_dir,
+            env_files_map,
+            stage,
+            "local",
+            None,
+        )?;
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let vars = parse_env_file(&working_dir.join(&path))?;
+        return Ok(Some(LocalEnvLoad {
+            vars,
+            summary: path,
+        }));
+    }
+
+    let layers = EnvFlow::from_dir(working_dir)
+        .stage_opt(stage_from_opt(stage))
+        .context(RuntimeContext::Local)
+        .layers()
+        .map_err(map_error)?;
+
+    let existing: Vec<&ResolvedLayer> = layers.iter().filter(|layer| layer.exists).collect();
+    if existing.is_empty() {
+        return Ok(None);
+    }
+
+    let vars = load_cascade(working_dir, stage, "local")?;
+    Ok(Some(LocalEnvLoad {
+        vars,
+        summary: cascade_summary(&existing),
+    }))
+}
+
+fn cascade_summary(layers: &[&ResolvedLayer]) -> String {
+    if layers.len() == 1 {
+        layers[0].relative_path.clone()
+    } else {
+        format!("cascade ({} files)", layers.len())
+    }
 }
 
 fn map_error(err: env_flow::Error) -> anyhow::Error {
@@ -130,5 +190,56 @@ line2"
         assert_eq!(context_from_env("orbstack"), RuntimeContext::OrbStack);
         assert_eq!(context_from_env("docker"), RuntimeContext::Docker);
         assert_eq!(context_from_env("local"), RuntimeContext::Local);
+    }
+
+    #[test]
+    fn load_local_runtime_cascade_with_stage() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".env.dev"), "DB=dev\n").unwrap();
+        fs::write(dir.path().join(".env.dev.local"), "SECRET=local\n").unwrap();
+
+        let loaded = load_local_runtime(dir.path(), None, Some("dev"))
+            .unwrap()
+            .expect("expected cascade load");
+
+        assert_eq!(loaded.vars.get("PORT"), Some(&"3000".to_string()));
+        assert_eq!(loaded.vars.get("DB"), Some(&"dev".to_string()));
+        assert_eq!(loaded.vars.get("SECRET"), Some(&"local".to_string()));
+        assert_eq!(loaded.summary, "cascade (3 files)");
+    }
+
+    #[test]
+    fn load_local_runtime_strict_config_map() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
+        fs::write(dir.path().join("custom.env"), "FROM_CONFIG=1\n").unwrap();
+
+        let mut map = HashMap::new();
+        map.insert(
+            "base".to_string(),
+            HashMap::from([("local".to_string(), "custom.env".to_string())]),
+        );
+
+        let loaded = load_local_runtime(dir.path(), Some(&map), None)
+            .unwrap()
+            .expect("expected config map load");
+
+        assert_eq!(loaded.vars.get("FROM_CONFIG"), Some(&"1".to_string()));
+        assert_eq!(loaded.vars.get("DEBUG"), None);
+        assert_eq!(loaded.summary, "custom.env");
+    }
+
+    #[test]
+    fn load_local_runtime_strict_config_map_no_match() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        let mut map = HashMap::new();
+        map.insert("dev".to_string(), HashMap::from([("docker".to_string(), "x.env".to_string())]));
+
+        let loaded = load_local_runtime(dir.path(), Some(&map), Some("dev")).unwrap();
+        assert!(loaded.is_none());
     }
 }

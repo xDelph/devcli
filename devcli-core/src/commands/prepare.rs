@@ -15,7 +15,7 @@ pub struct PreparedCommand {
 /// 1. Injecting Docker/OrbStack specific flags (platform, context)
 /// 2. Resolving and applying environment files (.env)
 ///    - For Docker/OrbStack: uses --env-file flag
-///    - For Local: loads vars and injects into process environment
+///    - For Local: cascade-loads env layers and injects into process environment
 /// 3. Injecting Dockerfile path for build commands
 #[tracing::instrument(skip(resolved_app, working_dir, preferences), fields(environment = %environment, stage = ?stage))]
 pub fn prepare_command(
@@ -109,40 +109,25 @@ pub fn prepare_command(
             }
         }
         _ => {
-            // Local environment: load env vars from .env file and add to process env
-            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
+            // Local environment: cascade-load env layers (or strict config map file)
+            if let Some(loaded) = crate::env_flow_support::load_local_runtime(
                 working_dir,
                 resolved_app.app.env_files.as_ref(),
                 stage,
-                "local",
-                None, // No Dockerfile for local
-            ) {
-                let full_env_path = working_dir.join(&env_file_path);
-                if let Ok(file_vars) = crate::detection::parse_env_file(&full_env_path) {
-                    tracing::debug!(
-                        env_file = %env_file_path,
-                        environment = "local",
-                        var_count = file_vars.len(),
-                        "Loaded env vars from file"
-                    );
+            )? {
+                tracing::debug!(
+                    env_summary = %loaded.summary,
+                    environment = "local",
+                    var_count = loaded.vars.len(),
+                    "Loaded env vars"
+                );
 
-                    // Add variables to the process environment
-                    for (key, value) in &file_vars {
-                        // Overwrite existing env vars (inherited from shell)
-                        env_vars.insert(key.clone(), value.clone());
-                    }
+                for (key, value) in &loaded.vars {
+                    env_vars.insert(key.clone(), value.clone());
+                }
 
-                    if show_output {
-                        println!("  Using env file: {}", env_file_path);
-                        // println!("  Loaded env vars:");
-                        // let mut sorted_keys: Vec<_> = file_vars.keys().collect();
-                        // sorted_keys.sort();
-                        // for key in sorted_keys {
-                        //     if let Some(val) = file_vars.get(key) {
-                        //         println!("    {}={}", key, val);
-                        //     }
-                        // }
-                    }
+                if show_output {
+                    println!("  Using env file: {}", loaded.summary);
                 }
             }
         }
@@ -158,4 +143,80 @@ pub fn prepare_command(
         final_command,
         env_vars,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::resolver::ResolvedApp;
+    use crate::test_utils::{AppBuilder, PreferencesBuilder};
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn resolved_app(path: &str) -> ResolvedApp {
+        ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app: AppBuilder::new("nodejs", path)
+                .with_local_command("start", "npm start")
+                .build(),
+        }
+    }
+
+    #[test]
+    fn local_prepare_cascades_env_layers() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\nDEBUG=false\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
+
+        let prepared = prepare_command(
+            "npm start",
+            "local",
+            &resolved_app(dir.path().to_str().unwrap()),
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.env_vars.get("PORT"), Some(&"3000".to_string()));
+        assert_eq!(prepared.env_vars.get("DEBUG"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn local_prepare_strict_config_map_skips_cascade() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
+        fs::write(dir.path().join("pinned.env"), "PINNED=1\n").unwrap();
+
+        let mut app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_local_command("start", "npm start")
+            .build();
+        app.env_files = Some(HashMap::from([(
+            "base".to_string(),
+            HashMap::from([("local".to_string(), "pinned.env".to_string())]),
+        )]));
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "npm start",
+            "local",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.env_vars.get("PINNED"), Some(&"1".to_string()));
+        assert_eq!(prepared.env_vars.get("DEBUG"), None);
+    }
 }
