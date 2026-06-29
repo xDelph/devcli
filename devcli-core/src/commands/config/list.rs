@@ -104,11 +104,12 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                     // Check each environment that has commands configured
                     for env in ["local", "docker", "orbstack", "k8s"] {
                         if app.commands.get(env).is_some() {
-                            // Find which env file would be used for this environment
-                            let env_file = crate::detection::find_env_file(
+                            let env_file = crate::env_flow_support::resolve_runtime_env_display(
                                 app_path,
+                                app.env_files.as_ref(),
+                                None,
+                                env,
                                 app.dockerfile_path.as_deref(),
-                                None, // No single stage anymore, use default_stages
                             )
                             .ok()
                             .flatten();
@@ -246,10 +247,12 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
 
         for env in ["local", "docker", "orbstack", "k8s"] {
             if resolved.app.commands.get(env).is_some() {
-                let env_file = crate::detection::find_env_file(
+                let env_file = crate::env_flow_support::resolve_runtime_env_display(
                     app_path,
+                    resolved.app.env_files.as_ref(),
+                    None,
+                    env,
                     resolved.app.dockerfile_path.as_deref(),
-                    None, // No single stage anymore, use default_stages
                 )
                 .ok()
                 .flatten();

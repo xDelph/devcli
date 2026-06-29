@@ -139,27 +139,169 @@ pub fn resolve_container_env_file_path(
         }
     }
 
-    crate::detection::find_env_file(working_dir, dockerfile_path, stage)
+    find_env_file(working_dir, dockerfile_path, stage)
 }
 
-fn resolve_strict_config_path(
+/// Legacy dockerfile-priority env file lookup (single file).
+pub fn find_env_file(
+    app_path: &Path,
+    dockerfile_path: Option<&str>,
+    stage: Option<&str>,
+) -> Result<Option<String>> {
+    use crate::detection::find_dockerfile;
+
+    let check_file = |path: &Path| -> Option<String> {
+        if path.exists() {
+            path.strip_prefix(app_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    };
+
+    let dockerfile_dir: Option<PathBuf> = if let Some(dockerfile_rel_path) = dockerfile_path {
+        let dockerfile_full_path = app_path.join(dockerfile_rel_path);
+        dockerfile_full_path.parent().map(|p| p.to_path_buf())
+    } else {
+        find_dockerfile(app_path)?.and_then(|df| df.parent().map(|p| p.to_path_buf()))
+    };
+
+    if let Some(stage_name) = stage {
+        let stage_filename = format!(".env.{stage_name}");
+
+        if let Some(ref dir) = dockerfile_dir {
+            if let Some(path) = check_file(&dir.join(&stage_filename)) {
+                return Ok(Some(path));
+            }
+        }
+
+        if let Some(path) = check_file(&app_path.join(&stage_filename)) {
+            return Ok(Some(path));
+        }
+    }
+
+    if let Some(ref dir) = dockerfile_dir {
+        if let Some(path) = check_file(&dir.join(".env")) {
+            return Ok(Some(path));
+        }
+    }
+
+    if let Some(path) = check_file(&app_path.join(".env")) {
+        return Ok(Some(path));
+    }
+
+    Ok(None)
+}
+
+/// Resolve env file path using config map with legacy fallback.
+pub fn resolve_env_file_path(
+    app_path: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<String>> {
+    if env_files_map.is_some() {
+        return resolve_strict_config_path(
+            app_path,
+            env_files_map,
+            stage,
+            environment,
+            dockerfile_path,
+        );
+    }
+
+    find_env_file(app_path, dockerfile_path, stage)
+}
+
+/// Load env vars from a single legacy-priority env file.
+pub fn load_env_vars_for_runtime(
+    app_path: &Path,
+    dockerfile_path: Option<&str>,
+    stage: Option<&str>,
+) -> Result<HashMap<String, String>> {
+    if let Some(env_file_path) = find_env_file(app_path, dockerfile_path, stage)? {
+        return parse_env_file(&app_path.join(env_file_path));
+    }
+
+    Ok(HashMap::new())
+}
+
+/// Describe which env file(s) would be used at runtime for display purposes.
+pub fn resolve_runtime_env_display(
     working_dir: &Path,
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
     environment: &str,
     dockerfile_path: Option<&str>,
 ) -> Result<Option<String>> {
+    if env_files_map.is_some() {
+        return resolve_strict_config_path(
+            working_dir,
+            env_files_map,
+            stage,
+            environment,
+            dockerfile_path,
+        );
+    }
+
+    match environment {
+        "local" => {
+            let layers = EnvFlow::from_dir(working_dir)
+                .stage_opt(stage_from_opt(stage))
+                .context(RuntimeContext::Local)
+                .layers()
+                .map_err(map_error)?;
+
+            let existing: Vec<&ResolvedLayer> =
+                layers.iter().filter(|layer| layer.exists).collect();
+
+            if existing.is_empty() {
+                return Ok(None);
+            }
+
+            Ok(Some(cascade_summary(&existing)))
+        }
+        "docker" | "orbstack" | "k8s" => resolve_container_env_file_path(
+            working_dir,
+            env_files_map,
+            stage,
+            environment,
+            dockerfile_path,
+        ),
+        _ => find_env_file(working_dir, dockerfile_path, stage),
+    }
+}
+
+fn resolve_strict_config_path(
+    _working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    _dockerfile_path: Option<&str>,
+) -> Result<Option<String>> {
     if env_files_map.is_none() {
         return Ok(None);
     }
 
-    crate::detection::resolve_env_file_path(
-        working_dir,
-        env_files_map,
-        stage,
-        environment,
-        dockerfile_path,
-    )
+    let env_files = env_files_map.expect("env_files_map checked above");
+
+    if let Some(stage_name) = stage {
+        if let Some(stage_map) = env_files.get(stage_name) {
+            if let Some(path) = stage_map.get(environment) {
+                return Ok(Some(path.clone()));
+            }
+        }
+    }
+
+    if let Some(base_map) = env_files.get("base") {
+        if let Some(path) = base_map.get(environment) {
+            return Ok(Some(path.clone()));
+        }
+    }
+
+    Ok(None)
 }
 
 fn dockerfile_parent_dir(working_dir: &Path, dockerfile_path: Option<&str>) -> Result<Option<PathBuf>> {
@@ -416,5 +558,37 @@ line2"
             .expect("expected orbstack env file");
 
         assert_eq!(path, "orbstack/.env");
+    }
+
+    #[test]
+    fn resolve_runtime_env_display_local_cascade() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "A=1\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "B=2\n").unwrap();
+
+        let display = resolve_runtime_env_display(dir.path(), None, None, "local", None)
+            .unwrap()
+            .expect("expected display");
+
+        assert_eq!(display, "cascade (2 files)");
+    }
+
+    #[test]
+    fn resolve_runtime_env_display_docker_context() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join("docker/.env"), "PORT=3000\n").unwrap();
+
+        let display = resolve_runtime_env_display(
+            dir.path(),
+            None,
+            None,
+            "docker",
+            Some("docker/Dockerfile"),
+        )
+        .unwrap()
+        .expect("expected docker display");
+
+        assert_eq!(display, "docker/.env");
     }
 }

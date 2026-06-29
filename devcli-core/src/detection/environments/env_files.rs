@@ -379,140 +379,27 @@ pub fn parse_env_file(env_path: &Path) -> Result<HashMap<String, String>> {
     crate::env_flow_support::parse_env_file(env_path)
 }
 
-/// Find the .env file with priority order, supporting stage-specific files
+/// Find the .env file with priority order, supporting stage-specific files.
 ///
-/// Priority order when stage is specified:
-/// 1. Stage-specific file at Dockerfile level (e.g., docker/.env.dev)
-/// 2. Stage-specific file at root level (e.g., .env.dev)
-/// 3. Base .env file at Dockerfile level
-/// 4. Base .env file at root level
-///
-/// Priority order when stage is NOT specified:
-/// 1. .env file at the Dockerfile level (using dockerfile_path from config if provided)
-/// 2. .env file at the Dockerfile level (by searching for Dockerfile if not in config)
-/// 3. .env file at the root level
-///
-/// # Arguments
-/// * `app_path` - The root directory of the app
-/// * `dockerfile_path` - Optional relative path to Dockerfile from config (e.g., "docker/Dockerfile")
-/// * `stage` - Optional deployment stage (dev, qa, preprod, prod)
-///
-/// # Returns
-/// Path to .env file if found, relative to app_path for Docker compatibility
+/// Delegates to [`crate::env_flow_support::find_env_file`].
 pub fn find_env_file(
     app_path: &Path,
     dockerfile_path: Option<&str>,
     stage: Option<&str>,
 ) -> Result<Option<String>> {
-    use crate::detection::utils::find_dockerfile;
-
-    // Helper function to check if a file exists and return its relative path
-    let check_file = |path: &std::path::PathBuf| -> Option<String> {
-        if path.exists() {
-            path.strip_prefix(app_path)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        }
-    };
-
-    // Determine the Dockerfile directory
-    let dockerfile_dir = if let Some(dockerfile_rel_path) = dockerfile_path {
-        let dockerfile_full_path = app_path.join(dockerfile_rel_path);
-        dockerfile_full_path.parent().map(|p| p.to_path_buf())
-    } else {
-        find_dockerfile(app_path)?.and_then(|df| df.parent().map(|p| p.to_path_buf()))
-    };
-
-    // If stage is specified, try stage-specific files first
-    if let Some(stage_name) = stage {
-        let stage_filename = format!(".env.{}", stage_name);
-
-        // 1. Try stage-specific file at Dockerfile level
-        if let Some(ref dir) = dockerfile_dir {
-            if let Some(path) = check_file(&dir.join(&stage_filename)) {
-                return Ok(Some(path));
-            }
-        }
-
-        // 2. Try stage-specific file at root level
-        if let Some(path) = check_file(&app_path.join(&stage_filename)) {
-            return Ok(Some(path));
-        }
-    }
-
-    // 3. Fall back to base .env at Dockerfile level
-    if let Some(ref dir) = dockerfile_dir {
-        if let Some(path) = check_file(&dir.join(".env")) {
-            return Ok(Some(path));
-        }
-    }
-
-    // 4. Fall back to base .env at root level
-    if let Some(path) = check_file(&app_path.join(".env")) {
-        return Ok(Some(path));
-    }
-
-    Ok(None)
+    crate::env_flow_support::find_env_file(app_path, dockerfile_path, stage)
 }
 
-/// Load environment variables from .env files for runtime use
-/// Searches for .env files in the app directory and returns them as a HashMap
-/// This is used at runtime when executing OrbStack commands
-///
-/// Priority order when stage is specified:
-/// 1. Stage-specific file at Dockerfile level (e.g., docker/.env.dev)
-/// 2. Stage-specific file at root level (e.g., .env.dev)
-/// 3. Base .env file at Dockerfile level
-/// 4. Base .env file at root level
-///
-/// Priority order when stage is NOT specified:
-/// 1. .env file at the Dockerfile level (using dockerfile_path from config if provided)
-/// 2. .env file at the Dockerfile level (by searching for Dockerfile if not in config)
-/// 3. .env file at the root level
-///
-/// # Arguments
-/// * `app_path` - The root directory of the app
-/// * `dockerfile_path` - Optional relative path to Dockerfile from config (e.g., "docker/Dockerfile")
-/// * `stage` - Optional deployment stage (dev, qa, preprod, prod)
-///
-/// # Returns
-/// HashMap of environment variables loaded from .env files
+/// Load environment variables from a single legacy-priority env file.
 pub fn load_env_vars_for_runtime(
     app_path: &Path,
     dockerfile_path: Option<&str>,
     stage: Option<&str>,
 ) -> Result<HashMap<String, String>> {
-    // Use find_env_file to determine which file to load based on priority
-    if let Some(env_file_path) = find_env_file(app_path, dockerfile_path, stage)? {
-        let full_path = app_path.join(&env_file_path);
-        return parse_env_file(&full_path);
-    }
-
-    // No env file found, return empty HashMap
-    Ok(HashMap::new())
+    crate::env_flow_support::load_env_vars_for_runtime(app_path, dockerfile_path, stage)
 }
 
-/// Resolve env file path using new env_files structure with fallback to legacy
-/// This function bridges the new env_files map with the old find_env_file logic
-///
-/// Priority order (context-first approach):
-/// 1. stage + environment (e.g., qa + docker)
-/// 2. base + environment (e.g., base + docker)
-///
-/// Note: If env_files_map is provided, we STRICTLY use it and do NOT fallback to legacy logic.
-/// This ensures that if a user configures env files, we don't pick random ones.
-///
-/// # Arguments
-/// * `app_path` - The root directory of the app
-/// * `env_files_map` - Optional new env_files structure from config
-/// * `stage` - Optional deployment stage
-/// * `environment` - Runtime environment (local, docker, orbstack, k8s)
-/// * `dockerfile_path` - Optional relative path to Dockerfile (for fallback)
-///
-/// # Returns
-/// Relative path to env file if found
+/// Resolve env file path using config map with legacy fallback.
 pub fn resolve_env_file_path(
     app_path: &Path,
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
@@ -520,30 +407,13 @@ pub fn resolve_env_file_path(
     environment: &str,
     dockerfile_path: Option<&str>,
 ) -> Result<Option<String>> {
-    // Try new env_files structure first
-    if let Some(env_files) = env_files_map {
-        // Priority 1: stage + environment (e.g., qa + docker)
-        if let Some(stage_name) = stage {
-            if let Some(stage_map) = env_files.get(stage_name) {
-                if let Some(path) = stage_map.get(environment) {
-                    return Ok(Some(path.clone()));
-                }
-            }
-        }
-
-        // Priority 2: base + environment (e.g., base + docker)
-        if let Some(base_map) = env_files.get("base") {
-            if let Some(path) = base_map.get(environment) {
-                return Ok(Some(path.clone()));
-            }
-        }
-
-        // If map is provided but no match found, return None (strict mode)
-        return Ok(None);
-    }
-
-    // Fall back to legacy find_env_file logic ONLY if no map provided
-    find_env_file(app_path, dockerfile_path, stage)
+    crate::env_flow_support::resolve_env_file_path(
+        app_path,
+        env_files_map,
+        stage,
+        environment,
+        dockerfile_path,
+    )
 }
 
 #[cfg(test)]

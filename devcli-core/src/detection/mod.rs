@@ -38,6 +38,7 @@ pub use environments::{
     parse_env_file, resolve_env_file_path,
 };
 pub use nx::{detect_nx_apps, detect_single_nx_app};
+pub use utils::find_dockerfile;
 
 // Structure holding all detection results for an app
 // Contains app metadata, commands for different environments, and suggested defaults
