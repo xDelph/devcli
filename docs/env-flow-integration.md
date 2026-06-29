@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-29  
 **Branch:** `use-env-flow`  
-**Status:** In progress — Phase 2 complete  
+**Status:** In progress — Phase 3 complete  
 **Reference:** [workspace-crate-audit.md](../reports/workspace-crate-audit.md)
 
 ---
@@ -117,7 +117,7 @@ devcli-core
 
 env-flow resolves from one `root`. devcli searches both app root and dockerfile parent.
 
-**Approach:** adapter tries app root first; for Docker/OrbStack with `dockerfile_path`, also consider `dockerfile_parent` (Phase 5).
+**Approach:** adapter tries app root first; for Docker/OrbStack with `dockerfile_path`, also scans dockerfile parent, then falls back to `find_env_file`.
 
 ### 3. OrbStack context
 
@@ -163,9 +163,10 @@ Reimplement as thin wrapper around `EnvFlow::from_file(path).load()` + empty→`
 - [x] Strict config map → single configured file only
 - [x] Integration tests in `prepare.rs` and `env_flow_support`
 
-### Phase 3 — Docker / OrbStack
+### Phase 3 — Docker / OrbStack ✅
 
-**3a (safe):** single-file via `from_file` or `no_cascade()`  
+**3a (done):** `resolve_container_env_file_path` in adapter — env-flow highest layer from app root, dockerfile parent scan, then `find_env_file` fallback. `prepare.rs` uses shared `apply_container_env_file` helper.
+
 **3b (optional):** cascade → temp merged `.env` → `--env-file`
 
 ### Phase 4 — Consolidate runtime loaders
@@ -176,9 +177,9 @@ Delegate `load_env_vars_for_runtime`, `resolve_env_file_path`, deprecate or wrap
 
 **Keep unchanged:** `detect_env_files`, `build_env_files_map*`, `auto_add/*`, `commands/env.rs`, TUI
 
-### Phase 5 — Dockerfile-nested root gap
+### Phase 5 — Dockerfile-nested root gap (partial ✅)
 
-Adapter: when `dockerfile_path` set and context is Docker/OrbStack, run env-flow from `dockerfile_parent` when that dir has env files.
+Dockerfile parent scan is implemented in Phase 3. Remaining: align `load_env_vars_for_runtime` and retire duplicate `find_env_file` call sites.
 
 ### Phase 6 — Cleanup
 
