@@ -371,47 +371,12 @@ pub fn build_env_files_map(
     map
 }
 
-/// Parse a .env file and return key-value pairs
-/// Handles basic .env format: KEY=VALUE
-/// Skips empty lines and comments (lines starting with #)
-/// Empty values are replaced with "XXX" placeholder
+/// Parse a .env file and return key-value pairs.
+///
+/// Delegates to `env-flow` for robust parsing (multiline, export, escapes,
+/// `${VAR}` interpolation). Empty values are replaced with `"XXX"` (devcli convention).
 pub fn parse_env_file(env_path: &Path) -> Result<HashMap<String, String>> {
-    let mut env_vars = HashMap::new();
-
-    if !env_path.exists() {
-        return Ok(env_vars);
-    }
-
-    let content = fs::read_to_string(env_path)?;
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // Parse KEY=VALUE format
-        if let Some(pos) = line.find('=') {
-            let key = line[..pos].trim().to_string();
-            let value = line[pos + 1..].trim().to_string();
-
-            // Remove quotes if present
-            let value = value.trim_matches('"').trim_matches('\'').to_string();
-
-            // Replace empty values with XXX placeholder
-            let value = if value.is_empty() {
-                "XXX".to_string()
-            } else {
-                value
-            };
-
-            env_vars.insert(key, value);
-        }
-    }
-
-    Ok(env_vars)
+    crate::env_flow_support::parse_env_file(env_path)
 }
 
 /// Find the .env file with priority order, supporting stage-specific files
