@@ -33,12 +33,10 @@ pub use environments::docker::suggest_docker_default;
 pub use environments::local::suggest_local_default;
 pub use environments::orbstack::suggest_orbstack_default;
 pub use environments::{
-    build_env_files_map_interactive, detect_docker_commands, detect_env_files, detect_k8s_commands,
-    detect_local_commands, detect_orbstack_commands, find_env_file, load_env_vars_for_runtime,
-    parse_env_file, resolve_env_file_path,
+    build_env_files_map, build_env_files_map_interactive, detect_docker_commands,
+    detect_env_files, detect_k8s_commands, detect_local_commands, detect_orbstack_commands,
 };
 pub use nx::{detect_nx_apps, detect_single_nx_app};
-pub use utils::find_dockerfile;
 
 // Structure holding all detection results for an app
 // Contains app metadata, commands for different environments, and suggested defaults

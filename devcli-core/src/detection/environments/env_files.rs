@@ -1,238 +1,81 @@
-// Environment file detection and config-map building.
-// Runtime loading (parse, cascade, container paths) lives in `env_flow_support`.
+// Environment file detection and config-map building (uses env-flow detector).
+// Runtime loading lives in `env_flow_support`.
 
 use crate::Result;
-use std::collections::HashMap;
-use std::fs;
+use env_flow::detector::{self, DetectedFile};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// Represents a detected environment file with its metadata
+/// A detected environment file with metadata for config-map building.
 #[derive(Debug, Clone)]
 pub struct DetectedEnvFile {
-    /// Relative path from app root (e.g., ".env.dev", "docker/.env.qa")
     pub path: String,
-    /// Detected stage (dev, qa, preprod, prod, or custom)
     pub stage: Option<String>,
-    /// Detected context (local, docker, all)
     pub context: String,
 }
 
-/// Detect all environment files in an app directory
-/// Searches for patterns: .env, .env.*, .*.env
-/// Maps files to stages and contexts based on naming conventions
-///
-/// # Naming Conventions:
-/// - `.env` → stage: None, context: "all"
-/// - `.env.dev` → stage: "dev", context: "all"
-/// - `.env.local` → stage: None, context: "local"
-/// - `.env.dev.local` → stage: "dev", context: "local"
-/// - `docker/.env.qa` → stage: "qa", context: "docker"
-/// - `.local.env` → stage: None, context: "local"
-///
-/// # Arguments
-/// * `app_path` - Root directory of the app
-/// * `dockerfile_path` - Optional relative path to Dockerfile (e.g., "docker/Dockerfile")
-///
-/// # Returns
-/// Vector of detected env files with their metadata
+/// Discover env files under the app root (and dockerfile directory when nested).
 pub fn detect_env_files(
     app_path: &Path,
     dockerfile_path: Option<&str>,
 ) -> Result<Vec<DetectedEnvFile>> {
-    let mut detected_files = Vec::new();
+    let mut seen = HashSet::new();
+    let mut detected = Vec::new();
 
-    // Search in app root
-    detected_files.extend(search_env_files_in_dir(app_path, app_path)?);
+    for file in detector::discover(app_path)? {
+        push_detected(&mut detected, &mut seen, file, app_path);
+    }
 
-    // Search in Dockerfile directory if it exists
     if let Some(dockerfile_rel) = dockerfile_path {
-        let dockerfile_full = app_path.join(dockerfile_rel);
-        if let Some(dockerfile_dir) = dockerfile_full.parent() {
-            if dockerfile_dir != app_path {
-                detected_files.extend(search_env_files_in_dir(dockerfile_dir, app_path)?);
-            }
-        }
-    }
-
-    Ok(detected_files)
-}
-
-/// Search for env files in a specific directory
-///
-/// # Arguments
-/// * `search_dir` - Directory to search in
-/// * `app_root` - App root for calculating relative paths
-///
-/// # Returns
-/// Vector of detected env files
-fn search_env_files_in_dir(search_dir: &Path, app_root: &Path) -> Result<Vec<DetectedEnvFile>> {
-    let mut files = Vec::new();
-
-    if !search_dir.exists() || !search_dir.is_dir() {
-        return Ok(files);
-    }
-
-    for entry in fs::read_dir(search_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        // Only process files (not directories)
-        if !path.is_file() {
-            continue;
-        }
-
-        let filename = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name,
-            None => continue,
-        };
-
-        // Check if this is an env file
-        if is_env_file(filename) {
-            let relative_path = path
-                .strip_prefix(app_root)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| filename.to_string());
-
-            let (stage, context) = parse_env_filename(filename, &path, app_root);
-
-            files.push(DetectedEnvFile {
-                path: relative_path,
-                stage,
-                context,
-            });
-        }
-    }
-
-    Ok(files)
-}
-
-/// Check if a filename matches env file patterns
-/// Patterns: .env, .env.*, .*.env
-fn is_env_file(filename: &str) -> bool {
-    filename == ".env"
-        || filename.starts_with(".env.")
-        || (filename.starts_with('.') && filename.ends_with(".env"))
-}
-
-/// Parse stage and context from env filename
-///
-/// # Examples:
-/// - `.env` → (None, "unspecified")
-/// - `.env.dev` → (Some("dev"), "unspecified")
-/// - `.env.local` → (None, "local")
-/// - `.env.dev.local` → (Some("dev"), "local")
-/// - `docker/.env.qa` → (Some("qa"), "docker")
-/// - `.local.env` → (None, "local")
-/// - `.dev.env` → (Some("dev"), "unspecified")
-///
-/// # Arguments
-/// * `filename` - Name of the env file
-/// * `full_path` - Full path to the file
-/// * `app_root` - App root directory
-///
-/// # Returns
-/// Tuple of (stage, context) where context is "unspecified" if not explicitly set
-fn parse_env_filename(
-    filename: &str,
-    full_path: &Path,
-    app_root: &Path,
-) -> (Option<String>, String) {
-    // Determine context from directory
-    let dir_context = if let Some(parent) = full_path.parent() {
-        if parent == app_root {
-            None
-        } else {
-            parent
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|dir_name| dir_name.to_lowercase())
-        }
-    } else {
-        None
-    };
-
-    // Known contexts
-    let known_contexts = ["local", "docker", "orbstack", "k8s"];
-
-    // Known stages (for future use in smarter detection)
-    let _known_stages = [
-        "dev",
-        "qa",
-        "preprod",
-        "prod",
-        "staging",
-        "production",
-        "test",
-    ];
-
-    // Parse filename
-    if filename == ".env" {
-        // Base .env file - context will be determined by user prompt
-        return (
-            None,
-            dir_context.unwrap_or_else(|| "unspecified".to_string()),
-        );
-    }
-
-    // Handle .env.* pattern
-    if let Some(suffix) = filename.strip_prefix(".env.") {
-        let parts: Vec<&str> = suffix.split('.').collect();
-
-        match parts.len() {
-            1 => {
-                // .env.X - could be stage or context
-                let part = parts[0];
-                if known_contexts.contains(&part) {
-                    // It's a context
-                    (None, part.to_string())
-                } else {
-                    // Assume it's a stage - context will be determined by user prompt
-                    (
-                        Some(part.to_string()),
-                        dir_context.unwrap_or_else(|| "unspecified".to_string()),
-                    )
+        let dockerfile_dir = app_path.join(dockerfile_rel).parent().map(|p| p.to_path_buf());
+        if let Some(dir) = dockerfile_dir {
+            if dir != app_path {
+                for file in detector::discover(&dir)? {
+                    push_detected(&mut detected, &mut seen, file, app_path);
                 }
             }
-            2 => {
-                // .env.X.Y - first is stage, second is context
-                let stage = parts[0];
-                let context = parts[1];
-                (Some(stage.to_string()), context.to_string())
-            }
-            _ => {
-                // More complex pattern - use first as stage, last as context
-                let stage = parts[0];
-                let context = parts[parts.len() - 1];
-                (Some(stage.to_string()), context.to_string())
-            }
         }
     }
-    // Handle .*.env pattern
-    else if filename.ends_with(".env") {
-        if let Some(prefix) = filename
-            .strip_prefix('.')
-            .and_then(|s| s.strip_suffix(".env"))
-        {
-            // .X.env - X could be stage or context
-            if known_contexts.contains(&prefix) {
-                (None, prefix.to_string())
-            } else {
-                (
-                    Some(prefix.to_string()),
-                    dir_context.unwrap_or_else(|| "unspecified".to_string()),
-                )
-            }
-        } else {
-            (None, "unspecified".to_string())
-        }
+
+    Ok(detected)
+}
+
+fn push_detected(
+    out: &mut Vec<DetectedEnvFile>,
+    seen: &mut HashSet<String>,
+    file: DetectedFile,
+    app_root: &Path,
+) {
+    let path = file
+        .path
+        .strip_prefix(app_root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| file.relative_path.clone());
+
+    if !seen.insert(path.clone()) {
+        return;
+    }
+
+    out.push(to_detected_env_file(path, file));
+}
+
+fn to_detected_env_file(path: String, file: DetectedFile) -> DetectedEnvFile {
+    let context = if file.is_local {
+        "local".to_string()
+    } else if let Some(ctx) = file.context {
+        ctx
     } else {
-        // Shouldn't reach here, but handle gracefully
-        (None, "unspecified".to_string())
+        "unspecified".to_string()
+    };
+
+    DetectedEnvFile {
+        path,
+        stage: file.stage,
+        context,
     }
 }
 
-/// Prompt user to select which environments should use a specific env file
+/// Prompt user to select which environments should use a specific env file.
 ///
 /// # Arguments
 /// * `env_file_path` - Path to the env file (e.g., ".env", ".env.dev")
@@ -376,80 +219,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_is_env_file() {
-        assert!(is_env_file(".env"));
-        assert!(is_env_file(".env.dev"));
-        assert!(is_env_file(".env.local"));
-        assert!(is_env_file(".local.env"));
-        assert!(is_env_file(".dev.env"));
-        assert!(!is_env_file("env"));
-        assert!(!is_env_file("config.json"));
-        assert!(!is_env_file(".envrc"));
-    }
-
-    #[test]
-    fn test_parse_env_filename_base() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join(".env");
-
-        let (stage, context) = parse_env_filename(".env", &path, temp_dir.path());
-        assert_eq!(stage, None);
-        assert_eq!(context, "unspecified"); // Changed from "all"
-    }
-
-    #[test]
-    fn test_parse_env_filename_stage() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join(".env.dev");
-
-        let (stage, context) = parse_env_filename(".env.dev", &path, temp_dir.path());
-        assert_eq!(stage, Some("dev".to_string()));
-        assert_eq!(context, "unspecified"); // Changed from "all"
-    }
-
-    #[test]
-    fn test_parse_env_filename_context() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join(".env.local");
-
-        let (stage, context) = parse_env_filename(".env.local", &path, temp_dir.path());
-        assert_eq!(stage, None);
-        assert_eq!(context, "local");
-    }
-
-    #[test]
-    fn test_parse_env_filename_stage_and_context() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join(".env.dev.local");
-
-        let (stage, context) = parse_env_filename(".env.dev.local", &path, temp_dir.path());
-        assert_eq!(stage, Some("dev".to_string()));
-        assert_eq!(context, "local");
-    }
-
-    #[test]
-    fn test_parse_env_filename_in_subdirectory() {
-        let temp_dir = TempDir::new().unwrap();
-        let docker_dir = temp_dir.path().join("docker");
-        fs::create_dir(&docker_dir).unwrap();
-        let path = docker_dir.join(".env.qa");
-
-        let (stage, context) = parse_env_filename(".env.qa", &path, temp_dir.path());
-        assert_eq!(stage, Some("qa".to_string()));
-        assert_eq!(context, "docker");
-    }
-
-    #[test]
-    fn test_parse_env_filename_reverse_pattern() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join(".local.env");
-
-        let (stage, context) = parse_env_filename(".local.env", &path, temp_dir.path());
-        assert_eq!(stage, None);
-        assert_eq!(context, "local");
-    }
 
     #[test]
     fn test_detect_env_files() {
