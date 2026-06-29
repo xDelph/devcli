@@ -219,6 +219,49 @@ impl EnvVars {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Merge `other` into this map; keys from `other` override existing entries.
+    pub fn merge_from(&mut self, other: Self) {
+        for (key, entry) in other.0 {
+            self.0.insert(key, entry);
+        }
+    }
+
+    /// Serialize resolved variables to dotenv format (for temp `--env-file` files).
+    pub fn to_dotenv(&self) -> String {
+        let mut out = String::new();
+        for (key, entry) in &self.0 {
+            out.push_str(key);
+            out.push('=');
+            out.push_str(&format_dotenv_value(&entry.value));
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Write resolved variables to a dotenv file.
+    pub fn write_dotenv(&self, path: &std::path::Path) -> crate::Result<()> {
+        std::fs::write(path, self.to_dotenv()).map_err(|source| crate::Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+}
+
+fn format_dotenv_value(value: &str) -> String {
+    let needs_quotes = value.is_empty()
+        || value.contains(' ')
+        || value.contains('\t')
+        || value.contains('\n')
+        || value.contains('"')
+        || value.contains('#')
+        || value.contains('$');
+
+    if needs_quotes {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
 }
 
 // ─── Layer types ─────────────────────────────────────────────────────────────

@@ -448,3 +448,48 @@ fn single_file_cascade_vs_no_cascade_vs_from_file() {
     assert_eq!(from_file.get("APP_NAME"), Some("myapp")); // from .env only
     assert_eq!(from_file.get("DB_HOST"),  Some("localhost")); // only base value
 }
+
+#[test]
+fn reverse_local_env_style_loaded() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "PORT=3000\n").unwrap();
+    std::fs::write(root.path().join(".local.env"), "DEBUG=true\n").unwrap();
+
+    let vars = EnvFlow::from_dir(root.path())
+        .context(RuntimeContext::Local)
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("PORT"), Some("3000"));
+    assert_eq!(vars.get("DEBUG"), Some("true"));
+}
+
+#[test]
+fn docker_compose_context_loads_docker_layers() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "APP=1\n").unwrap();
+    std::fs::write(root.path().join(".env.docker"), "PORT=80\n").unwrap();
+
+    let vars = EnvFlow::from_dir(root.path())
+        .context(RuntimeContext::DockerCompose)
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("APP"), Some("1"));
+    assert_eq!(vars.get("PORT"), Some("80"));
+}
+
+#[test]
+fn orbstack_context_loads_orbstack_dir() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("orbstack")).unwrap();
+    std::fs::write(root.path().join(".env"), "APP=1\n").unwrap();
+    std::fs::write(root.path().join("orbstack/.env"), "PORT=8080\n").unwrap();
+
+    let vars = EnvFlow::from_dir(root.path())
+        .context(RuntimeContext::OrbStack)
+        .load()
+        .unwrap();
+
+    assert_eq!(vars.get("PORT"), Some("8080"));
+}

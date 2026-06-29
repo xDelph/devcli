@@ -118,8 +118,12 @@ fn scan_dir(
 }
 
 /// Returns true if `filename` matches a `.env` naming pattern.
+///
+/// Supports standard (`.env`, `.env.dev`) and reverse (`.local.env`, `.dev.env`) styles.
 fn is_env_filename(filename: &str) -> bool {
-    filename == ".env" || filename.starts_with(".env.")
+    filename == ".env"
+        || filename.starts_with(".env.")
+        || (filename.starts_with('.') && filename.ends_with(".env") && filename != ".env")
 }
 
 /// Classify a filename into stage / context / is_local.
@@ -134,6 +138,56 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
     } else {
         NamingConvention::None
     };
+
+    // Reverse pattern: `.local.env`, `.dev.env`, `.dev.local.env`
+    if filename.ends_with(".env") && filename != ".env" && !filename.starts_with(".env.") {
+        if let Some(inner) = filename
+            .strip_prefix('.')
+            .and_then(|s| s.strip_suffix(".env"))
+        {
+            let parts: Vec<&str> = inner.split('.').collect();
+            let non_local: Vec<&str> = parts
+                .iter()
+                .copied()
+                .filter(|&p| p != "local")
+                .collect();
+
+            if parts.last() == Some(&"local") {
+                is_local = true;
+            }
+
+            match non_local.len() {
+                0 => {}
+                1 => {
+                    let token = non_local[0];
+                    if is_known_context(token) {
+                        context = Some(token.to_string());
+                    } else {
+                        stage = Some(token.to_string());
+                    }
+                }
+                2 => {
+                    stage = Some(non_local[0].to_string());
+                    context = Some(non_local[1].to_string());
+                }
+                _ => {
+                    stage = Some(non_local[0].to_string());
+                    if let Some(last) = non_local.last() {
+                        context = Some(last.to_string());
+                    }
+                }
+            }
+
+            return DetectedFile {
+                path: PathBuf::new(),
+                relative_path: String::new(),
+                stage,
+                context,
+                is_local,
+                convention: NamingConvention::Suffix,
+            };
+        }
+    }
 
     // Suffix after `.env`
     if let Some(suffix) = filename.strip_prefix(".env.") {
@@ -300,5 +354,26 @@ mod tests {
     fn env_ci_stage() {
         let f = cls(".env.ci");
         assert_eq!(f.context, Some("ci".to_string()));
+    }
+
+    #[test]
+    fn reverse_local_env() {
+        let f = cls(".local.env");
+        assert!(f.is_local);
+        assert_eq!(f.stage, None);
+    }
+
+    #[test]
+    fn reverse_stage_env() {
+        let f = cls(".dev.env");
+        assert_eq!(f.stage, Some("dev".to_string()));
+        assert!(!f.is_local);
+    }
+
+    #[test]
+    fn reverse_stage_local_env() {
+        let f = cls(".dev.local.env");
+        assert_eq!(f.stage, Some("dev".to_string()));
+        assert!(f.is_local);
     }
 }

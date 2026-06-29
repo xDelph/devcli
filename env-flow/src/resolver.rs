@@ -59,15 +59,22 @@ pub fn resolve(
         }
     }
 
-    // ── Layer 5: .env.local (skip in containers/CI) ──────────────────────────
+    // ── Layer 5: .env.local / .local.env (skip in containers/CI) ─────────────
     if !skip_local {
-        layers.push(make_layer(root, ".env.local", LayerType::LocalOverride));
+        layers.push(probe_either(
+            root,
+            ".env.local",
+            ".local.env",
+            LayerType::LocalOverride,
+        ));
 
-        // ── Layer 6: .env.{stage}.local ─────────────────────────────────────
+        // ── Layer 6: .env.{stage}.local / .{stage}.local.env ────────────────
         if let Some(s) = stage {
-            layers.push(make_layer(
+            let stage_str = s.as_str();
+            layers.push(probe_either(
                 root,
-                &format!(".env.{}.local", s.as_str()),
+                &format!(".env.{stage_str}.local"),
+                &format!(".{stage_str}.local.env"),
                 LayerType::StageLocalOverride,
             ));
         }
@@ -252,5 +259,19 @@ mod tests {
         let ctx = layers.iter().find(|l| l.layer_type == LayerType::ContextBase).unwrap();
         assert_eq!(ctx.relative_path, "k8s/.env");
         assert!(ctx.exists);
+    }
+
+    #[test]
+    fn reverse_local_env_style() {
+        let dir = tmp();
+        touch(dir.path(), ".local.env");
+
+        let layers = resolve(dir.path(), None, &RuntimeContext::Local).unwrap();
+        let local = layers
+            .iter()
+            .find(|l| l.layer_type == LayerType::LocalOverride)
+            .unwrap();
+        assert_eq!(local.relative_path, ".local.env");
+        assert!(local.exists);
     }
 }
