@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::detection::environments::env_files::{find_env_file, load_env_vars_for_runtime};
+    use crate::env_flow_support::{find_env_file, load_env_vars_for_runtime};
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;

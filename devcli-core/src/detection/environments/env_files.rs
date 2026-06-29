@@ -1,5 +1,5 @@
-// Environment file detection and management
-// Discovers all .env files and maps them to stages and contexts
+// Environment file detection and config-map building.
+// Runtime loading (parse, cascade, container paths) lives in `env_flow_support`.
 
 use crate::Result;
 use std::collections::HashMap;
@@ -369,51 +369,6 @@ pub fn build_env_files_map(
     }
 
     map
-}
-
-/// Parse a .env file and return key-value pairs.
-///
-/// Delegates to `env-flow` for robust parsing (multiline, export, escapes,
-/// `${VAR}` interpolation). Empty values are replaced with `"XXX"` (devcli convention).
-pub fn parse_env_file(env_path: &Path) -> Result<HashMap<String, String>> {
-    crate::env_flow_support::parse_env_file(env_path)
-}
-
-/// Find the .env file with priority order, supporting stage-specific files.
-///
-/// Delegates to [`crate::env_flow_support::find_env_file`].
-pub fn find_env_file(
-    app_path: &Path,
-    dockerfile_path: Option<&str>,
-    stage: Option<&str>,
-) -> Result<Option<String>> {
-    crate::env_flow_support::find_env_file(app_path, dockerfile_path, stage)
-}
-
-/// Load environment variables from a single legacy-priority env file.
-pub fn load_env_vars_for_runtime(
-    app_path: &Path,
-    dockerfile_path: Option<&str>,
-    stage: Option<&str>,
-) -> Result<HashMap<String, String>> {
-    crate::env_flow_support::load_env_vars_for_runtime(app_path, dockerfile_path, stage)
-}
-
-/// Resolve env file path using config map with legacy fallback.
-pub fn resolve_env_file_path(
-    app_path: &Path,
-    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
-    stage: Option<&str>,
-    environment: &str,
-    dockerfile_path: Option<&str>,
-) -> Result<Option<String>> {
-    crate::env_flow_support::resolve_env_file_path(
-        app_path,
-        env_files_map,
-        stage,
-        environment,
-        dockerfile_path,
-    )
 }
 
 #[cfg(test)]

@@ -13,7 +13,8 @@ It is based on the current code in:
 - `devcli/src/main.rs`
 - `devcli-core/src/commands/*`
 - `devcli-core/src/process_manager_support.rs`
-- `process-manager/` (standalone crate)
+- `devcli-core/src/env_flow_support.rs`
+- `env-flow/` (layered `.env` loader)
 - `devcli-core/src/tui/*`
 - `devcli-core/src/config/*`
 
@@ -53,8 +54,9 @@ flowchart TD
 | `commands/restart.rs` | Stop + re-launch with prior runtime metadata |
 | `commands/internal_spawner.rs` | Detached child process wrapper, stream + persist logs |
 | `process_manager_support.rs` | Bridge to `process-manager` (`~/.devcli/processes`) |
+| `env_flow_support.rs` | Bridge to `env-flow` (cascade local, container paths, parser) |
 | `process-manager` + `pm-daemon` | Spawn, persist, monitor, health-check, and auto-restart managed processes |
-| `commands/prepare.rs` | Env file resolution + env var injection + docker command adaptation |
+| `commands/prepare.rs` | Env-flow loading + env var injection + docker command adaptation |
 | `tui/log_manager.rs` | Discover log files in `~/.devcli/logs` |
 | `tui/views/log_viewer/*` | Read and render persisted logs, refresh/search/json panel |
 
@@ -163,15 +165,16 @@ Spawner launch characteristics:
 
 ## 4.4 Command preparation before spawn
 
-`prepare_command(...)` applies environment-specific preparation:
+`prepare_command(...)` applies environment-specific preparation via `env_flow_support`:
 
 - Docker/OrbStack:
   - inject docker platform flags
-  - add `--env-file` if resolved
+  - resolve highest-priority env layer (or strict config-map path) and add `--env-file`
   - add dockerfile path for build commands if configured
   - set `DOCKER_CONTEXT` (`default` or `orbstack`)
 - Local:
-  - parse env file and inject variables into process environment map
+  - cascade-load env layers (`.env` + stage + `.env.local`) via `env-flow`, or strict config-map single file
+  - inject merged variables into process environment map
 
 Stage selection precedence:
 
