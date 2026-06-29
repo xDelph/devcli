@@ -1,12 +1,13 @@
 //! Adapter between devcli-core and the `env-flow` crate.
 //!
 //! Handles type bridges, devcli-specific quirks (empty → `"XXX"`), cascade
-//! loading for local runs, and strict config-map single-file loads.
+//! loading for local runs, single-file resolution for container runtimes, and
+//! strict config-map loads.
 
 use crate::Result;
 use env_flow::{EnvFlow, EnvVars, ResolvedLayer, RuntimeContext, Stage};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Result of loading env vars for a local runtime.
 pub struct LocalEnvLoad {
@@ -74,22 +75,16 @@ pub fn load_local_runtime(
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
 ) -> Result<Option<LocalEnvLoad>> {
-    if env_files_map.is_some() {
-        let path = crate::detection::resolve_env_file_path(
-            working_dir,
-            env_files_map,
-            stage,
-            "local",
-            None,
-        )?;
-        let Some(path) = path else {
-            return Ok(None);
-        };
+    if let Some(path) = resolve_strict_config_path(working_dir, env_files_map, stage, "local", None)? {
         let vars = parse_env_file(&working_dir.join(&path))?;
         return Ok(Some(LocalEnvLoad {
             vars,
             summary: path,
         }));
+    }
+
+    if env_files_map.is_some() {
+        return Ok(None);
     }
 
     let layers = EnvFlow::from_dir(working_dir)
@@ -108,6 +103,107 @@ pub fn load_local_runtime(
         vars,
         summary: cascade_summary(&existing),
     }))
+}
+
+/// Resolve a single env file path for Docker / OrbStack `--env-file` injection.
+///
+/// - When `env_files_map` is set: strict config-map lookup (no fallback).
+/// - Otherwise: env-flow highest layer from app root, then dockerfile parent, then
+///   legacy `find_env_file` for nested dockerfile layouts.
+pub fn resolve_container_env_file_path(
+    working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(path) =
+        resolve_strict_config_path(working_dir, env_files_map, stage, environment, dockerfile_path)?
+    {
+        return Ok(Some(path));
+    }
+
+    if env_files_map.is_some() {
+        return Ok(None);
+    }
+
+    let context = context_from_env(environment);
+
+    if let Some(path) = highest_layer_relative_path(working_dir, working_dir, stage, &context)? {
+        return Ok(Some(path));
+    }
+
+    if let Some(parent) = dockerfile_parent_dir(working_dir, dockerfile_path)? {
+        if let Some(path) = highest_layer_relative_path(&parent, working_dir, stage, &context)? {
+            return Ok(Some(path));
+        }
+    }
+
+    crate::detection::find_env_file(working_dir, dockerfile_path, stage)
+}
+
+fn resolve_strict_config_path(
+    working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<String>> {
+    if env_files_map.is_none() {
+        return Ok(None);
+    }
+
+    crate::detection::resolve_env_file_path(
+        working_dir,
+        env_files_map,
+        stage,
+        environment,
+        dockerfile_path,
+    )
+}
+
+fn dockerfile_parent_dir(working_dir: &Path, dockerfile_path: Option<&str>) -> Result<Option<PathBuf>> {
+    let Some(dockerfile_rel) = dockerfile_path else {
+        return Ok(None);
+    };
+
+    let parent = working_dir
+        .join(dockerfile_rel)
+        .parent()
+        .map(|path| path.to_path_buf());
+
+    Ok(parent.filter(|path| path != working_dir))
+}
+
+fn highest_layer_relative_path(
+    scan_root: &Path,
+    rel_base: &Path,
+    stage: Option<&str>,
+    context: &RuntimeContext,
+) -> Result<Option<String>> {
+    let layers = EnvFlow::from_dir(scan_root)
+        .stage_opt(stage_from_opt(stage))
+        .context(context.clone())
+        .layers()
+        .map_err(map_error)?;
+
+    let Some(layer) = layers.iter().rev().find(|layer| layer.exists) else {
+        return Ok(None);
+    };
+
+    Ok(Some(relative_path_from(
+        rel_base,
+        &layer.path,
+        &layer.relative_path,
+    )))
+}
+
+fn relative_path_from(base: &Path, absolute: &Path, fallback: &str) -> String {
+    absolute
+        .strip_prefix(base)
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 fn cascade_summary(layers: &[&ResolvedLayer]) -> String {
@@ -241,5 +337,84 @@ line2"
 
         let loaded = load_local_runtime(dir.path(), Some(&map), Some("dev")).unwrap();
         assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn resolve_container_env_file_prefers_docker_context_layer() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join(".env"), "ENV=root\n").unwrap();
+        fs::write(dir.path().join(".env.dev"), "ENV=root_dev\n").unwrap();
+        fs::write(dir.path().join("docker/.env.dev"), "ENV=docker_dev\n").unwrap();
+
+        let path = resolve_container_env_file_path(
+            dir.path(),
+            None,
+            Some("dev"),
+            "docker",
+            Some("docker/Dockerfile"),
+        )
+        .unwrap()
+        .expect("expected docker env file");
+
+        assert_eq!(path, "docker/.env.dev");
+    }
+
+    #[test]
+    fn resolve_container_env_file_nested_dockerfile_dir() {
+        let dir = TempDir::new().unwrap();
+        let docker_dir = dir.path().join("build/docker");
+        fs::create_dir_all(&docker_dir).unwrap();
+        fs::write(docker_dir.join(".env.prod"), "ENV=prod\n").unwrap();
+
+        let path = resolve_container_env_file_path(
+            dir.path(),
+            None,
+            Some("prod"),
+            "docker",
+            Some("build/docker/Dockerfile"),
+        )
+        .unwrap()
+        .expect("expected nested docker env file");
+
+        assert_eq!(path, "build/docker/.env.prod");
+    }
+
+    #[test]
+    fn resolve_container_env_file_strict_config_map() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "ENV=root\n").unwrap();
+        fs::write(dir.path().join("pinned.env"), "ENV=pinned\n").unwrap();
+
+        let mut map = HashMap::new();
+        map.insert(
+            "base".to_string(),
+            HashMap::from([("docker".to_string(), "pinned.env".to_string())]),
+        );
+
+        let path = resolve_container_env_file_path(
+            dir.path(),
+            Some(&map),
+            None,
+            "docker",
+            None,
+        )
+        .unwrap()
+        .expect("expected config map path");
+
+        assert_eq!(path, "pinned.env");
+    }
+
+    #[test]
+    fn resolve_container_env_file_orbstack_context() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("orbstack")).unwrap();
+        fs::write(dir.path().join("orbstack/.env"), "ENV=orb\n").unwrap();
+
+        let path = resolve_container_env_file_path(dir.path(), None, None, "orbstack", None)
+            .unwrap()
+            .expect("expected orbstack env file");
+
+        assert_eq!(path, "orbstack/.env");
     }
 }

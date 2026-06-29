@@ -48,30 +48,15 @@ pub fn prepare_command(
     match environment {
         "docker" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
-
-            // For Docker, use --env-file flag if .env exists
-            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
+            apply_container_env_file(
+                &mut final_command,
                 working_dir,
-                resolved_app.app.env_files.as_ref(),
+                resolved_app,
                 stage,
                 "docker",
-                resolved_app.app.dockerfile_path.as_deref(),
-            ) {
-                tracing::debug!(
-                    env_file = %env_file_path,
-                    environment = "docker",
-                    "Using env file"
-                );
+                show_output,
+            )?;
 
-                final_command =
-                    crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
-
-                if show_output {
-                    println!("  Using env file: {}", env_file_path);
-                }
-            }
-
-            // Inject dockerfile path for build commands
             if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
                 final_command =
                     crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
@@ -79,30 +64,15 @@ pub fn prepare_command(
         }
         "orbstack" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
-
-            // For OrbStack, use --env-file flag (same as Docker)
-            if let Ok(Some(env_file_path)) = crate::detection::resolve_env_file_path(
+            apply_container_env_file(
+                &mut final_command,
                 working_dir,
-                resolved_app.app.env_files.as_ref(),
+                resolved_app,
                 stage,
                 "orbstack",
-                resolved_app.app.dockerfile_path.as_deref(),
-            ) {
-                tracing::debug!(
-                    env_file = %env_file_path,
-                    environment = "orbstack",
-                    "Using env file"
-                );
+                show_output,
+            )?;
 
-                final_command =
-                    crate::utils::command::inject_docker_env_file(&final_command, &env_file_path);
-
-                if show_output {
-                    println!("  Using env file: {}", env_file_path);
-                }
-            }
-
-            // Inject dockerfile path for build commands
             if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
                 final_command =
                     crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
@@ -143,6 +113,38 @@ pub fn prepare_command(
         final_command,
         env_vars,
     })
+}
+
+fn apply_container_env_file(
+    final_command: &mut String,
+    working_dir: &Path,
+    resolved_app: &ResolvedApp,
+    stage: Option<&str>,
+    environment: &str,
+    show_output: bool,
+) -> Result<()> {
+    if let Some(env_file_path) = crate::env_flow_support::resolve_container_env_file_path(
+        working_dir,
+        resolved_app.app.env_files.as_ref(),
+        stage,
+        environment,
+        resolved_app.app.dockerfile_path.as_deref(),
+    )? {
+        tracing::debug!(
+            env_file = %env_file_path,
+            environment = %environment,
+            "Using env file"
+        );
+
+        *final_command =
+            crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
+
+        if show_output {
+            println!("  Using env file: {}", env_file_path);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -218,5 +220,69 @@ mod tests {
 
         assert_eq!(prepared.env_vars.get("PINNED"), Some(&"1".to_string()));
         assert_eq!(prepared.env_vars.get("DEBUG"), None);
+    }
+
+    #[test]
+    fn docker_prepare_injects_env_file_from_docker_dir() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join("docker/.env"), "PORT=3000\n").unwrap();
+
+        let app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_docker_command("run", "docker run --rm nginx")
+            .with_dockerfile_path("docker/Dockerfile")
+            .build();
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "docker run --rm nginx",
+            "docker",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert!(prepared.final_command.contains("--env-file"));
+        assert!(prepared.final_command.contains("docker/.env"));
+    }
+
+    #[test]
+    fn orbstack_prepare_injects_env_file() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("orbstack")).unwrap();
+        fs::write(dir.path().join("orbstack/.env"), "PORT=8080\n").unwrap();
+
+        let app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_orbstack_command("run", "docker run --rm nginx")
+            .build();
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "docker run --rm nginx",
+            "orbstack",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert!(prepared.final_command.contains("--env-file"));
+        assert!(prepared.final_command.contains("orbstack/.env"));
+        assert_eq!(prepared.env_vars.get("DOCKER_CONTEXT"), Some(&"orbstack".to_string()));
     }
 }
