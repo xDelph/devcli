@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-29  
 **Branch:** `use-env-flow`  
-**Status:** In progress — Phase 0–1 complete  
+**Status:** In progress — Phase 2 complete  
 **Reference:** [workspace-crate-audit.md](../reports/workspace-crate-audit.md)
 
 ---
@@ -153,13 +153,15 @@ Reimplement as thin wrapper around `EnvFlow::from_file(path).load()` + empty→`
 - [x] Adapter tests: multiline, export, interpolation, empty→`XXX`, cascade helper
 - [x] `orbstack_stage_test.rs` still passes (9 tests)
 
-### Phase 2 — Local cascade in `prepare.rs` (highest value)
+### Phase 2 — Local cascade in `prepare.rs` ✅
 
 **Target:** local branch in `prepare.rs`
 
-When `environment == "local"` and no strict config map hit:
-- `env_flow_support::load_cascade(working_dir, stage, Local)` instead of single-file path
-- Strict config map → `EnvFlow::from_file(configured_path)` only
+**Done:**
+- [x] `load_local_runtime` in adapter (cascade vs strict config map)
+- [x] `prepare.rs` local path uses cascade when no config map
+- [x] Strict config map → single configured file only
+- [x] Integration tests in `prepare.rs` and `env_flow_support`
 
 ### Phase 3 — Docker / OrbStack
 
