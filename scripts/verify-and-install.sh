@@ -42,11 +42,37 @@ else
 fi
 
 STEP_TOTAL=0
+BOX_WIDTH=62
 declare -a STEP_NAMES=()
 declare -a STEP_STATUS=()
 declare -a STEP_DETAIL=()
 declare -a STEP_DURATION=()
 declare -a TESTED_CRATES=()
+
+strip_ansi() {
+  printf '%s' "$1" | sed $'s/\x1B\[[0-9;]*[[:alpha:]]//g'
+}
+
+# Print one summary box row: visible content is padded or truncated to BOX_WIDTH.
+box_row() {
+  local content="$1"
+  local visible len pad
+
+  visible="$(strip_ansi "$content")"
+  len=${#visible}
+  if (( len > BOX_WIDTH )); then
+    content="${visible:0:BOX_WIDTH}"
+    len=$BOX_WIDTH
+  fi
+  pad=$(( BOX_WIDTH - len ))
+  printf "${CYAN}║${RESET}%s%*s${CYAN}║${RESET}\n" "$content" "$pad" ""
+}
+
+box_rule() {
+  local left="$1"
+  local right="${2:-$1}"
+  echo -e "${CYAN}${left}$(printf '═%.0s' $(seq 1 "$BOX_WIDTH"))${right}${RESET}"
+}
 
 usage() {
   sed -n '3,12p' "$0" | sed 's/^# \?//'
@@ -107,19 +133,18 @@ crate_label() {
 }
 
 print_banner() {
-  local width=62
   local title="devcli · verify & install"
   local subtitle="RTK-powered per-crate checks + local install"
-  local pad_title=$(( (width - ${#title} - 2) / 2 ))
+  local pad_title=$(( (BOX_WIDTH - ${#title} - 2) / 2 ))
 
   echo
-  echo -e "${CYAN}╔$(printf '═%.0s' $(seq 1 "$width"))╗${RESET}"
+  box_rule "╔" "╗"
   printf "${CYAN}║${RESET}%*s${BOLD}${WHITE}%s${RESET}%*s${CYAN}║${RESET}\n" \
-    "$pad_title" "" "$title" "$(( width - pad_title - ${#title} ))" ""
-  local pad_sub=$(( (width - ${#subtitle} - 2) / 2 ))
+    "$pad_title" "" "$title" "$(( BOX_WIDTH - pad_title - ${#title} ))" ""
+  local pad_sub=$(( (BOX_WIDTH - ${#subtitle} - 2) / 2 ))
   printf "${CYAN}║${RESET}%*s${DIM}%s${RESET}%*s${CYAN}║${RESET}\n" \
-    "$pad_sub" "" "$subtitle" "$(( width - pad_sub - ${#subtitle} ))" ""
-  echo -e "${CYAN}╚$(printf '═%.0s' $(seq 1 "$width"))╝${RESET}"
+    "$pad_sub" "" "$subtitle" "$(( BOX_WIDTH - pad_sub - ${#subtitle} ))" ""
+  box_rule "╚" "╝"
   echo
 }
 
@@ -272,13 +297,13 @@ verify_all_crates_tested() {
 }
 
 print_summary() {
-  local width=62
   local all_ok=true
   local i
+  local max_path=$(( BOX_WIDTH - 13 ))
 
-  echo -e "${CYAN}╔$(printf '═%.0s' $(seq 1 "$width"))╗${RESET}"
-  printf "${CYAN}║${RESET}  ${BOLD}${WHITE}Summary${RESET}%*s${CYAN}║${RESET}\n" $(( width - 9 )) ""
-  echo -e "${CYAN}╠$(printf '═%.0s' $(seq 1 "$width"))╣${RESET}"
+  box_rule "╔" "╗"
+  box_row "  ${BOLD}${WHITE}Summary${RESET}"
+  box_rule "╠" "╣"
 
   for i in "${!STEP_NAMES[@]}"; do
     local label="${STEP_DETAIL[$i]}"
@@ -291,31 +316,29 @@ print_summary() {
       mark="✗"; color="$RED"; all_ok=false
     fi
 
-    printf "${CYAN}║${RESET} ${color}${mark}${RESET} %-44s ${DIM}%4ss${RESET} %*s${CYAN}║${RESET}\n" \
-      "$(printf '%.44s' "$label")" "$dur" $(( width - 54 )) ""
+    box_row " ${color}${mark}${RESET} $(printf '%.44s' "$label") ${DIM}$(printf '%4s' "$dur")s${RESET}"
   done
 
-  echo -e "${CYAN}╠$(printf '═%.0s' $(seq 1 "$width"))╣${RESET}"
+  box_rule "╠" "╣"
 
   if $RUN_TESTS && [[ ${#TESTED_CRATES[@]} -gt 0 ]]; then
-    printf "${CYAN}║${RESET}  ${DIM}Test coverage:${RESET} %d/%d workspace crates%*s${CYAN}║${RESET}\n" \
-      "${#TESTED_CRATES[@]}" "${#WORKSPACE_CRATES[@]}" $(( width - 38 )) ""
+    box_row "  ${DIM}Test coverage:${RESET} ${#TESTED_CRATES[@]}/${#WORKSPACE_CRATES[@]} workspace crates"
   fi
 
   if $all_ok; then
-    printf "${CYAN}║${RESET}  ${BG_GREEN}${WHITE}${BOLD} ALL CHECKS PASSED ${RESET}%*s${CYAN}║${RESET}\n" $(( width - 21 )) ""
+    box_row "  ${BG_GREEN}${WHITE}${BOLD} ALL CHECKS PASSED ${RESET}"
     if $RUN_INSTALL; then
       local devcli_bin pm_bin
       devcli_bin="$(command -v devcli 2>/dev/null || echo "${HOME}/.cargo/bin/devcli")"
       pm_bin="$(command -v pm-daemon 2>/dev/null || echo "${HOME}/.cargo/bin/pm-daemon")"
-      printf "${CYAN}║${RESET}  ${DIM}devcli${RESET}     %-44s${CYAN}║${RESET}\n" "$devcli_bin"
-      printf "${CYAN}║${RESET}  ${DIM}pm-daemon${RESET}  %-44s${CYAN}║${RESET}\n" "$pm_bin"
+      box_row "  ${DIM}devcli${RESET}     $(printf "%.${max_path}s" "$devcli_bin")"
+      box_row "  ${DIM}pm-daemon${RESET}  $(printf "%.${max_path}s" "$pm_bin")"
     fi
   else
-    printf "${CYAN}║${RESET}  ${BG_RED}${WHITE}${BOLD} SOME STEPS FAILED ${RESET}%*s${CYAN}║${RESET}\n" $(( width - 20 )) ""
+    box_row "  ${BG_RED}${WHITE}${BOLD} SOME STEPS FAILED ${RESET}"
   fi
 
-  echo -e "${CYAN}╚$(printf '═%.0s' $(seq 1 "$width"))╝${RESET}"
+  box_rule "╚" "╝"
   echo
 
   $all_ok
