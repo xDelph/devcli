@@ -212,6 +212,9 @@ fn spawn_output_handler<R>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{HealthCheck, RestartPolicy, Task};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
     use tokio::sync::mpsc;
 
     fn make_running_process(pid: u32) -> RunningProcess {
@@ -255,5 +258,27 @@ mod tests {
         let current_pid = std::process::id();
         let rp = make_running_process(current_pid);
         assert_eq!(rp.is_alive(), rp.is_alive());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_spawn_rejects_empty_command() {
+        let task = Task {
+            id: "empty-cmd".to_string(),
+            command: "   ".to_string(),
+            args: vec![],
+            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+            env: HashMap::new(),
+            is_detached: false,
+            log_file: None,
+            health_check: HealthCheck::Process {},
+            restart_policy: RestartPolicy::default(),
+        };
+
+        let err = spawn(&task).await.unwrap_err();
+        assert!(
+            err.to_string().contains("empty") || err.to_string().contains("Failed to parse"),
+            "unexpected error: {err}"
+        );
     }
 }

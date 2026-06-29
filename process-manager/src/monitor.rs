@@ -30,45 +30,55 @@ impl Monitor {
         tracing::info!("Starting process monitor loop");
 
         loop {
-            let processes = self.state.list()?;
-
-            if processes.is_empty() {
-                tracing::info!("No processes remaining, stopping monitor");
+            if !self.tick().await? {
                 break;
             }
-
-            for mut proc in processes {
-                let is_alive = self.state.is_running(&proc);
-
-                if !is_alive {
-                    tracing::warn!(id = %proc.id, "Process detected as dead");
-                    self.handle_failure(&mut proc, "crash".to_string()).await?;
-                    continue;
-                }
-
-                let health_passed = self.health_engine.check(&proc.task.health_check).await?;
-
-                if !health_passed {
-                    proc.runtime.health_failures += 1;
-                    proc.runtime.last_health_check = Some(Utc::now());
-                    self.state.save(&proc)?;
-
-                    if proc.runtime.health_failures >= 3 {
-                        tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
-                        self.handle_failure(&mut proc, "health_check".to_string())
-                            .await?;
-                    }
-                } else if proc.runtime.health_failures > 0 {
-                    proc.runtime.health_failures = 0;
-                    proc.runtime.last_health_check = Some(Utc::now());
-                    self.state.save(&proc)?;
-                }
-            }
-
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
 
         Ok(())
+    }
+
+    /// Run one monitor cycle over all managed processes.
+    ///
+    /// Returns `false` when the state store is empty and the monitor loop should stop.
+    pub async fn tick(&self) -> Result<bool> {
+        let processes = self.state.list()?;
+
+        if processes.is_empty() {
+            tracing::info!("No processes remaining, stopping monitor");
+            return Ok(false);
+        }
+
+        for mut proc in processes {
+            let is_alive = self.state.is_running(&proc);
+
+            if !is_alive {
+                tracing::warn!(id = %proc.id, "Process detected as dead");
+                self.handle_failure(&mut proc, "crash".to_string()).await?;
+                continue;
+            }
+
+            let health_passed = self.health_engine.check(&proc.task.health_check).await?;
+
+            if !health_passed {
+                proc.runtime.health_failures += 1;
+                proc.runtime.last_health_check = Some(Utc::now());
+                self.state.save(&proc)?;
+
+                if proc.runtime.health_failures >= 3 {
+                    tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
+                    self.handle_failure(&mut proc, "health_check".to_string())
+                        .await?;
+                }
+            } else if proc.runtime.health_failures > 0 {
+                proc.runtime.health_failures = 0;
+                proc.runtime.last_health_check = Some(Utc::now());
+                self.state.save(&proc)?;
+            }
+        }
+
+        Ok(true)
     }
 
     async fn handle_failure(

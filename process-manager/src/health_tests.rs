@@ -104,6 +104,113 @@ mod tests {
         assert!(!result);
     }
 
+    #[tokio::test]
+    async fn test_health_check_http_success_exact_status() {
+        let engine = HealthCheckEngine::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let check = HealthCheck::Http {
+            url: format!("http://{}/", addr),
+            timeout_secs: 2,
+            expected_status: 200,
+        };
+
+        let result = engine.check(&check).await.unwrap();
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_health_check_http_success_2xx_when_expecting_200() {
+        let engine = HealthCheckEngine::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let response = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let check = HealthCheck::Http {
+            url: format!("http://{}/", addr),
+            timeout_secs: 2,
+            expected_status: 200,
+        };
+
+        let result = engine.check(&check).await.unwrap();
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_health_check_http_wrong_status() {
+        let engine = HealthCheckEngine::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let check = HealthCheck::Http {
+            url: format!("http://{}/", addr),
+            timeout_secs: 2,
+            expected_status: 200,
+        };
+
+        let result = engine.check(&check).await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_health_check_tcp_success() {
+        let engine = HealthCheckEngine::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {}
+        });
+
+        let check = HealthCheck::Tcp {
+            host: "127.0.0.1".to_string(),
+            port,
+            timeout_secs: 2,
+        };
+
+        let result = engine.check(&check).await.unwrap();
+        assert!(result);
+    }
+
     #[test]
     fn test_health_check_engine_default() {
         let engine1 = HealthCheckEngine::new();

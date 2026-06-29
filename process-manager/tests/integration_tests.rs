@@ -67,6 +67,12 @@ async fn test_spawn_and_terminate_detached_process() {
     let task = sleep_task("spawn-terminate", 120, None);
     let running = engine::spawn(&task).await.expect("spawn sleep");
     assert!(running.is_alive());
+    assert!(running.pgid.is_some(), "detached spawn must set PGID");
+    assert_eq!(running.pgid, Some(running.pid as i32));
+    assert!(
+        running.child.is_none(),
+        "detached spawn must not retain Child handle"
+    );
 
     let terminated = engine::terminate(running.pid, running.pgid, true)
         .await
@@ -75,6 +81,94 @@ async fn test_spawn_and_terminate_detached_process() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!running.is_alive());
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_spawn_parses_quoted_shell_words() {
+    let task = Task {
+        id: "quoted-args".to_string(),
+        command: r#"echo "hello world""#.to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: false,
+        log_file: None,
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn echo");
+    assert!(running.is_alive());
+
+    let mut output = String::new();
+    if let Some(child) = running.child.as_mut() {
+        let _ = child.wait().await;
+    }
+
+    for _ in 0..20 {
+        while let Ok(msg) = running.output_rx.try_recv() {
+            output.push_str(&msg.content);
+        }
+        if output.contains("hello world") {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("expected quoted argument in output, got: {output:?}");
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_terminate_sigterm_before_force() {
+    let task = sleep_task("sigterm-target", 120, None);
+    let running = engine::spawn(&task).await.expect("spawn sleep");
+    assert!(running.is_alive());
+
+    let sent = engine::terminate(running.pid, running.pgid, false)
+        .await
+        .expect("SIGTERM");
+    assert!(sent);
+
+    for _ in 0..40 {
+        if !running.is_alive() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    panic!("process should exit after SIGTERM");
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_spawn_attached_process_keeps_child_handle() {
+    let task = Task {
+        id: "attached".to_string(),
+        command: "sleep 120".to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: false,
+        log_file: None,
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn attached sleep");
+    assert!(running.is_alive());
+    assert!(running.pgid.is_none(), "attached spawn must not set PGID");
+    assert!(running.child.is_some(), "attached spawn must retain Child handle");
+
+    drop(running.output_rx);
+    let _ = engine::terminate(running.pid, running.pgid, true).await;
 }
 
 #[tokio::test]
