@@ -4,15 +4,37 @@ use crate::Result;
 use env_flow::{EnvFlow, EnvVars, ResolvedLayer, RuntimeContext, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// One resolved env layer for display / introspection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerInfo {
+    pub relative_path: String,
+    pub exists: bool,
+}
 
 /// Loaded env vars plus a short summary for CLI output.
 pub struct EnvLoad {
     pub vars: HashMap<String, String>,
     pub summary: String,
+    pub layers: Vec<LayerInfo>,
+}
+
+/// Container `--env-file` target (may be a merged temp file).
+pub struct ContainerEnvFile {
+    pub path: PathBuf,
+    pub summary: String,
 }
 
 pub fn stage_from_opt(stage: Option<&str>) -> Option<Stage> {
     stage.map(Stage::from)
+}
+
+/// Config stage when set, otherwise auto-detect from process env (`APP_ENV`, `NODE_ENV`, …).
+pub fn effective_stage(stage: Option<&str>) -> Option<Stage> {
+    stage
+        .map(Stage::from)
+        .or_else(env_flow::context::detect_stage)
 }
 
 pub fn context_from_env(environment: &str) -> RuntimeContext {
@@ -32,6 +54,16 @@ fn env_vars_to_map(vars: EnvVars) -> HashMap<String, String> {
         .collect()
 }
 
+fn layer_infos(layers: &[ResolvedLayer]) -> Vec<LayerInfo> {
+    layers
+        .iter()
+        .map(|layer| LayerInfo {
+            relative_path: layer.relative_path.clone(),
+            exists: layer.exists,
+        })
+        .collect()
+}
+
 fn load_file(path: &Path) -> Result<HashMap<String, String>> {
     if !path.exists() {
         return Ok(HashMap::new());
@@ -41,53 +73,187 @@ fn load_file(path: &Path) -> Result<HashMap<String, String>> {
     Ok(env_vars_to_map(vars))
 }
 
-fn load_cascade(root: &Path, stage: Option<&str>, environment: &str) -> Result<HashMap<String, String>> {
-    let mut builder = EnvFlow::from_dir(root).context(context_from_env(environment));
+fn load_cascade_at_root(
+    root: &Path,
+    stage: Option<&str>,
+    environment: &str,
+) -> Result<(EnvVars, Vec<ResolvedLayer>)> {
+    let stage = effective_stage(stage);
+    let builder = EnvFlow::from_dir(root)
+        .stage_opt(stage)
+        .context(context_from_env(environment));
 
-    if let Some(stage) = stage_from_opt(stage) {
-        builder = builder.stage(stage);
-    }
-
+    let layers = builder.layers().map_err(map_error)?;
     let vars = builder.load().map_err(map_error)?;
-    Ok(env_vars_to_map(vars))
+    Ok((vars, layers))
 }
 
-/// Load env vars for local runtime (cascade or strict config-map file).
+fn load_runtime_cascade(
+    working_dir: &Path,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<(EnvVars, Vec<ResolvedLayer>)> {
+    let (mut vars, mut layers) = load_cascade_at_root(working_dir, stage, environment)?;
+
+    if let Some(parent) = dockerfile_parent_dir(working_dir, dockerfile_path)? {
+        let (parent_vars, parent_layers) = load_cascade_at_root(&parent, stage, environment)?;
+        vars.merge_from(parent_vars);
+        layers = merge_layer_lists(layers, parent_layers);
+    }
+
+    Ok((vars, layers))
+}
+
+fn merge_layer_lists(
+    mut base: Vec<ResolvedLayer>,
+    overlay: Vec<ResolvedLayer>,
+) -> Vec<ResolvedLayer> {
+    for layer in overlay {
+        if layer.exists
+            && !base
+                .iter()
+                .any(|existing| existing.relative_path == layer.relative_path)
+        {
+            base.push(layer);
+        }
+    }
+    base
+}
+
+fn existing_layers(layers: &[ResolvedLayer]) -> Vec<&ResolvedLayer> {
+    layers.iter().filter(|layer| layer.exists).collect()
+}
+
+/// Load env vars for local runtime (cascade, with optional config pin override).
 pub fn load_local_runtime(
     working_dir: &Path,
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
 ) -> Result<Option<EnvLoad>> {
-    if env_files_map.is_some() {
-        let Some(path) = resolve_config_env_path(env_files_map, stage, "local")? else {
+    let mut vars = HashMap::new();
+    let mut layers = Vec::new();
+    let mut summary = String::new();
+
+    if let Some(path) = resolve_config_env_path(env_files_map, stage, "local")? {
+        vars = load_file(&working_dir.join(&path))?;
+        summary = path;
+    } else {
+        let (cascade_vars, cascade_layers) =
+            load_runtime_cascade(working_dir, stage, "local", None)?;
+        let existing = existing_layers(&cascade_layers);
+        if existing.is_empty() {
             return Ok(None);
-        };
-        let vars = load_file(&working_dir.join(&path))?;
-        return Ok(Some(EnvLoad {
-            vars,
+        }
+        vars = env_vars_to_map(cascade_vars);
+        layers = layer_infos(&cascade_layers);
+        summary = cascade_summary(&existing);
+    }
+
+    if vars.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(EnvLoad {
+        vars,
+        summary,
+        layers,
+    }))
+}
+
+/// Load env vars for process injection (local, k8s, ci).
+pub fn load_process_runtime(
+    working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<EnvLoad>> {
+    if environment == "local" {
+        return load_local_runtime(working_dir, env_files_map, stage);
+    }
+
+    let mut vars = HashMap::new();
+    let mut layers = Vec::new();
+    let mut summary = String::new();
+
+    if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+        vars = load_file(&working_dir.join(&path))?;
+        summary = path;
+    } else {
+        let (cascade_vars, cascade_layers) =
+            load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
+        let existing = existing_layers(&cascade_layers);
+        if existing.is_empty() {
+            return Ok(None);
+        }
+        vars = env_vars_to_map(cascade_vars);
+        layers = layer_infos(&cascade_layers);
+        summary = cascade_summary(&existing);
+    }
+
+    if vars.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(EnvLoad {
+        vars,
+        summary,
+        layers,
+    }))
+}
+
+/// Prepare a container `--env-file` path (single file or merged cascade temp file).
+pub fn prepare_container_env_file(
+    working_dir: &Path,
+    env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<ContainerEnvFile>> {
+    if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+        return Ok(Some(ContainerEnvFile {
+            path: working_dir.join(&path),
             summary: path,
         }));
     }
 
-    let layers = EnvFlow::from_dir(working_dir)
-        .stage_opt(stage_from_opt(stage))
-        .context(RuntimeContext::Local)
-        .layers()
-        .map_err(map_error)?;
-
-    let existing: Vec<&ResolvedLayer> = layers.iter().filter(|layer| layer.exists).collect();
+    let (vars, layers) =
+        load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
+    let existing = existing_layers(&layers);
     if existing.is_empty() {
         return Ok(None);
     }
 
-    let vars = load_cascade(working_dir, stage, "local")?;
-    Ok(Some(EnvLoad {
-        vars,
-        summary: cascade_summary(&existing),
+    let summary = cascade_summary(&existing);
+
+    if existing.len() == 1 {
+        return Ok(Some(ContainerEnvFile {
+            path: existing[0].path.clone(),
+            summary: if summary.contains("cascade") {
+                existing[0].relative_path.clone()
+            } else {
+                summary
+            },
+        }));
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!("devcli-env-{stamp}.env"));
+    vars.write_dotenv(&temp_path).map_err(map_error)?;
+
+    Ok(Some(ContainerEnvFile {
+        path: temp_path,
+        summary,
     }))
 }
 
-/// Resolve the env file path for container runtimes (`--env-file`).
+/// Resolve the env file path for container runtimes (`--env-file`) — highest layer only.
+///
+/// Prefer [`prepare_container_env_file`] for runtime use appends cascade merge when needed.
 pub fn resolve_container_env_file_path(
     working_dir: &Path,
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
@@ -95,8 +261,8 @@ pub fn resolve_container_env_file_path(
     environment: &str,
     dockerfile_path: Option<&str>,
 ) -> Result<Option<String>> {
-    if env_files_map.is_some() {
-        return resolve_config_env_path(env_files_map, stage, environment);
+    if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+        return Ok(Some(path));
     }
 
     resolve_highest_layer_path(working_dir, stage, environment, dockerfile_path)
@@ -110,28 +276,56 @@ pub fn resolve_runtime_env_display(
     environment: &str,
     dockerfile_path: Option<&str>,
 ) -> Result<Option<String>> {
-    if env_files_map.is_some() {
-        return resolve_config_env_path(env_files_map, stage, environment);
+    if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+        return Ok(Some(path));
     }
 
-    if environment == "local" {
-        let layers = EnvFlow::from_dir(working_dir)
-            .stage_opt(stage_from_opt(stage))
-            .context(RuntimeContext::Local)
-            .layers()
-            .map_err(map_error)?;
-
-        let existing: Vec<&ResolvedLayer> =
-            layers.iter().filter(|layer| layer.exists).collect();
-
-        if existing.is_empty() {
-            return Ok(None);
-        }
-
-        return Ok(Some(cascade_summary(&existing)));
+    let layers = runtime_layers(working_dir, stage, environment, dockerfile_path)?;
+    let existing = existing_layers(&layers);
+    if existing.is_empty() {
+        return Ok(None);
     }
 
-    resolve_highest_layer_path(working_dir, stage, environment, dockerfile_path)
+    Ok(Some(format_env_display(&cascade_summary(&existing), &layer_infos(&layers))))
+}
+
+/// Layer plan for one runtime (includes non-existent layers).
+pub fn resolve_runtime_layers(
+    working_dir: &Path,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Vec<LayerInfo>> {
+    Ok(layer_infos(&runtime_layers(
+        working_dir,
+        stage,
+        environment,
+        dockerfile_path,
+    )?))
+}
+
+fn runtime_layers(
+    working_dir: &Path,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Result<Vec<ResolvedLayer>> {
+    let (_, layers) = load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
+    Ok(layers)
+}
+
+pub fn format_env_display(summary: &str, layers: &[LayerInfo]) -> String {
+    let loaded: Vec<_> = layers
+        .iter()
+        .filter(|layer| layer.exists)
+        .map(|layer| layer.relative_path.as_str())
+        .collect();
+
+    if loaded.len() <= 1 {
+        summary.to_string()
+    } else {
+        format!("{} [{}]", summary, loaded.join(", "))
+    }
 }
 
 fn resolve_config_env_path(
@@ -201,7 +395,7 @@ fn highest_layer_relative_path(
     context: &RuntimeContext,
 ) -> Result<Option<String>> {
     let layers = EnvFlow::from_dir(scan_root)
-        .stage_opt(stage_from_opt(stage))
+        .stage_opt(effective_stage(stage))
         .context(context.clone())
         .layers()
         .map_err(map_error)?;
@@ -288,16 +482,33 @@ line2"
         fs::write(dir.path().join(".env"), "PORT=3000\nDEBUG=false\n").unwrap();
         fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
 
-        let vars = load_cascade(dir.path(), None, "local").unwrap();
-        assert_eq!(vars.get("PORT"), Some(&"3000".to_string()));
-        assert_eq!(vars.get("DEBUG"), Some(&"true".to_string()));
+        let (vars, _) = load_runtime_cascade(dir.path(), None, "local", None).unwrap();
+        let map = env_vars_to_map(vars);
+        assert_eq!(map.get("PORT"), Some(&"3000".to_string()));
+        assert_eq!(map.get("DEBUG"), Some(&"true".to_string()));
     }
 
     #[test]
-    fn context_from_env_maps_orbstack() {
+    fn load_cascade_supports_reverse_local_env() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".local.env"), "DEBUG=true\n").unwrap();
+
+        let (vars, _) = load_runtime_cascade(dir.path(), None, "local", None).unwrap();
+        let map = env_vars_to_map(vars);
+        assert_eq!(map.get("DEBUG"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn context_from_env_maps_orbstack_ci_compose() {
         assert_eq!(context_from_env("orbstack"), RuntimeContext::OrbStack);
         assert_eq!(context_from_env("docker"), RuntimeContext::Docker);
         assert_eq!(context_from_env("local"), RuntimeContext::Local);
+        assert_eq!(context_from_env("ci"), RuntimeContext::CI);
+        assert_eq!(
+            context_from_env("docker-compose"),
+            RuntimeContext::DockerCompose
+        );
     }
 
     #[test]
@@ -318,7 +529,7 @@ line2"
     }
 
     #[test]
-    fn load_local_runtime_strict_config_map() {
+    fn load_local_runtime_config_pin() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("custom.env"), "FROM_CONFIG=1\n").unwrap();
 
@@ -336,15 +547,53 @@ line2"
     }
 
     #[test]
-    fn load_local_runtime_strict_config_map_no_match() {
+    fn load_local_runtime_config_map_no_match_falls_back_to_cascade() {
         let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
+
         let map = HashMap::from([(
             "dev".to_string(),
-            HashMap::from([("docker".to_string(), "x.env".to_string())]),
+            HashMap::from([("docker".to_string(), "missing.env".to_string())]),
         )]);
 
-        let loaded = load_local_runtime(dir.path(), Some(&map), Some("dev")).unwrap();
-        assert!(loaded.is_none());
+        let loaded = load_local_runtime(dir.path(), Some(&map), Some("dev"))
+            .unwrap()
+            .expect("expected cascade fallback");
+
+        assert_eq!(loaded.vars.get("DEBUG"), Some(&"true".to_string()));
+        assert_eq!(loaded.summary, "cascade (2 files)");
+    }
+
+    #[test]
+    fn prepare_container_env_file_merges_cascade_to_temp() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join("docker/.env"), "PORT=8080\n").unwrap();
+
+        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None)
+            .unwrap()
+            .expect("expected merged env file");
+
+        assert!(prepared.path.exists());
+        assert_eq!(prepared.summary, "cascade (2 files)");
+        let contents = fs::read_to_string(&prepared.path).unwrap();
+        assert!(contents.contains("PORT=8080"));
+    }
+
+    #[test]
+    fn prepare_container_env_file_single_layer_uses_disk_path() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join("docker/.env"), "PORT=8080\n").unwrap();
+
+        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None)
+            .unwrap()
+            .expect("expected docker env file");
+
+        assert_eq!(prepared.path, dir.path().join("docker/.env"));
+        assert_eq!(prepared.summary, "docker/.env");
     }
 
     #[test]
@@ -419,7 +668,7 @@ line2"
     }
 
     #[test]
-    fn resolve_runtime_env_display_local_cascade() {
+    fn resolve_runtime_env_display_local_cascade_with_layers() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join(".env"), "A=1\n").unwrap();
         fs::write(dir.path().join(".env.local"), "B=2\n").unwrap();
@@ -428,7 +677,7 @@ line2"
             .unwrap()
             .expect("expected display");
 
-        assert_eq!(display, "cascade (2 files)");
+        assert_eq!(display, "cascade (2 files) [.env, .env.local]");
     }
 
     #[test]
@@ -448,5 +697,19 @@ line2"
         .expect("expected docker display");
 
         assert_eq!(display, "docker/.env");
+    }
+
+    #[test]
+    fn load_process_runtime_ci_context() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "APP=1\n").unwrap();
+        fs::write(dir.path().join(".env.ci"), "CI=1\n").unwrap();
+
+        let loaded = load_process_runtime(dir.path(), None, None, "ci", None)
+            .unwrap()
+            .expect("expected ci load");
+
+        assert_eq!(loaded.vars.get("APP"), Some(&"1".to_string()));
+        assert_eq!(loaded.vars.get("CI"), Some(&"1".to_string()));
     }
 }

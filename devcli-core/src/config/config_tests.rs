@@ -144,6 +144,7 @@ mod tests {
             docker: None,
             orbstack: None,
             k8s: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&commands).unwrap();
@@ -196,6 +197,7 @@ mod tests {
             docker: None,
             orbstack: None,
             k8s: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&defaults).unwrap();

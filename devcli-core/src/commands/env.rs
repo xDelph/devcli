@@ -53,8 +53,13 @@ pub fn add_env_file(app_name: &str, stage: &str, context: &str, file_path: &str)
     // If context is docker or orbstack, also set the other one
     if context == "docker" {
         stage_map.insert("orbstack".to_string(), file_path.to_string());
+        stage_map.insert("docker-compose".to_string(), file_path.to_string());
     } else if context == "orbstack" {
         stage_map.insert("docker".to_string(), file_path.to_string());
+        stage_map.insert("docker-compose".to_string(), file_path.to_string());
+    } else if context == "docker-compose" {
+        stage_map.insert("docker".to_string(), file_path.to_string());
+        stage_map.insert("orbstack".to_string(), file_path.to_string());
     }
 
     save_config(&config)?;
@@ -201,11 +206,10 @@ pub fn set_default_stage(app_name: &str, context: &str, stage: &str) -> Result<(
         .expect("default_stages should be Some after initialization");
 
     // Set the default stage for the context
-    match context {
-        "local" | "docker" | "orbstack" | "k8s" => {
-            default_stages.insert(context.to_string(), stage.to_string());
-        }
-        _ => return Err(anyhow!("Unknown context: {}", context)),
+    if let Some(context) = crate::config::Environment::from_string(context) {
+        default_stages.insert(context.as_str().to_string(), stage.to_string());
+    } else {
+        return Err(anyhow!("Unknown context: {}", context));
     }
 
     save_config(&config)?;

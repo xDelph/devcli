@@ -404,6 +404,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 docker: detected.docker_commands.clone(),
                 orbstack: detected.orbstack_commands.clone(),
                 k8s: detected.k8s_commands.clone(),
+                ..Default::default()
             },
             dependencies: Vec::new(),
             defaults: Defaults {
@@ -414,6 +415,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                     .k8s_commands
                     .as_ref()
                     .and_then(|cmds| cmds.keys().next().cloned()),
+                ..Default::default()
             },
             dockerfile_path: detected.dockerfile_path.clone(),
             env_files,            // Interactive env files with user-selected environments
@@ -528,6 +530,7 @@ fn add_to_config(
             docker: detected.docker_commands,
             orbstack: detected.orbstack_commands,
             k8s: detected.k8s_commands.clone(),
+            ..Default::default()
         },
         dependencies: Vec::new(), // No dependencies detected automatically (user must add manually)
         defaults: Defaults {
@@ -538,6 +541,7 @@ fn add_to_config(
                 .k8s_commands
                 .as_ref()
                 .and_then(|cmds| cmds.keys().next().cloned()),
+            ..Default::default()
         },
         dockerfile_path: detected.dockerfile_path,
         env_files,            // Interactive env files with user-selected environments

@@ -62,6 +62,7 @@ mod validate_tests {
             docker: None,
             orbstack: None,
             k8s: None,
+            ..Default::default()
         };
 
         // Test that validation would detect this issue

@@ -9,13 +9,36 @@ pub struct PreparedCommand {
     pub env_vars: HashMap<String, String>,
 }
 
+fn uses_container_env_file(environment: &str) -> bool {
+    matches!(environment, "docker" | "orbstack" | "docker-compose")
+}
+
+fn apply_loaded_env_vars(
+    env_vars: &mut HashMap<String, String>,
+    loaded: &crate::env_flow_support::EnvLoad,
+    show_output: bool,
+) {
+    for (key, value) in &loaded.vars {
+        env_vars.insert(key.clone(), value.clone());
+    }
+
+    if show_output {
+        let display = if loaded.layers.is_empty() {
+            loaded.summary.clone()
+        } else {
+            crate::env_flow_support::format_env_display(&loaded.summary, &loaded.layers)
+        };
+        println!("  Using env file: {}", display);
+    }
+}
+
 /// Prepare command and environment variables based on the environment
 ///
 /// This shared function handles:
 /// 1. Injecting Docker/OrbStack specific flags (platform, context)
 /// 2. Resolving and applying environment files (.env)
-///    - For Docker/OrbStack: uses --env-file flag
-///    - For Local: cascade-loads env layers and injects into process environment
+///    - For Docker/OrbStack/Docker Compose: merged cascade via `--env-file`
+///    - For Local/K8s/CI: cascade-load env layers into process environment
 /// 3. Injecting Dockerfile path for build commands
 #[tracing::instrument(skip(resolved_app, working_dir, preferences), fields(environment = %environment, stage = ?stage))]
 pub fn prepare_command(
@@ -39,7 +62,7 @@ pub fn prepare_command(
 
     // Inject --platform flag for docker/orbstack commands
     let mut final_command = match environment {
-        "docker" | "orbstack" => {
+        "docker" | "orbstack" | "docker-compose" => {
             crate::utils::command::inject_docker_platform(command, &preferences.docker_platform)
         }
         _ => command.to_string(),
@@ -78,27 +101,42 @@ pub fn prepare_command(
                     crate::utils::command::inject_dockerfile_path(&final_command, dockerfile_path);
             }
         }
-        _ => {
-            // Local environment: cascade-load env layers (or strict config map file)
-            if let Some(loaded) = crate::env_flow_support::load_local_runtime(
+        "docker-compose" => {
+            apply_container_env_file(
+                &mut final_command,
+                working_dir,
+                resolved_app,
+                stage,
+                "docker-compose",
+                show_output,
+            )?;
+        }
+        "local" | "k8s" | "ci" => {
+            if let Some(loaded) = crate::env_flow_support::load_process_runtime(
                 working_dir,
                 resolved_app.app.env_files.as_ref(),
                 stage,
+                environment,
+                resolved_app.app.dockerfile_path.as_deref(),
             )? {
                 tracing::debug!(
                     env_summary = %loaded.summary,
-                    environment = "local",
+                    environment = %environment,
                     var_count = loaded.vars.len(),
                     "Loaded env vars"
                 );
-
-                for (key, value) in &loaded.vars {
-                    env_vars.insert(key.clone(), value.clone());
-                }
-
-                if show_output {
-                    println!("  Using env file: {}", loaded.summary);
-                }
+                apply_loaded_env_vars(&mut env_vars, &loaded, show_output);
+            }
+        }
+        _ => {
+            if let Some(loaded) = crate::env_flow_support::load_process_runtime(
+                working_dir,
+                resolved_app.app.env_files.as_ref(),
+                stage,
+                environment,
+                resolved_app.app.dockerfile_path.as_deref(),
+            )? {
+                apply_loaded_env_vars(&mut env_vars, &loaded, show_output);
             }
         }
     }
@@ -123,13 +161,24 @@ fn apply_container_env_file(
     environment: &str,
     show_output: bool,
 ) -> Result<()> {
-    if let Some(env_file_path) = crate::env_flow_support::resolve_container_env_file_path(
+    if !uses_container_env_file(environment) {
+        return Ok(());
+    }
+
+    if let Some(prepared) = crate::env_flow_support::prepare_container_env_file(
         working_dir,
         resolved_app.app.env_files.as_ref(),
         stage,
         environment,
         resolved_app.app.dockerfile_path.as_deref(),
     )? {
+        let env_file_path = prepared
+            .path
+            .strip_prefix(working_dir)
+            .ok()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| prepared.path.to_string_lossy().to_string());
+
         tracing::debug!(
             env_file = %env_file_path,
             environment = %environment,
@@ -140,7 +189,7 @@ fn apply_container_env_file(
             crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
 
         if show_output {
-            println!("  Using env file: {}", env_file_path);
+            println!("  Using env file: {}", prepared.summary);
         }
     }
 
@@ -187,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn local_prepare_strict_config_map_skips_cascade() {
+    fn local_prepare_config_pin_overrides_cascade() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
         fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
@@ -220,6 +269,72 @@ mod tests {
 
         assert_eq!(prepared.env_vars.get("PINNED"), Some(&"1".to_string()));
         assert_eq!(prepared.env_vars.get("DEBUG"), None);
+    }
+
+    #[test]
+    fn local_prepare_config_map_without_local_entry_still_cascades() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join(".env.local"), "DEBUG=true\n").unwrap();
+
+        let mut app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_local_command("start", "npm start")
+            .build();
+        app.env_files = Some(HashMap::from([(
+            "dev".to_string(),
+            HashMap::from([("docker".to_string(), "docker/.env".to_string())]),
+        )]));
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "npm start",
+            "local",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.env_vars.get("DEBUG"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn docker_prepare_injects_merged_env_file() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(dir.path().join("docker/.env"), "PORT=8080\n").unwrap();
+
+        let app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_docker_command("run", "docker run --rm nginx")
+            .with_dockerfile_path("docker/Dockerfile")
+            .build();
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "docker run --rm nginx",
+            "docker",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert!(prepared.final_command.contains("--env-file"));
     }
 
     #[test]
@@ -284,5 +399,41 @@ mod tests {
         assert!(prepared.final_command.contains("--env-file"));
         assert!(prepared.final_command.contains("orbstack/.env"));
         assert_eq!(prepared.env_vars.get("DOCKER_CONTEXT"), Some(&"orbstack".to_string()));
+    }
+
+    #[test]
+    fn k8s_prepare_cascades_env_layers() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "APP=1\n").unwrap();
+        fs::create_dir_all(dir.path().join("k8s")).unwrap();
+        fs::write(dir.path().join("k8s/.env"), "NS=prod\n").unwrap();
+
+        let mut app = AppBuilder::new("nodejs", dir.path().to_str().unwrap())
+            .with_local_command("start", "npm start")
+            .build();
+        app.commands.k8s = Some(HashMap::from([(
+            "apply".to_string(),
+            "kubectl apply -f k8s/".to_string(),
+        )]));
+
+        let resolved = ResolvedApp {
+            project: "test".to_string(),
+            app_name: "app".to_string(),
+            app,
+        };
+
+        let prepared = prepare_command(
+            "kubectl apply -f k8s/",
+            "k8s",
+            &resolved,
+            None,
+            dir.path(),
+            &PreferencesBuilder::new().build(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.env_vars.get("APP"), Some(&"1".to_string()));
+        assert_eq!(prepared.env_vars.get("NS"), Some(&"prod".to_string()));
     }
 }

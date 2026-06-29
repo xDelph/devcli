@@ -66,6 +66,7 @@ fn create_test_config() -> Config {
                 docker: None,
                 orbstack: None,
                 k8s: None,
+                ..Default::default()
             },
             dependencies: vec![],
             defaults: Defaults {
@@ -73,6 +74,7 @@ fn create_test_config() -> Config {
                 docker: None,
                 orbstack: None,
                 k8s: None,
+                ..Default::default()
             },
             dockerfile_path: None,
             env_files: None,

@@ -85,6 +85,7 @@ mod tests {
                         docker: None,
                         orbstack: None,
                         k8s: None,
+                        ..Default::default()
                     },
                     dependencies: Vec::new(),
                     defaults: Defaults {
@@ -92,6 +93,7 @@ mod tests {
                         docker: None,
                         orbstack: None,
                         k8s: None,
+                        ..Default::default()
                     },
                     dockerfile_path: None,
                     env_files: None,

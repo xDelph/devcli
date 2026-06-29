@@ -63,7 +63,9 @@ pub enum Environment {
     Local,
     Docker,
     OrbStack,
+    DockerCompose,
     K8s,
+    Ci,
 }
 
 impl Environment {
@@ -73,7 +75,9 @@ impl Environment {
             Environment::Local,
             Environment::Docker,
             Environment::OrbStack,
+            Environment::DockerCompose,
             Environment::K8s,
+            Environment::Ci,
         ]
     }
 
@@ -83,7 +87,9 @@ impl Environment {
             Environment::Local => "local",
             Environment::Docker => "docker",
             Environment::OrbStack => "orbstack",
+            Environment::DockerCompose => "docker-compose",
             Environment::K8s => "k8s",
+            Environment::Ci => "ci",
         }
     }
 
@@ -93,7 +99,9 @@ impl Environment {
             Environment::Local => "LOCAL",
             Environment::Docker => "DOCKER",
             Environment::OrbStack => "ORBSTACK",
+            Environment::DockerCompose => "COMPOSE",
             Environment::K8s => "K8S",
+            Environment::Ci => "CI",
         }
     }
 
@@ -103,7 +111,9 @@ impl Environment {
             "local" => Some(Environment::Local),
             "docker" => Some(Environment::Docker),
             "orbstack" => Some(Environment::OrbStack),
-            "k8s" => Some(Environment::K8s),
+            "docker-compose" | "compose" => Some(Environment::DockerCompose),
+            "k8s" | "kubernetes" => Some(Environment::K8s),
+            "ci" => Some(Environment::Ci),
             _ => None,
         }
     }
@@ -246,6 +256,14 @@ pub struct Commands {
     // OPTIONAL: Not all apps need k8s commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<HashMap<String, String>>,
+
+    // Docker Compose commands
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "docker-compose")]
+    pub docker_compose: Option<HashMap<String, String>>,
+
+    // CI pipeline commands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<HashMap<String, String>>,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -267,7 +285,9 @@ impl Commands {
             "local" => self.local.as_ref(),
             "docker" => self.docker.as_ref(),
             "orbstack" => self.orbstack.as_ref(),
-            "k8s" => self.k8s.as_ref(),
+            "k8s" | "kubernetes" => self.k8s.as_ref(),
+            "docker-compose" | "compose" => self.docker_compose.as_ref(),
+            "ci" => self.ci.as_ref(),
             _ => None,
         }
     }
@@ -278,7 +298,9 @@ impl Commands {
             "local" => self.local.as_mut(),
             "docker" => self.docker.as_mut(),
             "orbstack" => self.orbstack.as_mut(),
-            "k8s" => self.k8s.as_mut(),
+            "k8s" | "kubernetes" => self.k8s.as_mut(),
+            "docker-compose" | "compose" => self.docker_compose.as_mut(),
+            "ci" => self.ci.as_mut(),
             _ => None,
         }
     }
@@ -296,8 +318,14 @@ impl Commands {
         if self.orbstack.is_some() {
             envs.push("orbstack");
         }
+        if self.docker_compose.is_some() {
+            envs.push("docker-compose");
+        }
         if self.k8s.is_some() {
             envs.push("k8s");
+        }
+        if self.ci.is_some() {
+            envs.push("ci");
         }
         envs
     }
@@ -339,6 +367,12 @@ pub struct Defaults {
     // OPTIONAL: Only needed if app has k8s commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "docker-compose")]
+    pub docker_compose: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<String>,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -359,7 +393,9 @@ impl Defaults {
             "local" => self.local.as_ref(),
             "docker" => self.docker.as_ref(),
             "orbstack" => self.orbstack.as_ref(),
-            "k8s" => self.k8s.as_ref(),
+            "k8s" | "kubernetes" => self.k8s.as_ref(),
+            "docker-compose" | "compose" => self.docker_compose.as_ref(),
+            "ci" => self.ci.as_ref(),
             _ => None,
         }
     }
@@ -370,7 +406,9 @@ impl Defaults {
             "local" => &mut self.local,
             "docker" => &mut self.docker,
             "orbstack" => &mut self.orbstack,
-            "k8s" => &mut self.k8s,
+            "k8s" | "kubernetes" => &mut self.k8s,
+            "docker-compose" | "compose" => &mut self.docker_compose,
+            "ci" => &mut self.ci,
             _ => &mut self.local, // Fallback (shouldn't happen)
         }
     }

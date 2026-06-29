@@ -315,6 +315,7 @@ impl MainView {
                 },
                 orbstack: None,
                 k8s: None,
+                ..Default::default()
             },
             dependencies: Vec::new(),
             defaults: Defaults {
@@ -330,6 +331,7 @@ impl MainView {
                 },
                 orbstack: None,
                 k8s: None,
+                ..Default::default()
             },
             dockerfile_path: None,
             env_files: None, // No env files configured in TUI editor (will be added in future task)

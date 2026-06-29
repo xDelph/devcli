@@ -102,7 +102,8 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                     let mut env_files_shown = false;
 
                     // Check each environment that has commands configured
-                    for env in ["local", "docker", "orbstack", "k8s"] {
+                    for env in crate::config::Environment::all() {
+                        let env = env.as_str();
                         if app.commands.get(env).is_some() {
                             let env_file = crate::env_flow_support::resolve_runtime_env_display(
                                 app_path,
@@ -245,7 +246,8 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
         println!("\nEnvironment Files:");
         let mut found_any = false;
 
-        for env in ["local", "docker", "orbstack", "k8s"] {
+        for env in crate::config::Environment::all() {
+            let env = env.as_str();
             if resolved.app.commands.get(env).is_some() {
                 let env_file = crate::env_flow_support::resolve_runtime_env_display(
                     app_path,

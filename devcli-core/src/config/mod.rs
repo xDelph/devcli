@@ -17,5 +17,5 @@ mod config_tests;
 mod tests;
 
 pub use loader::{load_config, load_preferences, save_config, save_preferences};
-pub use models::{App, Commands, Config, Defaults, Dependency, Preferences, Project};
+pub use models::{App, Commands, Config, Defaults, Dependency, Environment, Preferences, Project};
 pub use resolver::{get_app_by_project, list_all_apps, resolve_app};

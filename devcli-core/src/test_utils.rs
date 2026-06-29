@@ -144,6 +144,7 @@ impl AppBuilder {
                 } else {
                     Some(self.k8s_commands)
                 },
+                ..Default::default()
             },
             dependencies: self.dependencies,
             defaults: Defaults {
@@ -151,6 +152,7 @@ impl AppBuilder {
                 docker: self.docker_default,
                 orbstack: self.orbstack_default,
                 k8s: self.k8s_default,
+                ..Default::default()
             },
             dockerfile_path: self.dockerfile_path,
             env_files: None,      // Test utils don't set env_files by default
