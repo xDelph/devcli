@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-29  
 **Branch:** `use-env-flow`  
-**Status:** In progress — Phase 3 complete  
+**Status:** In progress — Phase 4 complete  
 **Reference:** [workspace-crate-audit.md](../reports/workspace-crate-audit.md)
 
 ---
@@ -169,13 +169,14 @@ Reimplement as thin wrapper around `EnvFlow::from_file(path).load()` + empty→`
 
 **3b (optional):** cascade → temp merged `.env` → `--env-file`
 
-### Phase 4 — Consolidate runtime loaders
+### Phase 4 — Consolidate runtime loaders ✅
 
-Delegate `load_env_vars_for_runtime`, `resolve_env_file_path`, deprecate or wrap `find_env_file`.
-
-**Call sites:** `prepare.rs`, `config/list.rs`, `orbstack_stage_test.rs`
-
-**Keep unchanged:** `detect_env_files`, `build_env_files_map*`, `auto_add/*`, `commands/env.rs`, TUI
+**Done:**
+- [x] Moved `find_env_file`, `resolve_env_file_path`, `load_env_vars_for_runtime` into `env_flow_support`
+- [x] `env_files.rs` delegates runtime loaders to adapter (detection-only logic remains)
+- [x] Added `resolve_runtime_env_display` for per-environment display
+- [x] Updated `config/list.rs` to show environment-aware paths (cascade for local, context layers for docker/orbstack)
+- [x] Re-exported `find_dockerfile` from `detection` for adapter use
 
 ### Phase 5 — Dockerfile-nested root gap (partial ✅)
 
