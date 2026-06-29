@@ -156,9 +156,12 @@ mod tests {
         let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
         let monitor = monitor_for(Arc::clone(&store), temp_dir.path().to_path_buf());
 
+        let flag_path = temp_dir.path().join("health-recover-flag");
+        let flag_check = format!("test -f {}", flag_path.display());
+
         let mut task = sleep_task("health-recover", 120);
         task.health_check = HealthCheck::Command {
-            command: "test -f /tmp/process-manager-health-recover-flag".to_string(),
+            command: flag_check,
             timeout_secs: 1,
             expected_exit_code: 0,
         };
@@ -169,7 +172,7 @@ mod tests {
         let failing = store.load("health-recover").unwrap().unwrap();
         assert_eq!(failing.runtime.health_failures, 2);
 
-        std::fs::write("/tmp/process-manager-health-recover-flag", "ok").unwrap();
+        std::fs::write(&flag_path, "ok").unwrap();
         monitor.tick().await.unwrap();
 
         let recovered = store.load("health-recover").unwrap().unwrap();
@@ -178,7 +181,6 @@ mod tests {
 
         let _ = crate::engine::terminate(recovered.pid, recovered.pgid, true).await;
         store.delete("health-recover").unwrap();
-        let _ = std::fs::remove_file("/tmp/process-manager-health-recover-flag");
     }
 
     #[tokio::test]

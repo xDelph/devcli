@@ -61,6 +61,20 @@ async fn wait_for_log_content(path: &Path, needle: &str) {
     );
 }
 
+async fn wait_until_not_running(store: &StateStore, process: &ManagedProcess, timeout: Duration) {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while tokio::time::Instant::now() < deadline {
+        if !store.is_running(process) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!(
+        "process {} (pid {}) still reported as running after {:?}",
+        process.id, process.pid, timeout
+    );
+}
+
 #[tokio::test]
 #[cfg(unix)]
 async fn test_spawn_and_terminate_detached_process() {
@@ -134,7 +148,7 @@ async fn test_terminate_sigterm_before_force() {
         .expect("SIGTERM");
     assert!(sent);
 
-    for _ in 0..40 {
+    for _ in 0..80 {
         if !running.is_alive() {
             return;
         }
@@ -162,7 +176,7 @@ async fn test_spawn_attached_process_keeps_child_handle() {
         },
     };
 
-    let mut running = engine::spawn(&task).await.expect("spawn attached sleep");
+    let running = engine::spawn(&task).await.expect("spawn attached sleep");
     assert!(running.is_alive());
     assert!(running.pgid.is_none(), "attached spawn must not set PGID");
     assert!(running.child.is_some(), "attached spawn must retain Child handle");
@@ -260,8 +274,11 @@ async fn test_state_store_tracks_live_process() {
     let temp_dir = TempDir::new().unwrap();
     let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
 
-    let task = sleep_task("tracked-app", 120, None);
-    let running = engine::spawn(&task).await.expect("spawn");
+    // Attached spawn: no PGID, and we can reap the child so cleanup_dead does not
+    // see a zombie or a recycled PGID from another detached test process.
+    let mut task = sleep_task("tracked-app", 120, None);
+    task.is_detached = false;
+    let mut running = engine::spawn(&task).await.expect("spawn");
     let pid = running.pid;
     let pgid = running.pgid;
     drop(running.output_rx);
@@ -277,7 +294,13 @@ async fn test_state_store_tracks_live_process() {
     assert!(store.is_running(&loaded));
 
     let _ = engine::terminate(loaded.pid, loaded.pgid, true).await;
-    store.cleanup_dead().unwrap();
+    if let Some(mut child) = running.child.take() {
+        let _ = child.wait().await;
+    }
+    wait_until_not_running(&store, &loaded, Duration::from_secs(2)).await;
+
+    let cleaned = store.cleanup_dead().unwrap();
+    assert_eq!(cleaned, vec!["tracked-app".to_string()]);
     assert!(store.load("tracked-app").unwrap().is_none());
 }
 
