@@ -6,3 +6,5 @@ Cargo.lock
 /test-cli
 
 tui-debug.log
+.obsidian
+graphify-out
