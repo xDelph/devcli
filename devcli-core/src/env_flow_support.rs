@@ -131,13 +131,10 @@ pub fn load_local_runtime(
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
 ) -> Result<Option<EnvLoad>> {
-    let mut vars = HashMap::new();
-    let mut layers = Vec::new();
-    let mut summary = String::new();
-
-    if let Some(path) = resolve_config_env_path(env_files_map, stage, "local")? {
-        vars = load_file(&working_dir.join(&path))?;
-        summary = path;
+    let (vars, layers, summary) = if let Some(path) =
+        resolve_config_env_path(env_files_map, stage, "local")?
+    {
+        (load_file(&working_dir.join(&path))?, Vec::new(), path)
     } else {
         let (cascade_vars, cascade_layers) =
             load_runtime_cascade(working_dir, stage, "local", None)?;
@@ -145,10 +142,12 @@ pub fn load_local_runtime(
         if existing.is_empty() {
             return Ok(None);
         }
-        vars = env_vars_to_map(cascade_vars);
-        layers = layer_infos(&cascade_layers);
-        summary = cascade_summary(&existing);
-    }
+        (
+            env_vars_to_map(cascade_vars),
+            layer_infos(&cascade_layers),
+            cascade_summary(&existing),
+        )
+    };
 
     if vars.is_empty() {
         return Ok(None);
@@ -173,13 +172,10 @@ pub fn load_process_runtime(
         return load_local_runtime(working_dir, env_files_map, stage);
     }
 
-    let mut vars = HashMap::new();
-    let mut layers = Vec::new();
-    let mut summary = String::new();
-
-    if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
-        vars = load_file(&working_dir.join(&path))?;
-        summary = path;
+    let (vars, layers, summary) = if let Some(path) =
+        resolve_config_env_path(env_files_map, stage, environment)?
+    {
+        (load_file(&working_dir.join(&path))?, Vec::new(), path)
     } else {
         let (cascade_vars, cascade_layers) =
             load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
@@ -187,10 +183,12 @@ pub fn load_process_runtime(
         if existing.is_empty() {
             return Ok(None);
         }
-        vars = env_vars_to_map(cascade_vars);
-        layers = layer_infos(&cascade_layers);
-        summary = cascade_summary(&existing);
-    }
+        (
+            env_vars_to_map(cascade_vars),
+            layer_infos(&cascade_layers),
+            cascade_summary(&existing),
+        )
+    };
 
     if vars.is_empty() {
         return Ok(None);

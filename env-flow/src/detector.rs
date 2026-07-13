@@ -123,7 +123,7 @@ fn scan_dir(
 fn is_env_filename(filename: &str) -> bool {
     filename == ".env"
         || filename.starts_with(".env.")
-        || (filename.starts_with('.') && filename.ends_with(".env") && filename != ".env")
+        || (filename.starts_with('.') && filename.ends_with(".env"))
 }
 
 /// Classify a filename into stage / context / is_local.

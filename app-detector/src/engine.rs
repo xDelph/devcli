@@ -103,14 +103,14 @@ impl DetectionEngine {
         let context = DetectionContext::with_scope(path, scope.clone())?;
         let mut report = DetectionReport::new(context.root_path.clone());
 
-        tracing::info!(
+        tracing::debug!(
             path = %path.display(),
             depth = scope.depth,
             "Starting detection"
         );
 
         // Phase 1: Find and execute App Type strategies
-        tracing::info!(depth = scope.depth, "Phase 1: Detecting app types");
+        tracing::debug!(depth = scope.depth, "Phase 1: Detecting app types");
 
         let app_type_applicable = self.find_app_type_strategies(&context, config);
         tracing::debug!(count = app_type_applicable.len(), "Found applicable app type strategies");
@@ -121,7 +121,7 @@ impl DetectionEngine {
             self.execute_strategy(&strategy_id, &context, &mut report);
         }
 
-        tracing::info!(
+        tracing::debug!(
             detected = report.app_types().len(),
             "Phase 1 complete: {} app type(s) detected",
             report.app_types().len()
@@ -131,7 +131,7 @@ impl DetectionEngine {
         if config.enable_workspace_detection && scope.can_recurse(path) {
             let workspaces = self.extract_workspaces(&report);
             if !workspaces.is_empty() {
-                tracing::info!(
+                tracing::debug!(
                     workspace_count = workspaces.len(),
                     "Phase 1.5: Detecting {} workspace(s)",
                     workspaces.len()
@@ -140,7 +140,7 @@ impl DetectionEngine {
                 for child in children {
                     report.add_child(child);
                 }
-                tracing::info!(
+                tracing::debug!(
                     children = report.children.len(),
                     "Phase 1.5 complete: {} workspace(s) detected",
                     report.children.len()
@@ -150,7 +150,7 @@ impl DetectionEngine {
 
         // Phase 2: Find and execute Environment Capability strategies
         // Re-evaluate can_apply now that app types are detected
-        tracing::info!(depth = scope.depth, "Phase 2: Detecting environment capabilities");
+        tracing::debug!(depth = scope.depth, "Phase 2: Detecting environment capabilities");
 
         let env_applicable = self.find_env_capability_strategies(&context, config);
         tracing::debug!(count = env_applicable.len(), "Found applicable environment strategies");
@@ -161,13 +161,13 @@ impl DetectionEngine {
             self.execute_strategy(&strategy_id, &context, &mut report);
         }
 
-        tracing::info!(
+        tracing::debug!(
             detected = report.env_capabilities().len(),
             "Phase 2 complete: {} environment(s) detected",
             report.env_capabilities().len()
         );
 
-        tracing::info!(
+        tracing::debug!(
             total_results = report.results.len(),
             "Detection complete"
         );
@@ -236,7 +236,7 @@ impl DetectionEngine {
                 monorepo_root.to_path_buf(),
             );
 
-            tracing::info!(
+            tracing::debug!(
                 workspace = %workspace_name,
                 path = %workspace_path.display(),
                 "Detecting workspace"
@@ -375,7 +375,7 @@ impl DetectionEngine {
                         if let Some(conflict_strategy) = self.registry.get(conflict) {
                             if strategy.priority() < conflict_strategy.priority() {
                                 // Current strategy has higher priority (lower number) - remove conflict
-                                tracing::info!(
+                                tracing::debug!(
                                     kept = %id,
                                     removed = %conflict,
                                     "Conflict resolved: {} (priority {}) wins over {} (priority {})",
@@ -384,7 +384,7 @@ impl DetectionEngine {
                                 to_remove.insert(conflict.to_string());
                             } else {
                                 // Conflict strategy has higher priority - remove current
-                                tracing::info!(
+                                tracing::debug!(
                                     kept = %conflict,
                                     removed = %id,
                                     "Conflict resolved: {} (priority {}) wins over {} (priority {})",

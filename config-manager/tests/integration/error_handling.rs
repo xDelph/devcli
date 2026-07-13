@@ -1,7 +1,10 @@
 //! Integration tests for error handling scenarios.
 
 use config_manager::core::Error;
-use config_manager::loader::{ConfigLoader, EncryptedLoader, JsonLoader};
+use config_manager::loader::{ConfigLoader, JsonLoader};
+
+#[cfg(feature = "encryption")]
+use config_manager::loader::EncryptedLoader;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -37,6 +40,7 @@ fn test_invalid_json_parsing() {
     assert!(matches!(err, Error::LoadError(_)));
 }
 
+#[cfg(feature = "encryption")]
 #[test]
 fn test_encryption_wrong_password() {
     let temp_dir = TempDir::new().unwrap();
