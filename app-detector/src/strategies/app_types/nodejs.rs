@@ -54,7 +54,7 @@ impl DetectionStrategy for NodeJsStrategy {
         let version = detect_node_version();
 
         // Detect package manager (npm, yarn, pnpm, bun)
-        let package_manager = detect_package_manager(ctx);
+        let package_manager = crate::utils::package_manager::detect_node_package_manager(ctx);
 
         // Only track key configuration files, not all source files
         let key_files = vec!["package.json".into()];
@@ -111,18 +111,6 @@ fn detect_node_version() -> Option<String> {
         .ok()
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|s| s.trim().trim_start_matches('v').to_string())
-}
-
-fn detect_package_manager(ctx: &DetectionContext) -> String {
-    if ctx.file_exists("bun.lockb") {
-        "bun".to_string()
-    } else if ctx.file_exists("pnpm-lock.yaml") {
-        "pnpm".to_string()
-    } else if ctx.file_exists("yarn.lock") {
-        "yarn".to_string()
-    } else {
-        "npm".to_string() // Default
-    }
 }
 
 #[cfg(test)]
@@ -187,14 +175,19 @@ mod tests {
     #[test]
     fn test_package_manager_detection() {
         let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("package.json"), r#"{"name":"app"}"#).unwrap();
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
 
-        // Default to npm
-        assert_eq!(detect_package_manager(&ctx), "npm");
+        assert_eq!(
+            crate::utils::package_manager::detect_node_package_manager(&ctx),
+            "npm"
+        );
 
-        // Create yarn.lock
         fs::File::create(temp_dir.path().join("yarn.lock")).unwrap();
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
-        assert_eq!(detect_package_manager(&ctx), "yarn");
+        assert_eq!(
+            crate::utils::package_manager::detect_node_package_manager(&ctx),
+            "yarn"
+        );
     }
 }
