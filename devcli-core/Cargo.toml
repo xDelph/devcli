@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-appender = "0.2"
 process-manager = { path = "../process-manager" }
 env-flow = { path = "../env-flow" }
+app-detector = { path = "../app-detector" }
 shell-words = "1.1"
 
 [dev-dependencies]
