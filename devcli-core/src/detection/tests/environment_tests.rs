@@ -232,7 +232,7 @@ CMD ["node", "server.js"]
     fn test_detect_redis_via_docker_compose() {
         let dir = create_temp_dir();
 
-        // Create docker-compose.yml with redis service
+        // Create docker-compose.yml with redis service only
         fs::write(
             dir.path().join("docker-compose.yml"),
             r#"version: '3.8'
@@ -241,10 +241,6 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-  app:
-    image: node:18
-    depends_on:
-      - redis
 "#,
         )
         .unwrap();

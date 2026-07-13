@@ -12,6 +12,28 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct RedisStrategy;
 
+fn compose_redis_only(ctx: &DetectionContext) -> bool {
+    for compose_file in &["docker-compose.yml", "docker-compose.yaml", "compose.yml"] {
+        if !ctx.file_exists(compose_file) {
+            continue;
+        }
+        let Ok(content) = ctx.read_file(compose_file) else {
+            continue;
+        };
+        let lower = content.to_lowercase();
+        // Very lightweight heuristic: treat as "redis app" only if compose defines redis
+        // and does not contain other obvious services.
+        if (lower.contains("\n  redis:") || lower.contains("\nredis:") || lower.contains("image: redis"))
+            && !lower.contains("\n  app:")
+            && !lower.contains("\napp:")
+            && !lower.contains("build:")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 impl DetectionStrategy for RedisStrategy {
     fn id(&self) -> &str {
         "redis"
@@ -56,7 +78,8 @@ impl DetectionStrategy for RedisStrategy {
             }
         }
 
-        false
+        // If the project is "just a redis compose", treat it as a redis app.
+        compose_redis_only(ctx)
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
@@ -180,6 +203,19 @@ mod tests {
         // Should NOT apply: this project uses Redis but is not itself Redis
         assert!(!strategy.can_apply(&ctx),
             "Redis should not be detected just because docker-compose.yml references redis image");
+    }
+
+    #[test]
+    fn test_redis_detected_from_redis_only_compose() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let compose = temp_dir.path().join("docker-compose.yml");
+        let mut file = fs::File::create(&compose).unwrap();
+        file.write_all(b"services:\n  redis:\n    image: redis:7-alpine\n").unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let strategy = RedisStrategy;
+        assert!(strategy.can_apply(&ctx));
     }
 
     #[test]
