@@ -46,6 +46,9 @@ impl DetectionStrategy for KubernetesEnvStrategy {
             || ctx.file_exists("service.yml")
             || ctx.file_exists("ingress.yaml")
             || ctx.file_exists("ingress.yml")
+            // Suffix-style manifests (e.g. deployment.k8s.yaml)
+            || !ctx.glob("*.k8s.yaml").is_empty()
+            || !ctx.glob("*.k8s.yml").is_empty()
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
