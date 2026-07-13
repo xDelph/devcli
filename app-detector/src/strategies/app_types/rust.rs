@@ -7,24 +7,36 @@ use crate::{
     utils::workspace::{cargo_workspace_members, expand_workspace_members},
     Result,
 };
-use serde::Deserialize;
 use std::collections::HashMap;
 
 /// Detects Rust projects via Cargo.toml (single crate or workspace root)
 #[derive(Default)]
 pub struct RustStrategy;
 
-#[derive(Deserialize)]
-struct CargoToml {
-    package: Option<PackageInfo>,
+fn package_table(content: &str) -> Option<toml::Table> {
+    let value: toml::Value = toml::from_str(content).ok()?;
+    value.get("package")?.as_table().cloned()
 }
 
-#[derive(Deserialize)]
-struct PackageInfo {
-    name: String,
-    version: String,
-    #[serde(default)]
-    edition: Option<String>,
+fn package_name(content: &str) -> Option<String> {
+    package_table(content)?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn package_version(content: &str) -> Option<String> {
+    package_table(content)?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn package_edition(content: &str) -> Option<String> {
+    package_table(content)?
+        .get("edition")?
+        .as_str()
+        .map(str::to_string)
 }
 
 impl DetectionStrategy for RustStrategy {
@@ -70,11 +82,11 @@ fn detect_workspace(
     let workspaces: Vec<String> = workspace_info.iter().map(|w| w.path.clone()).collect();
 
     let mut metadata = HashMap::new();
-    if let Ok(cargo) = toml::from_str::<CargoToml>(content) {
-        if let Some(package) = cargo.package {
-            metadata.insert("package_name".to_string(), serde_json::json!(package.name));
-            metadata.insert("package_version".to_string(), serde_json::json!(package.version));
-        }
+    if let Some(name) = package_name(content) {
+        metadata.insert("package_name".to_string(), serde_json::json!(name));
+    }
+    if let Some(version) = package_version(content) {
+        metadata.insert("package_version".to_string(), serde_json::json!(version));
     }
     metadata.insert(
         "workspace_count".to_string(),
@@ -98,19 +110,18 @@ fn detect_workspace(
 }
 
 fn detect_crate(ctx: &DetectionContext, content: &str) -> Result<DetectionResult> {
-    let cargo_toml: CargoToml = toml::from_str(content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse Cargo.toml: {e}"))?;
-    let package = cargo_toml
-        .package
-        .ok_or_else(|| anyhow::anyhow!("Cargo.toml missing [package] section"))?;
+    let name = package_name(content)
+        .ok_or_else(|| anyhow::anyhow!("Cargo.toml missing [package].name"))?;
 
     let version = detect_rust_version();
     let rust_files = ctx.glob("**/*.rs");
 
     let mut metadata = HashMap::new();
-    metadata.insert("package_name".to_string(), serde_json::json!(package.name));
-    metadata.insert("package_version".to_string(), serde_json::json!(package.version));
-    if let Some(edition) = package.edition {
+    metadata.insert("package_name".to_string(), serde_json::json!(name));
+    if let Some(pkg_version) = package_version(content) {
+        metadata.insert("package_version".to_string(), serde_json::json!(pkg_version));
+    }
+    if let Some(edition) = package_edition(content) {
         metadata.insert("edition".to_string(), serde_json::json!(edition));
     }
     metadata.insert(

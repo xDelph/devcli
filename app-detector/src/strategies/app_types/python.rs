@@ -13,6 +13,20 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct PythonStrategy;
 
+fn has_project_python_sources(ctx: &DetectionContext) -> bool {
+    ctx.glob("**/*.py")
+        .into_iter()
+        .any(|path| !is_fixture_python_path(&path))
+}
+
+fn is_fixture_python_path(path: &std::path::Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    parts.first() == Some(&"tests") || parts.contains(&"fixtures")
+}
+
 impl DetectionStrategy for PythonStrategy {
     fn id(&self) -> &str {
         "python"
@@ -31,10 +45,15 @@ impl DetectionStrategy for PythonStrategy {
     }
 
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
+        // Cargo workspaces often keep Python fixtures under tests/ — don't trump Rust.
+        if ctx.file_exists("Cargo.toml") {
+            return false;
+        }
+
         ctx.file_exists("requirements.txt")
             || ctx.file_exists("pyproject.toml")
             || ctx.file_exists("setup.py")
-            || !ctx.glob("**/*.py").is_empty()
+            || has_project_python_sources(ctx)
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
