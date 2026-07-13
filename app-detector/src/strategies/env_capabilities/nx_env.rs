@@ -21,10 +21,54 @@ use crate::{
     Result,
 };
 use std::collections::{BTreeSet, HashMap};
+use std::process::Command;
 
 /// Generates Nx task-runner commands from workspace config files.
 #[derive(Default)]
 pub struct NxEnvStrategy;
+
+fn nx_show_project_targets(ctx: &DetectionContext) -> Option<Vec<String>> {
+    let crate::context::ScopeType::Workspace {
+        monorepo_root,
+        workspace_name,
+    } = &ctx.scope.scope_type
+    else {
+        return None;
+    };
+
+    for nx_cmd in ["npx", "nx"] {
+        let mut cmd = Command::new(nx_cmd);
+        if nx_cmd == "npx" {
+            cmd.arg("nx");
+        }
+
+        let output = cmd
+            .args(["show", "project", workspace_name, "--json"])
+            .current_dir(monorepo_root)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            continue;
+        }
+
+        let json_str = String::from_utf8(output.stdout).ok()?;
+        let project_config = serde_json::from_str::<serde_json::Value>(&json_str).ok()?;
+        let targets = project_config.get("targets")?.as_object()?;
+        let mut names: Vec<String> = targets.keys().cloned().collect();
+        names.sort();
+        return Some(names);
+    }
+
+    None
+}
+
+fn nx_run_prefix(ctx: &DetectionContext) -> &'static str {
+    let crate::context::ScopeType::Workspace { .. } = &ctx.scope.scope_type else {
+        return "nx";
+    };
+    "npx nx"
+}
 
 impl DetectionStrategy for NxEnvStrategy {
     fn id(&self) -> &str {
@@ -55,6 +99,17 @@ impl DetectionStrategy for NxEnvStrategy {
         let mut targets: BTreeSet<String> = BTreeSet::new();
         let mut metadata = HashMap::new();
 
+        let show_targets = nx_show_project_targets(ctx).unwrap_or_default();
+        if !show_targets.is_empty() {
+            for t in &show_targets {
+                targets.insert(t.clone());
+            }
+        }
+        metadata.insert(
+            "targets_from_show_project".to_string(),
+            serde_json::json!(show_targets.len()),
+        );
+
         // ── Source A: nx.json → targetDefaults ───────────────────────────────
         let from_defaults = collect_targets_from_nx_json(ctx, &mut targets);
         metadata.insert(
@@ -71,17 +126,25 @@ impl DetectionStrategy for NxEnvStrategy {
 
         // ── Build commands ────────────────────────────────────────────────────
         let sorted_targets: Vec<String> = targets.into_iter().collect(); // BTreeSet is already sorted
-        let mut commands: HashMap<String, String> = sorted_targets
-            .iter()
-            .map(|t| (t.clone(), format!("nx run-many --target={t}")))
-            .collect();
+        let nx_cmd = nx_run_prefix(ctx);
 
-        // Bonus: if any targets found, add an `affected` meta-command keyed per target
-        for target in &sorted_targets {
-            commands.insert(
-                format!("affected-{target}"),
-                format!("nx affected --target={target}"),
-            );
+        let mut commands: HashMap<String, String> = HashMap::new();
+
+        if let crate::context::ScopeType::Workspace { workspace_name, .. } = &ctx.scope.scope_type {
+            for t in &sorted_targets {
+                commands.insert(t.clone(), format!("{nx_cmd} run {workspace_name}:{t}"));
+            }
+        } else {
+            for t in &sorted_targets {
+                commands.insert(t.clone(), format!("nx run-many --target={t}"));
+            }
+            // Bonus: if any targets found, add an `affected` meta-command keyed per target
+            for target in &sorted_targets {
+                commands.insert(
+                    format!("affected-{target}"),
+                    format!("nx affected --target={target}"),
+                );
+            }
         }
 
         // Suggested default: prefer serve > dev > build > test > first alphabetically

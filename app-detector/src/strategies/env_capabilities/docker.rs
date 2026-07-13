@@ -12,6 +12,47 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct DockerStrategy;
 
+fn detected_app_type(ctx: &DetectionContext) -> Option<&'static str> {
+    if ctx.get_result("nx").is_some() {
+        return Some("nx");
+    }
+    if ctx.get_result("nodejs").is_some() {
+        return Some("nodejs");
+    }
+    if ctx.get_result("python").is_some() {
+        return Some("python");
+    }
+    if ctx.get_result("rust").is_some() {
+        return Some("rust");
+    }
+    if ctx.get_result("redis").is_some() {
+        return Some("redis");
+    }
+    if ctx.get_result("traefik").is_some() {
+        return Some("traefik");
+    }
+    None
+}
+
+fn app_name(ctx: &DetectionContext) -> String {
+    ctx.root_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("app")
+        .to_string()
+}
+
+fn run_port_mapping(app_type: Option<&str>) -> Option<String> {
+    match app_type {
+        Some("nodejs") | Some("nx") => Some("-p 3000:3000".to_string()),
+        Some("python") => Some("-p 8000:8000".to_string()),
+        Some("redis") => Some("-p 6379:6379".to_string()),
+        Some("traefik") => Some("-p 80:80 -p 443:443".to_string()),
+        _ => None,
+    }
+}
+
 impl DetectionStrategy for DockerStrategy {
     fn id(&self) -> &str {
         "docker"
@@ -102,7 +143,7 @@ impl DetectionStrategy for DockerStrategy {
             metadata.insert("has_compose".to_string(), serde_json::json!(true));
             suggested_default = Some("up".to_string());
         } else if !dockerfiles.is_empty() {
-            // Plain Docker commands
+            // Plain Docker commands (devcli-style: stable keys + app-name tags)
             let dockerfile_path = dockerfiles.first().unwrap().to_string_lossy();
             let dockerfile_flag = if dockerfile_path == "Dockerfile" {
                 String::new()
@@ -110,31 +151,41 @@ impl DetectionStrategy for DockerStrategy {
                 format!("-f {} ", dockerfile_path)
             };
 
-            // Generic build command
-            commands.insert("build".to_string(), format!("docker build {}-t app .", dockerfile_flag));
+            let app = app_name(ctx);
+            let app_type = detected_app_type(ctx);
 
-            // Stage-specific build commands
+            // Generic build command
+            commands.insert(
+                "build".to_string(),
+                format!("docker build {dockerfile_flag}-t {app} ."),
+            );
+
+            // Stage-specific build commands (use stage name as key)
             if !stages.is_empty() {
                 for stage in &stages {
-                    let stage_lower = stage.to_lowercase();
                     commands.insert(
-                        format!("build-{}", stage_lower),
-                        format!("docker build {}--target {} -t app:{} .", dockerfile_flag, stage, stage_lower)
+                        stage.clone(),
+                        format!("docker build {dockerfile_flag}--target {stage} -t {app}:{stage} ."),
                     );
+                    if stage.to_lowercase().contains("test") {
+                        commands.insert(
+                            format!("{stage}-run"),
+                            format!("docker run --rm {app}:{stage}"),
+                        );
+                    }
                 }
                 metadata.insert("has_stages".to_string(), serde_json::json!(true));
                 metadata.insert("stages".to_string(), serde_json::json!(stages));
             }
 
-            // Run commands
-            commands.insert("run".to_string(), "docker run app".to_string());
-            commands.insert("run-it".to_string(), "docker run -it app".to_string());
-
-            // Port-specific run commands
-            if !exposed_ports.is_empty() {
-                let port = exposed_ports[0];
-                commands.insert("run-port".to_string(), format!("docker run -p {}:{} app", port, port));
-            }
+            // Run / stop commands
+            let port = run_port_mapping(app_type);
+            let run = match port {
+                Some(p) => format!("docker run --name {app} --rm {p} {app}"),
+                None => format!("docker run --name {app} --rm {app}"),
+            };
+            commands.insert("run".to_string(), run);
+            commands.insert("stop".to_string(), format!("docker stop {app}"));
 
             metadata.insert("has_dockerfile".to_string(), serde_json::json!(true));
             suggested_default = Some("build".to_string());
@@ -348,20 +399,24 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
             DetectionData::DockerEnv(info) => {
                 // Should have generic build command
                 assert!(info.commands.contains_key("build"));
-                assert_eq!(info.commands.get("build"), Some(&"docker build -t app .".to_string()));
+                assert!(
+                    info.commands
+                        .get("build")
+                        .is_some_and(|cmd| cmd.starts_with("docker build -t ") && cmd.ends_with(" ."))
+                );
 
                 // Should have stage-specific build commands
-                assert!(info.commands.contains_key("build-builder"));
-                assert!(info.commands.contains_key("build-production"));
+                assert!(info.commands.contains_key("builder"));
+                assert!(info.commands.contains_key("production"));
 
-                assert_eq!(
-                    info.commands.get("build-builder"),
-                    Some(&"docker build --target builder -t app:builder .".to_string())
-                );
-                assert_eq!(
-                    info.commands.get("build-production"),
-                    Some(&"docker build --target production -t app:production .".to_string())
-                );
+                assert!(info
+                    .commands
+                    .get("builder")
+                    .is_some_and(|cmd| cmd.contains("--target builder") && cmd.contains(" -t ") && cmd.ends_with(" .")));
+                assert!(info
+                    .commands
+                    .get("production")
+                    .is_some_and(|cmd| cmd.contains("--target production") && cmd.contains(" -t ") && cmd.ends_with(" .")));
 
                 // Should have stage metadata
                 assert_eq!(info.metadata.get("has_stages"), Some(&serde_json::json!(true)));

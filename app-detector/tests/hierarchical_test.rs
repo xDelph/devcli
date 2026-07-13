@@ -134,12 +134,12 @@ fn test_workspace_web_has_multi_stage_docker_commands() {
             assert!(info.stages.contains(&"builder".to_string()), "Should detect 'builder' stage");
             assert!(info.stages.contains(&"production".to_string()), "Should detect 'production' stage");
             assert!(
-                info.commands.contains_key("build-builder"),
-                "Should have stage-specific build-builder command"
+                info.commands.contains_key("builder"),
+                "Should have stage-specific builder command"
             );
             assert!(
-                info.commands.contains_key("build-production"),
-                "Should have stage-specific build-production command"
+                info.commands.contains_key("production"),
+                "Should have stage-specific production command"
             );
         }
         _ => panic!("Expected DockerEnv data"),

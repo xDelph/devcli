@@ -13,6 +13,22 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct KubernetesEnvStrategy;
 
+fn k8s_base_path(manifests: &[PathBuf], commands: &HashMap<String, String>) -> Option<&'static str> {
+    if manifests
+        .iter()
+        .any(|m| m.starts_with("k8s/") || m.starts_with("k8s\\"))
+        || commands
+            .get("apply")
+            .is_some_and(|cmd| cmd.contains("-f k8s") || cmd.contains("-k k8s"))
+    {
+        return Some("k8s/");
+    }
+    if !manifests.is_empty() {
+        return Some(".");
+    }
+    None
+}
+
 impl DetectionStrategy for KubernetesEnvStrategy {
     fn id(&self) -> &str {
         "kubernetes-env"
@@ -119,10 +135,19 @@ impl DetectionStrategy for KubernetesEnvStrategy {
             commands.insert("apply".to_string(), "kubectl apply -f .".to_string());
         }
 
+        if let Some(base) = k8s_base_path(&manifests, &commands) {
+            if commands.contains_key("apply") {
+                commands.insert("apply".to_string(), format!("kubectl apply -f {base}"));
+                commands.insert("delete".to_string(), format!("kubectl delete -f {base}"));
+            }
+        }
+
         if !commands.is_empty() {
-            commands.insert("get".to_string(), "kubectl get all".to_string());
-            commands.insert("delete".to_string(), "kubectl delete -f .".to_string());
-            commands.insert("logs".to_string(), "kubectl logs".to_string());
+            commands.entry("get".to_string()).or_insert_with(|| "kubectl get all".to_string());
+            commands.entry("logs".to_string()).or_insert_with(|| "kubectl logs".to_string());
+            commands
+                .entry("restart".to_string())
+                .or_insert_with(|| "kubectl rollout restart deployment".to_string());
         }
 
         metadata.insert("manifest_count".to_string(), serde_json::json!(manifests.len()));

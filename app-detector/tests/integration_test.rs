@@ -338,17 +338,22 @@ fn test_detect_k8s_app_multi_environment() {
     }
     eprintln!("Metadata: {:?}", orbstack_data.metadata);
 
-    // They should have the same commands
+    // OrbStack should mirror Docker with `--context orbstack`.
     assert_eq!(
         docker_data.commands.len(),
         orbstack_data.commands.len(),
         "Docker and OrbStack should have the same number of commands"
     );
     for (key, docker_cmd) in &docker_data.commands {
+        let expected = if let Some(rest) = docker_cmd.strip_prefix("docker ") {
+            format!("docker --context orbstack {rest}")
+        } else {
+            docker_cmd.to_string()
+        };
         assert_eq!(
             orbstack_data.commands.get(key),
-            Some(docker_cmd),
-            "OrbStack should have the same '{}' command as Docker", key
+            Some(&expected),
+            "OrbStack should have the same '{}' command as Docker (with context)", key
         );
     }
 

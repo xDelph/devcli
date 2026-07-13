@@ -56,8 +56,19 @@ impl DetectionStrategy for OrbStackEnvStrategy {
             _ => return Err(anyhow::anyhow!("Expected DockerEnv data from docker strategy")),
         };
 
-        // OrbStack uses the exact same commands as Docker
-        // It's just a different runtime with better macOS integration
+        // OrbStack uses Docker commands with `--context orbstack`.
+        let docker_commands = docker_commands
+            .into_iter()
+            .map(|(k, v)| {
+                let updated = if let Some(rest) = v.strip_prefix("docker ") {
+                    format!("docker --context orbstack {rest}")
+                } else {
+                    v
+                };
+                (k, updated)
+            })
+            .collect();
+
         let mut metadata = docker_metadata;
         metadata.insert("orbstack_compatible".to_string(), serde_json::json!(true));
 
@@ -163,8 +174,8 @@ mod tests {
             DetectionData::OrbStackEnv(info) => {
                 // Should have stage-specific build commands from Docker
                 assert!(info.commands.contains_key("build"));
-                assert!(info.commands.contains_key("build-builder"));
-                assert!(info.commands.contains_key("build-production"));
+                assert!(info.commands.contains_key("builder"));
+                assert!(info.commands.contains_key("production"));
                 assert!(info.commands.contains_key("run"));
                 assert_eq!(
                     info.metadata.get("has_stages"),

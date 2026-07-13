@@ -167,8 +167,10 @@ fn test_rust_docker() {
             assert!(!info.stages.is_empty(), "Should detect stages");
             assert!(info.stages.contains(&"builder".to_string()), "Should detect 'builder' stage");
             assert!(info.commands.contains_key("build"), "Should have build command");
-            assert!(info.commands.contains_key("build-builder"),
-                "Should have stage-specific build-builder command");
+            assert!(
+                info.commands.contains_key("builder"),
+                "Should have stage-specific builder command"
+            );
         }
         _ => panic!("Expected DockerEnv"),
     }
