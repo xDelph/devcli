@@ -1,8 +1,7 @@
 //! Adapter between devcli-core and the `app-detector` crate.
 //!
 //! All detection orchestration goes through app-detector. devcli-specific command
-//! formatting (Docker port mappings, OrbStack `--context`, multi-stage keys) is
-//! applied here when converting `DetectionReport` → `DetectedApp`.
+//! selection is applied here when converting `DetectionReport` → `DetectedApp`.
 
 use crate::detection::{build_env_files_map, detect_env_files, DetectedApp};
 use crate::utils::path::contract_tilde;
@@ -64,9 +63,19 @@ pub fn build_detected_app(path: &Path, report: &DetectionReport) -> Result<Detec
     let app_type = resolve_app_type(report, path)?;
     let app_name = resolve_app_name(report, path, &app_type)?;
 
-    let local_commands = extract_local_commands(report);
-    let docker_commands = build_docker_commands(path, &app_type, report);
-    let orbstack_commands = build_orbstack_commands(path, &app_type, report);
+    let mut local_commands = extract_local_commands(report);
+    if app_type == "nx" {
+        if let Some(nx_env) = report.get("nx-env") {
+            if let DetectionData::NxEnv(info) = &nx_env.data {
+                if !info.commands.is_empty() {
+                    local_commands = Some(info.commands.clone());
+                }
+            }
+        }
+    }
+
+    let docker_commands = extract_docker_commands(report);
+    let orbstack_commands = extract_orbstack_commands(report);
     let k8s_commands = extract_k8s_commands(report);
 
     let suggested_local_default = suggest_local_default(&app_type, &local_commands);
@@ -110,14 +119,11 @@ pub fn resolve_app_type(report: &DetectionReport, path: &Path) -> Result<String>
     if report.has("traefik") {
         return Ok("traefik".to_string());
     }
-    if let Some(app_type) = compose_service_app_type(path) {
-        return Ok(app_type);
+    if report.has("rust") || path.join("Cargo.toml").exists() {
+        return Ok("rust".to_string());
     }
     if report.has("python") {
         return Ok("python".to_string());
-    }
-    if report.has("rust") {
-        return Ok("rust".to_string());
     }
 
     anyhow::bail!("No supported app type detected in {}", path.display())
@@ -126,11 +132,9 @@ pub fn resolve_app_type(report: &DetectionReport, path: &Path) -> Result<String>
 /// Extract app name from report metadata or config files.
 pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -> Result<String> {
     if let Some(name) = report.app_name() {
-        if app_type == "nodejs" || app_type == "nx" {
-            if name.contains('/') {
-                if let Some(short) = name.split('/').next_back() {
-                    return Ok(short.to_string());
-                }
+        if (app_type == "nodejs" || app_type == "nx") && name.contains('/') {
+            if let Some(short) = name.split('/').next_back() {
+                return Ok(short.to_string());
             }
         }
         return Ok(name);
@@ -166,8 +170,48 @@ pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -
 
     path.file_name()
         .and_then(|n| n.to_str())
+        .filter(|name| !name.is_empty() && *name != ".")
         .map(|s| s.to_string())
+        .or_else(|| directory_basename(path))
         .ok_or_else(|| anyhow::anyhow!("Could not extract app name from path"))
+}
+
+/// Best-effort directory name for app naming (`devcli-private` for `.` or relative paths).
+pub fn directory_basename(path: &Path) -> Option<String> {
+    path.canonicalize()
+        .ok()
+        .and_then(|canonical| canonical.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .or_else(|| {
+            std::env::current_dir().ok().and_then(|cwd| {
+                cwd.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+        })
+}
+
+/// Workspace member directory names when `path` is a Cargo workspace root.
+pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::HashSet<String>> {
+    let content = fs::read_to_string(path.join("Cargo.toml")).ok()?;
+    let members = app_detector::utils::workspace::cargo_workspace_members(&content)?;
+    if members.is_empty() {
+        return None;
+    }
+
+    let expanded =
+        app_detector::utils::workspace::expand_workspace_members(path, &members);
+    Some(
+        expanded
+            .into_iter()
+            .map(|member| {
+                member
+                    .path
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&member.path)
+                    .to_string()
+            })
+            .collect(),
+    )
 }
 
 /// Local commands from the `local-env` strategy result.
@@ -183,49 +227,26 @@ pub fn extract_local_commands(report: &DetectionReport) -> Option<HashMap<String
 pub fn extract_k8s_commands(report: &DetectionReport) -> Option<HashMap<String, String>> {
     let result = report.get("kubernetes-env")?;
     match &result.data {
-        DetectionData::KubernetesEnv(info) if !info.commands.is_empty() => {
-            let mut commands = info.commands.clone();
-            normalize_k8s_commands(&mut commands, &info.manifests);
-            Some(commands)
-        }
+        DetectionData::KubernetesEnv(info) if !info.commands.is_empty() => Some(info.commands.clone()),
         _ => None,
     }
 }
 
-fn normalize_k8s_commands(commands: &mut HashMap<String, String>, manifests: &[PathBuf]) {
-    let k8s_path = if manifests
-        .iter()
-        .any(|m| m.starts_with("k8s/") || m.starts_with("k8s\\"))
-    {
-        "k8s/"
-    } else if commands
-        .get("apply")
-        .is_some_and(|cmd| cmd.contains("-f k8s"))
-    {
-        "k8s/"
-    } else if !manifests.is_empty() {
-        "."
-    } else {
-        return;
-    };
+/// Docker commands from the `docker` strategy result.
+pub fn extract_docker_commands(report: &DetectionReport) -> Option<HashMap<String, String>> {
+    let result = report.get("docker")?;
+    match &result.data {
+        DetectionData::DockerEnv(info) if !info.commands.is_empty() => Some(info.commands.clone()),
+        _ => None,
+    }
+}
 
-    if commands.contains_key("apply") {
-        commands.insert(
-            "apply".to_string(),
-            format!("kubectl apply -f {k8s_path}"),
-        );
-    }
-    if commands.contains_key("delete") {
-        commands.insert(
-            "delete".to_string(),
-            format!("kubectl delete -f {k8s_path}"),
-        );
-    }
-    if !commands.contains_key("restart") {
-        commands.insert(
-            "restart".to_string(),
-            "kubectl rollout restart deployment".to_string(),
-        );
+/// OrbStack commands from the `orbstack-env` strategy result.
+pub fn extract_orbstack_commands(report: &DetectionReport) -> Option<HashMap<String, String>> {
+    let result = report.get("orbstack-env")?;
+    match &result.data {
+        DetectionData::OrbStackEnv(info) if !info.commands.is_empty() => Some(info.commands.clone()),
+        _ => None,
     }
 }
 
@@ -257,122 +278,6 @@ pub fn resolve_dockerfile_path(path: &Path, report: &DetectionReport) -> Option<
                 .ok()
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
         })
-}
-
-/// Build devcli Docker commands when app-detector detected Docker capability.
-pub fn build_docker_commands(
-    path: &Path,
-    app_type: &str,
-    report: &DetectionReport,
-) -> Option<HashMap<String, String>> {
-    if !report.has("docker") {
-        return None;
-    }
-
-    let dockerfile = find_dockerfile(path).ok().flatten()?;
-    let app_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("app");
-    let mut commands = HashMap::new();
-
-    for stage in dockerfile::parse_dockerfile(&dockerfile).unwrap_or_default() {
-        let stage_name = stage.name;
-        commands.insert(
-            stage_name.clone(),
-            format!(
-                "docker build --target {} -t {}:{} .",
-                stage_name, app_name, stage_name
-            ),
-        );
-        if stage_name.to_lowercase().contains("test") {
-            commands.insert(
-                format!("{stage_name}-run"),
-                format!("docker run --rm {}:{stage_name}", app_name),
-            );
-        }
-    }
-
-    commands.insert(
-        "build".to_string(),
-        format!("docker build -t {app_name} ."),
-    );
-
-    let run_cmd = match app_type {
-        "nodejs" | "nx" => format!(
-            "docker run --name {app_name} --rm -p 3000:3000 {app_name}"
-        ),
-        "python" => format!("docker run --name {app_name} --rm -p 8000:8000 {app_name}"),
-        "redis" => format!("docker run --name {app_name} --rm -p 6379:6379 {app_name}"),
-        "traefik" => format!(
-            "docker run --name {app_name} --rm -p 80:80 -p 443:443 {app_name}"
-        ),
-        _ => format!("docker run --name {app_name} --rm {app_name}"),
-    };
-    commands.insert("run".to_string(), run_cmd);
-    commands.insert("stop".to_string(), format!("docker stop {app_name}"));
-
-    Some(commands)
-}
-
-/// Build devcli OrbStack commands when app-detector detected OrbStack capability.
-pub fn build_orbstack_commands(
-    path: &Path,
-    app_type: &str,
-    report: &DetectionReport,
-) -> Option<HashMap<String, String>> {
-    if !report.has("orbstack-env") {
-        return None;
-    }
-
-    let dockerfile = find_dockerfile(path).ok().flatten()?;
-    let app_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("app");
-    let mut commands = HashMap::new();
-
-    for stage in dockerfile::parse_dockerfile(&dockerfile).unwrap_or_default() {
-        let stage_name = stage.name;
-        commands.insert(
-            stage_name.clone(),
-            format!(
-                "docker --context orbstack build --target {} -t {}:{} .",
-                stage_name, app_name, stage_name
-            ),
-        );
-        if stage_name.to_lowercase().contains("test") {
-            commands.insert(
-                format!("{stage_name}-run"),
-                format!(
-                    "docker --context orbstack run --rm {}:{stage_name}",
-                    app_name
-                ),
-            );
-        }
-    }
-
-    commands.insert(
-        "build".to_string(),
-        format!("docker --context orbstack build -t {app_name} ."),
-    );
-
-    let run_cmd = match app_type {
-        "nodejs" | "nx" => format!(
-            "docker --context orbstack run --name {app_name} --rm -p 3000:3000 {app_name}"
-        ),
-        "python" => format!(
-            "docker --context orbstack run --name {app_name} --rm -p 8000:8000 {app_name}"
-        ),
-        "redis" => format!(
-            "docker --context orbstack run --name {app_name} --rm -p 6379:6379 {app_name}"
-        ),
-        "traefik" => format!(
-            "docker --context orbstack run --name {app_name} --rm -p 80:80 -p 443:443 {app_name}"
-        ),
-        _ => format!("docker --context orbstack run --name {app_name} --rm {app_name}"),
-    };
-    commands.insert("run".to_string(), run_cmd);
-    commands.insert(
-        "stop".to_string(),
-        format!("docker --context orbstack stop {app_name}"),
-    );
-
-    Some(commands)
 }
 
 pub fn suggest_local_default(
@@ -420,6 +325,7 @@ pub fn suggest_orbstack_default(commands: &Option<HashMap<String, String>>) -> O
     }
 }
 
+/// Fallback Dockerfile lookup (used when a strategy didn't report dockerfiles).
 fn find_dockerfile(path: &Path) -> Result<Option<PathBuf>> {
     if path.join("Dockerfile").exists() {
         return Ok(Some(path.join("Dockerfile")));
@@ -450,58 +356,7 @@ fn find_dockerfile(path: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn compose_service_app_type(path: &Path) -> Option<String> {
-    for compose in ["docker-compose.yml", "docker-compose.yaml"] {
-        let compose_path = path.join(compose);
-        if !compose_path.exists() {
-            continue;
-        }
-        let content = fs::read_to_string(&compose_path).ok()?;
-        let lower = content.to_lowercase();
-        if lower.contains("redis:") || lower.contains("image: redis") {
-            return Some("redis".to_string());
-        }
-        if lower.contains("traefik") || lower.contains("image: traefik") {
-            return Some("traefik".to_string());
-        }
-    }
-    None
-}
-
-mod dockerfile {
-    use std::fs;
-    use std::path::Path;
-
-    pub struct DockerStage {
-        pub name: String,
-    }
-
-    pub fn parse_dockerfile(dockerfile_path: &Path) -> crate::Result<Vec<DockerStage>> {
-        let content = fs::read_to_string(dockerfile_path)?;
-        let mut stages = Vec::new();
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let line_upper = line.to_uppercase();
-            if line_upper.starts_with("FROM ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                for i in 0..parts.len() {
-                    if parts[i].to_uppercase() == "AS" && i + 1 < parts.len() {
-                        stages.push(DockerStage {
-                            name: parts[i + 1].to_string(),
-                        });
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(stages)
-    }
-}
+// Note: docker-compose heuristics live in app-detector strategies (redis/traefik).
 
 #[cfg(test)]
 mod tests {

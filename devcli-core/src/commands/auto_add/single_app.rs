@@ -25,6 +25,8 @@ pub async fn auto_add_command(path: Option<String>) -> Result<()> {
         env::current_dir()?
     };
 
+    let target_path = normalize_scan_root(&target_path);
+
     // Verify the path exists before proceeding
     if !target_path.exists() {
         anyhow::bail!("Path does not exist: {}", target_path.display());
@@ -124,22 +126,28 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
 pub fn discover_all_apps(
     root_path: &std::path::Path,
 ) -> Result<Vec<crate::detection::DetectedApp>> {
+    let root_path = normalize_scan_root(root_path);
     let mut discovered_apps = Vec::new();
+    let workspace_members =
+        crate::app_detector_support::cargo_workspace_member_dirs(&root_path);
 
     // Discover individual config files in the root directory
-    discovered_apps.extend(discover_individual_apps(root_path)?);
+    discovered_apps.extend(discover_individual_apps(&root_path)?);
 
     // Scan subdirectories for additional apps (1 level deep)
-    if let Ok(entries) = std::fs::read_dir(root_path) {
+    if let Ok(entries) = std::fs::read_dir(&root_path) {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
-                // Skip common non-app directories
                 let dir_name = entry.file_name();
                 let dir_name_str = dir_name.to_string_lossy();
-                if matches!(
-                    dir_name_str.as_ref(),
-                    "node_modules" | ".git" | "target" | "dist" | "build" | ".next" | "coverage"
-                ) {
+                if should_skip_scan_dir(&dir_name_str) {
+                    continue;
+                }
+
+                if workspace_members
+                    .as_ref()
+                    .is_some_and(|members| members.contains(dir_name_str.as_ref()))
+                {
                     continue;
                 }
 
@@ -150,6 +158,30 @@ pub fn discover_all_apps(
     }
 
     Ok(discovered_apps)
+}
+
+fn normalize_scan_root(path: &std::path::Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn should_skip_scan_dir(dir_name: &str) -> bool {
+    matches!(
+        dir_name,
+        "node_modules"
+            | ".git"
+            | "target"
+            | "dist"
+            | "build"
+            | ".next"
+            | "coverage"
+            | ".cursor"
+            | ".github"
+            | ".obsidian"
+            | ".kiro"
+            | "docs"
+            | "scripts"
+            | "reports"
+    )
 }
 
 // Discover individual config files as separate apps in a single directory
@@ -572,3 +604,7 @@ fn add_to_config(
 #[cfg(test)]
 #[path = "single_app_test.rs"]
 mod single_app_test;
+
+#[cfg(test)]
+#[path = "workspace_discovery_test.rs"]
+mod workspace_discovery_test;
