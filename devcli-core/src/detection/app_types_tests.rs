@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::detection::app_types::{detect_app_type, extract_app_name};
+    use crate::detection::{detect_app_type, extract_app_name};
     use std::fs;
     use tempfile::TempDir;
 

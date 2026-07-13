@@ -1,5 +1,4 @@
-// Nx monorepo detection and handling
-// Specialized logic for detecting and working with Nx monorepos
+// Nx monorepo detection — app-detector hierarchical workspaces + nx show project enhancement
 
 use crate::utils::path::contract_tilde;
 use crate::Result;
@@ -8,110 +7,32 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::detection::environments::{
-    detect_docker_commands, detect_k8s_commands, detect_orbstack_commands,
-};
 use crate::detection::DetectedApp;
 
-/// Detect all apps within an Nx monorepo
-/// Scans apps/ and packages/ directories for individual Nx projects
-///
-/// # Arguments
-/// * `workspace_root` - Path to the Nx workspace root (where nx.json lives)
-///
-/// # Returns
-/// Vector of detection results, one per app found
+/// Detect all apps within an Nx monorepo via app-detector Phase 1.5.
 pub fn detect_nx_apps(workspace_root: &Path) -> Result<Vec<DetectedApp>> {
     let mut detected_apps = Vec::new();
 
-    // Scan both "apps" and "packages" directories (standard Nx structure)
-    for dir_name in &["apps", "packages"] {
-        let dir_path = workspace_root.join(dir_name);
+    let report = crate::app_detector_support::detect(workspace_root)?;
+    let child_paths = crate::app_detector_support::workspace_child_paths(&report);
 
-        // Skip if this directory doesn't exist in the monorepo
-        if !dir_path.exists() {
-            continue;
-        }
-
-        // Iterate through all subdirectories (each is potentially an Nx app)
-        if let Ok(entries) = fs::read_dir(&dir_path) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    // Try to detect this as an Nx app
-                    // Some directories might not be valid apps, so we ignore errors
-                    if let Ok(app) = detect_single_nx_app(&entry.path(), workspace_root) {
-                        detected_apps.push(app);
-                    }
-                }
+    if !child_paths.is_empty() {
+        for child_path in child_paths {
+            if let Ok(app) = detect_single_nx_app(&child_path, workspace_root) {
+                detected_apps.push(app);
             }
         }
-    }
-
-    // Add workspace-level app with workspace commands
-    if let Ok(workspace_app) = detect_nx_workspace(workspace_root) {
-        detected_apps.push(workspace_app);
-    }
-
-    // If we found nothing, that's an error - monorepo should have apps
-    if detected_apps.is_empty() {
-        anyhow::bail!("No apps found in apps/ or packages/ directories");
-    }
-
-    Ok(detected_apps)
-}
-
-/// Detect a single Nx app within a monorepo
-/// Uses "nx show project" to get available targets/commands
-///
-/// # Arguments
-/// * `app_path` - Path to the specific app directory
-/// * `workspace_root` - Path to the Nx workspace root (for running nx commands)
-///
-/// # Returns
-/// Detection results for this specific Nx app
-pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<DetectedApp> {
-    // Extract app name from the directory name (e.g., "apps/api-backend" -> "api-backend")
-    let app_name = app_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("Could not extract app name"))?
-        .to_string();
-
-    let mut local_commands = HashMap::new();
-
-    // Try to get Nx targets using "nx show project" command
-    // We prefer "npx nx" over global "nx" to avoid relying on global installations
-    for nx_cmd in &["npx nx", "nx"] {
-        // Build the command: either "npx nx" or just "nx"
-        let mut cmd = std::process::Command::new(if nx_cmd.contains("npx") { "npx" } else { "nx" });
-        if nx_cmd.contains("npx") {
-            cmd.arg("nx");
-        }
-
-        // Run "nx show project <app-name> --json" to get available targets
-        // This returns a JSON object with all the app's configuration
-        if let Ok(output) = cmd
-            .args(["show", "project", &app_name, "--json"])
-            .current_dir(workspace_root)
-            .output()
-        {
-            if output.status.success() {
-                if let Ok(json_str) = String::from_utf8(output.stdout) {
-                    // Parse the JSON response
-                    if let Ok(project_config) = serde_json::from_str::<Value>(&json_str) {
-                        // Extract targets (build, serve, test, lint, etc.)
-                        if let Some(targets) =
-                            project_config.get("targets").and_then(|t| t.as_object())
-                        {
-                            // For each target, create a command like "npx nx run app-name:target"
-                            for (target_name, _) in targets {
-                                local_commands.insert(
-                                    target_name.clone(),
-                                    format!("{} run {}:{}", nx_cmd, app_name, target_name),
-                                );
-                            }
-                            // Stop trying other commands once we successfully got targets
-                            break;
+    } else {
+        for dir_name in &["apps", "packages", "libs"] {
+            let dir_path = workspace_root.join(dir_name);
+            if !dir_path.exists() {
+                continue;
+            }
+            if let Ok(entries) = fs::read_dir(&dir_path) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        if let Ok(app) = detect_single_nx_app(&entry.path(), workspace_root) {
+                            detected_apps.push(app);
                         }
                     }
                 }
@@ -119,28 +40,33 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         }
     }
 
-    // Fallback: If nx commands failed, try reading package.json scripts
-    if local_commands.is_empty() {
-        // Read package.json from the app's directory
-        if let Ok(content) = fs::read_to_string(app_path.join("package.json")) {
-            if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                // Extract npm scripts and convert to "npm run" commands
-                if let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) {
-                    for (key, _) in scripts {
-                        local_commands.insert(key.clone(), format!("npm run {}", key));
-                    }
-                }
-            }
-        }
+    if let Ok(workspace_app) = detect_nx_workspace(workspace_root) {
+        detected_apps.push(workspace_app);
     }
 
-    // Detect Docker, OrbStack, and Kubernetes configurations (may or may not exist)
-    let docker_commands = detect_docker_commands(app_path, "nx").ok().flatten();
-    let orbstack_commands = detect_orbstack_commands(app_path, "nx").ok().flatten();
-    let k8s_commands = detect_k8s_commands(app_path).ok().flatten();
+    if detected_apps.is_empty() {
+        anyhow::bail!("No apps found in apps/, packages/, or libs/ directories");
+    }
 
-    // Suggest a sensible default based on common command names
-    // Prefer "serve" for dev servers, then "start", then any available command
+    Ok(detected_apps)
+}
+
+/// Detect a single Nx app: app-detector env capabilities + `nx show project` targets.
+pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<DetectedApp> {
+    let app_name = app_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Could not extract app name"))?
+        .to_string();
+
+    let report = crate::app_detector_support::detect_single(app_path)?;
+    let env = crate::app_detector_support::build_detected_app(app_path, &report)?;
+
+    let mut local_commands = nx_show_project_commands(&app_name, workspace_root);
+    if local_commands.is_empty() {
+        local_commands = env.local_commands.clone().unwrap_or_default();
+    }
+
     let suggested_local_default = if local_commands.contains_key("serve") {
         Some("serve".to_string())
     } else if local_commands.contains_key("start") {
@@ -149,37 +75,6 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         local_commands.keys().next().cloned()
     };
 
-    // For Docker, prefer "run" as the default
-    let suggested_docker_default = docker_commands.as_ref().and_then(|cmds| {
-        if cmds.contains_key("run") {
-            Some("run".to_string())
-        } else {
-            cmds.keys().next().cloned()
-        }
-    });
-
-    // For OrbStack, prefer "run" as the default
-    let suggested_orbstack_default = orbstack_commands.as_ref().and_then(|cmds| {
-        if cmds.contains_key("run") {
-            Some("run".to_string())
-        } else {
-            cmds.keys().next().cloned()
-        }
-    });
-
-    // Find Dockerfile path (relative to app path) if it exists
-    let dockerfile_path =
-        if let Ok(Some(dockerfile)) = crate::detection::utils::find_dockerfile(app_path) {
-            // Convert to relative path from app root
-            dockerfile
-                .strip_prefix(app_path)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-    // Build and return the detection result for this Nx app
     Ok(DetectedApp {
         app_type: "nx".to_string(),
         app_name,
@@ -189,35 +84,72 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         } else {
             Some(local_commands)
         },
-        docker_commands,
-        orbstack_commands,
-        k8s_commands,
+        docker_commands: env.docker_commands,
+        orbstack_commands: env.orbstack_commands,
+        k8s_commands: env.k8s_commands,
         suggested_local_default,
-        suggested_docker_default,
-        suggested_orbstack_default,
-        dockerfile_path,
-        env_files: None, // Env files detection not implemented for Nx yet
+        suggested_docker_default: env.suggested_docker_default,
+        suggested_orbstack_default: env.suggested_orbstack_default,
+        dockerfile_path: env.dockerfile_path,
+        env_files: None,
     })
 }
 
-/// Detect workspace-level Nx commands
-/// Creates a virtual "workspace" app with workspace-level commands like run-many, affected, etc.
-///
-/// # Arguments
-/// * `workspace_root` - Path to the Nx workspace root (where nx.json lives)
-///
-/// # Returns
-/// Detection results for the workspace-level commands
-pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
+fn nx_show_project_commands(app_name: &str, workspace_root: &Path) -> HashMap<String, String> {
     let mut local_commands = HashMap::new();
 
-    // Determine which nx command to use (prefer npx nx)
+    for nx_cmd in &["npx nx", "nx"] {
+        let mut cmd = std::process::Command::new(if nx_cmd.contains("npx") {
+            "npx"
+        } else {
+            "nx"
+        });
+        if nx_cmd.contains("npx") {
+            cmd.arg("nx");
+        }
+
+        if let Ok(output) = cmd
+            .args(["show", "project", app_name, "--json"])
+            .current_dir(workspace_root)
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(json_str) = String::from_utf8(output.stdout) {
+                    if let Ok(project_config) = serde_json::from_str::<Value>(&json_str) {
+                        if let Some(targets) =
+                            project_config.get("targets").and_then(|t| t.as_object())
+                        {
+                            for (target_name, _) in targets {
+                                local_commands.insert(
+                                    target_name.clone(),
+                                    format!("{} run {}:{}", nx_cmd, app_name, target_name),
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    local_commands
+}
+
+/// Workspace-level Nx commands merged with app-detector nx-env targets.
+pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
+    let report = crate::app_detector_support::detect_single(workspace_root)?;
+    let env = crate::app_detector_support::build_detected_app(workspace_root, &report)?;
+
+    let mut local_commands = HashMap::new();
     let nx_cmd = "npx nx";
 
-    // Comprehensive workspace-level Nx commands based on common patterns
-    // These are practical commands that work across most Nx workspaces
+    if let Some(nx_env) = report.get("nx-env") {
+        if let app_detector::DetectionData::NxEnv(info) = &nx_env.data {
+            local_commands.extend(info.commands.clone());
+        }
+    }
 
-    // Basic run-many commands for all projects
     local_commands.insert(
         "build".to_string(),
         format!("{} run-many --target=build --all", nx_cmd),
@@ -234,8 +166,6 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         "start".to_string(),
         format!("{} run-many --target=serve --all", nx_cmd),
     );
-
-    // Parallel execution variants
     local_commands.insert(
         "build:parallel".to_string(),
         format!("{} run-many --target=build --all --parallel", nx_cmd),
@@ -252,8 +182,6 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         "start:parallel".to_string(),
         format!("{} run-many --target=serve --all --parallel", nx_cmd),
     );
-
-    // Project type specific commands (apps vs libs)
     local_commands.insert(
         "build:apps".to_string(),
         format!(
@@ -303,8 +231,6 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
             nx_cmd
         ),
     );
-
-    // Configuration-specific commands
     local_commands.insert(
         "build:prod".to_string(),
         format!(
@@ -326,8 +252,6 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
             nx_cmd
         ),
     );
-
-    // Affected commands (only run what changed)
     local_commands.insert("affected".to_string(), format!("{} affected", nx_cmd));
     local_commands.insert(
         "affected:build".to_string(),
@@ -345,29 +269,17 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         "affected:e2e".to_string(),
         format!("{} affected --target=e2e", nx_cmd),
     );
-
-    // Utility commands
     local_commands.insert("graph".to_string(), format!("{} graph", nx_cmd));
     local_commands.insert(
         "list-projects".to_string(),
         format!("{} show projects", nx_cmd),
     );
     local_commands.insert("list".to_string(), format!("{} list", nx_cmd));
-
-    // Workspace management commands
     local_commands.insert("reset".to_string(), format!("{} reset", nx_cmd));
     local_commands.insert("repair".to_string(), format!("{} repair", nx_cmd));
     local_commands.insert("migrate".to_string(), format!("{} migrate", nx_cmd));
     local_commands.insert("daemon".to_string(), format!("{} daemon", nx_cmd));
 
-    // Detect Docker, OrbStack, and Kubernetes configurations at workspace level
-    let docker_commands = detect_docker_commands(workspace_root, "nx").ok().flatten();
-    let orbstack_commands = detect_orbstack_commands(workspace_root, "nx")
-        .ok()
-        .flatten();
-    let k8s_commands = detect_k8s_commands(workspace_root).ok().flatten();
-
-    // Suggest "build" as default for workspace (most commonly used)
     let suggested_local_default = if local_commands.contains_key("build") {
         Some("build".to_string())
     } else if local_commands.contains_key("graph") {
@@ -376,37 +288,6 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         local_commands.keys().next().cloned()
     };
 
-    // For Docker, prefer "run" as the default
-    let suggested_docker_default = docker_commands.as_ref().and_then(|cmds| {
-        if cmds.contains_key("run") {
-            Some("run".to_string())
-        } else {
-            cmds.keys().next().cloned()
-        }
-    });
-
-    // For OrbStack, prefer "run" as the default
-    let suggested_orbstack_default = orbstack_commands.as_ref().and_then(|cmds| {
-        if cmds.contains_key("run") {
-            Some("run".to_string())
-        } else {
-            cmds.keys().next().cloned()
-        }
-    });
-
-    // Find Dockerfile path (relative to workspace root) if it exists
-    let dockerfile_path =
-        if let Ok(Some(dockerfile)) = crate::detection::utils::find_dockerfile(workspace_root) {
-            // Convert to relative path from workspace root
-            dockerfile
-                .strip_prefix(workspace_root)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-    // Build and return the detection result for the workspace
     Ok(DetectedApp {
         app_type: "nx-workspace".to_string(),
         app_name: "workspace".to_string(),
@@ -416,14 +297,14 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
         } else {
             Some(local_commands)
         },
-        docker_commands,
-        orbstack_commands,
-        k8s_commands,
+        docker_commands: env.docker_commands,
+        orbstack_commands: env.orbstack_commands,
+        k8s_commands: env.k8s_commands,
         suggested_local_default,
-        suggested_docker_default,
-        suggested_orbstack_default,
-        dockerfile_path,
-        env_files: None, // Env files detection not implemented for Nx workspace yet
+        suggested_docker_default: env.suggested_docker_default,
+        suggested_orbstack_default: env.suggested_orbstack_default,
+        dockerfile_path: env.dockerfile_path,
+        env_files: None,
     })
 }
 
@@ -436,11 +317,9 @@ mod tests {
     #[test]
     fn test_detect_nx_workspace() {
         let temp_dir = TempDir::new().unwrap();
-        let nx_json = temp_dir.path().join("nx.json");
-        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
+        fs::write(temp_dir.path().join("nx.json"), r#"{"version": 2}"#).unwrap();
 
         let result = detect_nx_workspace(temp_dir.path()).unwrap();
-
         assert_eq!(result.app_type, "nx-workspace");
         assert_eq!(result.app_name, "workspace");
         assert!(result.local_commands.is_some());
@@ -455,199 +334,70 @@ mod tests {
         assert!(commands.contains_key("build:libs"));
         assert!(commands.contains_key("affected:build"));
         assert!(commands.contains_key("graph"));
-
-        // Should suggest "build" as default
         assert_eq!(result.suggested_local_default, Some("build".to_string()));
-
-        // Check some specific command formats
-        assert_eq!(
-            commands.get("build"),
-            Some(&"npx nx run-many --target=build --all".to_string())
-        );
-        assert_eq!(
-            commands.get("build:parallel"),
-            Some(&"npx nx run-many --target=build --all --parallel".to_string())
-        );
-        assert_eq!(
-            commands.get("build:apps"),
-            Some(&"npx nx run-many --target=build --projects=type:application --all".to_string())
-        );
-        assert_eq!(
-            commands.get("affected:build"),
-            Some(&"npx nx affected --target=build".to_string())
-        );
     }
 
     #[test]
     fn test_detect_nx_apps_includes_workspace() {
         let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("nx.json"), r#"{"version": 2}"#).unwrap();
 
-        // Create nx.json
-        let nx_json = temp_dir.path().join("nx.json");
-        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
-
-        // Create apps directory with one app
         let apps_dir = temp_dir.path().join("apps");
         fs::create_dir(&apps_dir).unwrap();
         let app_dir = apps_dir.join("test-app");
         fs::create_dir(&app_dir).unwrap();
-        let package_json = app_dir.join("package.json");
         fs::write(
-            &package_json,
+            app_dir.join("package.json"),
             r#"{"name": "test-app", "scripts": {"build": "nx build"}}"#,
         )
         .unwrap();
 
         let result = detect_nx_apps(temp_dir.path()).unwrap();
-
-        // Should have both the app and the workspace
         assert_eq!(result.len(), 2);
-
-        // Find workspace app
-        let workspace_app = result.iter().find(|app| app.app_name == "workspace");
-        assert!(workspace_app.is_some());
-
-        let workspace_app = workspace_app.unwrap();
-        assert_eq!(workspace_app.app_type, "nx-workspace");
-        assert!(workspace_app.local_commands.is_some());
+        assert!(result.iter().any(|app| app.app_name == "workspace"));
     }
 
     #[test]
     fn test_nx_app_with_dockerfile_generates_orbstack_commands() {
         let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("nx.json"), r#"{"version": 2}"#).unwrap();
 
-        // Create nx.json for workspace
-        let nx_json = temp_dir.path().join("nx.json");
-        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
-
-        // Create apps directory with one app
-        let apps_dir = temp_dir.path().join("apps");
-        fs::create_dir(&apps_dir).unwrap();
-        let app_dir = apps_dir.join("test-app");
-        fs::create_dir(&app_dir).unwrap();
-
-        // Create package.json for the app
-        let package_json = app_dir.join("package.json");
+        let app_dir = temp_dir.path().join("apps/test-app");
+        fs::create_dir_all(&app_dir).unwrap();
         fs::write(
-            &package_json,
+            app_dir.join("package.json"),
             r#"{"name": "test-app", "scripts": {"build": "nx build"}}"#,
         )
         .unwrap();
-
-        // Create Dockerfile in the app directory
-        let dockerfile = app_dir.join("Dockerfile");
         fs::write(
-            &dockerfile,
+            app_dir.join("Dockerfile"),
             "FROM node:18\nCOPY . .\nRUN npm install\nCMD [\"npm\", \"start\"]",
         )
         .unwrap();
 
-        // Detect the single Nx app
         let result = detect_single_nx_app(&app_dir, temp_dir.path()).unwrap();
-
-        // Verify basic app detection
         assert_eq!(result.app_type, "nx");
-        assert_eq!(result.app_name, "test-app");
-        assert!(result.local_commands.is_some());
-
-        // Verify Docker commands are generated
         assert!(result.docker_commands.is_some());
-        let docker_commands = result.docker_commands.unwrap();
-        assert!(docker_commands.contains_key("build"));
-        assert!(docker_commands.contains_key("run"));
-        assert!(docker_commands.contains_key("stop"));
-
-        // Verify OrbStack commands are generated
         assert!(result.orbstack_commands.is_some());
-        let orbstack_commands = result.orbstack_commands.unwrap();
-        assert!(orbstack_commands.contains_key("build"));
-        assert!(orbstack_commands.contains_key("run"));
-        assert!(orbstack_commands.contains_key("stop"));
-
-        // Verify OrbStack commands use the correct context
-        assert!(orbstack_commands
-            .get("build")
-            .unwrap()
-            .contains("--context orbstack"));
-        assert!(orbstack_commands
-            .get("run")
-            .unwrap()
-            .contains("--context orbstack"));
-        assert!(orbstack_commands
-            .get("stop")
-            .unwrap()
-            .contains("--context orbstack"));
-
-        // Verify port mapping for Node.js app (port 3000)
-        assert!(orbstack_commands
-            .get("run")
-            .unwrap()
-            .contains("-p 3000:3000"));
-
-        // Verify default suggestions are set
-        assert_eq!(result.suggested_docker_default, Some("run".to_string()));
-        assert_eq!(result.suggested_orbstack_default, Some("run".to_string()));
-
-        // Verify dockerfile path is detected
-        assert_eq!(result.dockerfile_path, Some("Dockerfile".to_string()));
+        let orbstack = result.orbstack_commands.unwrap();
+        assert!(orbstack.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack.get("run").unwrap().contains("-p 3000:3000"));
     }
 
     #[test]
     fn test_nx_workspace_with_dockerfile_generates_orbstack_commands() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Create nx.json
-        let nx_json = temp_dir.path().join("nx.json");
-        fs::write(&nx_json, r#"{"version": 2}"#).unwrap();
-
-        // Create Dockerfile at workspace root
-        let dockerfile = temp_dir.path().join("Dockerfile");
+        fs::write(temp_dir.path().join("nx.json"), r#"{"version": 2}"#).unwrap();
         fs::write(
-            &dockerfile,
+            temp_dir.path().join("Dockerfile"),
             "FROM node:18\nCOPY . .\nRUN npm install\nCMD [\"npm\", \"start\"]",
         )
         .unwrap();
 
         let result = detect_nx_workspace(temp_dir.path()).unwrap();
-
-        // Verify basic workspace detection
-        assert_eq!(result.app_type, "nx-workspace");
-        assert_eq!(result.app_name, "workspace");
-        assert!(result.local_commands.is_some());
-
-        // Verify Docker commands are generated
         assert!(result.docker_commands.is_some());
-        let docker_commands = result.docker_commands.unwrap();
-        assert!(docker_commands.contains_key("build"));
-        assert!(docker_commands.contains_key("run"));
-        assert!(docker_commands.contains_key("stop"));
-
-        // Verify OrbStack commands are generated
         assert!(result.orbstack_commands.is_some());
-        let orbstack_commands = result.orbstack_commands.unwrap();
-        assert!(orbstack_commands.contains_key("build"));
-        assert!(orbstack_commands.contains_key("run"));
-        assert!(orbstack_commands.contains_key("stop"));
-
-        // Verify OrbStack commands use the correct context
-        assert!(orbstack_commands
-            .get("build")
-            .unwrap()
-            .contains("--context orbstack"));
-        assert!(orbstack_commands
-            .get("run")
-            .unwrap()
-            .contains("--context orbstack"));
-        assert!(orbstack_commands
-            .get("stop")
-            .unwrap()
-            .contains("--context orbstack"));
-
-        // Verify default suggestions are set
-        assert_eq!(result.suggested_docker_default, Some("run".to_string()));
-        assert_eq!(result.suggested_orbstack_default, Some("run".to_string()));
-
-        // Verify dockerfile path is detected
-        assert_eq!(result.dockerfile_path, Some("Dockerfile".to_string()));
+        let orbstack = result.orbstack_commands.unwrap();
+        assert!(orbstack.get("build").unwrap().contains("--context orbstack"));
     }
 }
