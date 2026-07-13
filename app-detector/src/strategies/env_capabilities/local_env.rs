@@ -107,15 +107,32 @@ impl DetectionStrategy for LocalEnvStrategy {
 }
 
 fn extract_nodejs_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
+    let pm = node_package_manager(ctx);
     if let Ok(content) = ctx.read_file("package.json") {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) {
                 for (key, _value) in scripts {
-                    commands.insert(key.clone(), format!("npm run {}", key));
+                    commands.insert(
+                        key.clone(),
+                        crate::utils::package_manager::node_script_command(&pm, key),
+                    );
                 }
             }
         }
     }
+}
+
+fn node_package_manager(ctx: &DetectionContext) -> String {
+    ctx.get_result("nodejs")
+        .and_then(|result| match &result.data {
+            DetectionData::Language(info) => info
+                .metadata
+                .get("package_manager")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| crate::utils::package_manager::detect_node_package_manager(ctx))
 }
 
 fn extract_nx_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
@@ -124,26 +141,129 @@ fn extract_nx_commands(ctx: &DetectionContext, commands: &mut HashMap<String, St
 }
 
 fn extract_python_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
-    // Standard Python commands
-    commands.insert("start".to_string(), "python main.py".to_string());
-
-    // Check for tests
-    if ctx.file_exists("tests") || ctx.file_exists("test") {
-        commands.insert("test".to_string(), "pytest".to_string());
+    if let Some(result) = ctx.get_result("python") {
+        if let DetectionData::Monorepo(info) = &result.data {
+            extract_python_workspace_commands(ctx, info, commands);
+            return;
+        }
     }
 
-    // Check for requirements.txt
-    if ctx.file_exists("requirements.txt") {
+    extract_python_package_commands(ctx, commands);
+}
+
+fn extract_python_workspace_commands(
+    ctx: &DetectionContext,
+    info: &MonorepoInfo,
+    commands: &mut HashMap<String, String>,
+) {
+    let pm = python_package_manager(ctx);
+
+    commands.insert("install".to_string(), python_install_command(&pm));
+    commands.insert("test".to_string(), python_workspace_test_command(&pm));
+
+    for workspace in &info.workspace_info {
+        let name = workspace
+            .name
+            .clone()
+            .unwrap_or_else(|| workspace.path.replace('/', "-"));
+        let run_key = format!("run-{name}");
         commands.insert(
-            "install".to_string(),
-            "pip install -r requirements.txt".to_string(),
+            run_key,
+            python_member_run_command(&pm, &workspace.path, &name),
         );
     }
+}
 
-    // Check for poetry
-    if ctx.file_exists("pyproject.toml") && ctx.file_exists("poetry.lock") {
-        commands.insert("install".to_string(), "poetry install".to_string());
-        commands.insert("start".to_string(), "poetry run python main.py".to_string());
+fn extract_python_package_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
+    let pm = python_package_manager(ctx);
+
+    if ctx.file_exists("main.py") {
+        commands.insert("start".to_string(), python_run_main_command(&pm));
+    } else if ctx.file_exists("src/main.py") {
+        commands.insert("start".to_string(), python_run_module_command(&pm, "src.main"));
+    } else {
+        commands.insert("start".to_string(), python_run_main_command(&pm));
+    }
+
+    if ctx.file_exists("tests") || ctx.file_exists("test") {
+        commands.insert("test".to_string(), python_test_command(&pm));
+    }
+
+    commands.insert("install".to_string(), python_install_command(&pm));
+}
+
+fn python_package_manager(ctx: &DetectionContext) -> String {
+    if let Some(result) = ctx.get_result("python") {
+        let metadata = match &result.data {
+            DetectionData::Language(info) => &info.metadata,
+            DetectionData::Monorepo(info) => &info.metadata,
+            _ => return "pip".to_string(),
+        };
+        if let Some(pm) = metadata.get("package_manager").and_then(|v| v.as_str()) {
+            return pm.to_string();
+        }
+    }
+
+    if ctx.file_exists("uv.lock") {
+        "uv".to_string()
+    } else if ctx.file_exists("poetry.lock") {
+        "poetry".to_string()
+    } else if ctx.file_exists("Pipfile.lock") {
+        "pipenv".to_string()
+    } else {
+        "pip".to_string()
+    }
+}
+
+fn python_install_command(pm: &str) -> String {
+    match pm {
+        "uv" => "uv sync".to_string(),
+        "poetry" => "poetry install".to_string(),
+        "pipenv" => "pipenv install".to_string(),
+        _ => "pip install -r requirements.txt".to_string(),
+    }
+}
+
+fn python_run_main_command(pm: &str) -> String {
+    match pm {
+        "uv" => "uv run python main.py".to_string(),
+        "poetry" => "poetry run python main.py".to_string(),
+        "pipenv" => "pipenv run python main.py".to_string(),
+        _ => "python main.py".to_string(),
+    }
+}
+
+fn python_run_module_command(pm: &str, module: &str) -> String {
+    match pm {
+        "uv" => format!("uv run python -m {module}"),
+        "poetry" => format!("poetry run python -m {module}"),
+        "pipenv" => format!("pipenv run python -m {module}"),
+        _ => format!("python -m {module}"),
+    }
+}
+
+fn python_test_command(pm: &str) -> String {
+    match pm {
+        "uv" => "uv run pytest".to_string(),
+        "poetry" => "poetry run pytest".to_string(),
+        "pipenv" => "pipenv run pytest".to_string(),
+        _ => "pytest".to_string(),
+    }
+}
+
+fn python_workspace_test_command(pm: &str) -> String {
+    match pm {
+        "uv" => "uv run pytest".to_string(),
+        "poetry" => "poetry run pytest".to_string(),
+        _ => "pytest".to_string(),
+    }
+}
+
+fn python_member_run_command(pm: &str, path: &str, name: &str) -> String {
+    match pm {
+        "uv" => format!("uv run --package {name} python {path}/main.py"),
+        "poetry" => format!("poetry run -C {path} python main.py"),
+        _ => format!("python {path}/main.py"),
     }
 }
 
@@ -257,17 +377,70 @@ fn extract_traefik_commands(ctx: &DetectionContext, commands: &mut HashMap<Strin
 }
 
 fn extract_rust_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
-    // Standard Rust commands via Cargo
+    if let Some(result) = ctx.get_result("rust") {
+        if let DetectionData::Monorepo(info) = &result.data {
+            extract_cargo_workspace_commands(info, commands);
+            return;
+        }
+    }
+
+    extract_cargo_crate_commands(ctx, commands);
+}
+
+fn extract_cargo_workspace_commands(info: &MonorepoInfo, commands: &mut HashMap<String, String>) {
+    commands.insert("build".to_string(), "cargo build --workspace".to_string());
+    commands.insert("test".to_string(), "cargo test --workspace".to_string());
+    commands.insert("check".to_string(), "cargo check --workspace".to_string());
+    commands.insert("run".to_string(), "cargo run --workspace".to_string());
+
+    for workspace in &info.workspace_info {
+        let name = workspace
+            .name
+            .clone()
+            .unwrap_or_else(|| {
+                workspace
+                    .path
+                    .split('/')
+                    .next_back()
+                    .unwrap_or("crate")
+                    .to_string()
+            });
+        commands.insert(
+            format!("build-{name}"),
+            format!("cargo build -p {name}"),
+        );
+        commands.insert(format!("test-{name}"), format!("cargo test -p {name}"));
+        commands.insert(format!("run-{name}"), format!("cargo run -p {name}"));
+    }
+}
+
+fn extract_cargo_crate_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
     commands.insert("build".to_string(), "cargo build".to_string());
-    commands.insert("run".to_string(), "cargo run".to_string());
     commands.insert("test".to_string(), "cargo test".to_string());
     commands.insert("check".to_string(), "cargo check".to_string());
 
-    // Check if it's a library or binary
+    let has_main = ctx.file_exists("src/main.rs");
+    let has_lib = ctx.file_exists("src/lib.rs");
+
     if let Ok(content) = ctx.read_file("Cargo.toml") {
-        if content.contains("[[bin]]") || content.contains("[bin]") {
+        let has_bin = content.contains("[[bin]]") || content.contains("[bin]");
+        let has_lib_section = content.contains("[lib]");
+
+        if has_main || has_bin {
+            commands.insert("run".to_string(), "cargo run".to_string());
             commands.insert("start".to_string(), "cargo run --release".to_string());
+        } else if has_lib || has_lib_section {
+            commands.insert("run".to_string(), "cargo test".to_string());
+        } else {
+            commands.insert("run".to_string(), "cargo run".to_string());
         }
+    } else if has_main {
+        commands.insert("run".to_string(), "cargo run".to_string());
+        commands.insert("start".to_string(), "cargo run --release".to_string());
+    } else if has_lib {
+        commands.insert("run".to_string(), "cargo test".to_string());
+    } else {
+        commands.insert("run".to_string(), "cargo run".to_string());
     }
 }
 
@@ -300,6 +473,9 @@ fn suggest_default_command(
         Some("rust") => {
             if commands.contains_key("run") {
                 return Some("run".to_string());
+            }
+            if commands.contains_key("build") {
+                return Some("build".to_string());
             }
         }
         Some("redis") | Some("traefik") => {
@@ -397,6 +573,86 @@ mod tests {
                     info.commands.get("install"),
                     Some(&"pip install -r requirements.txt".to_string())
                 );
+            }
+            _ => panic!("Expected LocalEnv data"),
+        }
+    }
+
+    #[test]
+    fn test_local_env_nodejs_pnpm() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("package.json"),
+            r#"{"name":"app","packageManager":"pnpm@9.0.0","scripts":{"dev":"vite"}}"#,
+        )
+        .unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let nodejs_result = crate::strategies::NodeJsStrategy.detect(&ctx).unwrap();
+        ctx.store_result(nodejs_result);
+
+        let result = LocalEnvStrategy.detect(&ctx).unwrap();
+        match result.data {
+            DetectionData::LocalEnv(info) => {
+                assert_eq!(info.commands.get("dev"), Some(&"pnpm run dev".to_string()));
+            }
+            _ => panic!("Expected LocalEnv data"),
+        }
+    }
+
+    #[test]
+    fn test_local_env_rust_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir_all(temp_dir.path().join("crates/api/src")).unwrap();
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/api\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("crates/api/Cargo.toml"),
+            "[package]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let rust_result = crate::strategies::RustStrategy.detect(&ctx).unwrap();
+        ctx.store_result(rust_result);
+
+        let result = LocalEnvStrategy.detect(&ctx).unwrap();
+        match result.data {
+            DetectionData::LocalEnv(info) => {
+                assert_eq!(
+                    info.commands.get("build"),
+                    Some(&"cargo build --workspace".to_string())
+                );
+                assert!(info.commands.contains_key("run-api"));
+            }
+            _ => panic!("Expected LocalEnv data"),
+        }
+    }
+
+    #[test]
+    fn test_local_env_python_uv_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir_all(temp_dir.path().join("packages/api")).unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            "[tool.uv.workspace]\nmembers = [\"packages/api\"]\n",
+        )
+        .unwrap();
+        fs::write(temp_dir.path().join("packages/api/pyproject.toml"), "name = \"api\"\n").unwrap();
+        fs::write(temp_dir.path().join("uv.lock"), "").unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let python_result = crate::strategies::PythonStrategy.detect(&ctx).unwrap();
+        ctx.store_result(python_result);
+
+        let result = LocalEnvStrategy.detect(&ctx).unwrap();
+        match result.data {
+            DetectionData::LocalEnv(info) => {
+                assert_eq!(info.commands.get("install"), Some(&"uv sync".to_string()));
+                assert!(info.commands.contains_key("run-api"));
             }
             _ => panic!("Expected LocalEnv data"),
         }
