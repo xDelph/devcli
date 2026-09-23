@@ -27,6 +27,7 @@ tracing-appender = "0.2"
 process-manager = { path = "../process-manager" }
 env-flow = { path = "../env-flow" }
 app-detector = { path = "../app-detector" }
+config-manager = { path = "../config-manager" }
 shell-words = "1.1"
 
 [dev-dependencies]

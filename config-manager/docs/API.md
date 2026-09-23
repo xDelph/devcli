@@ -672,6 +672,21 @@ let expanded = expand_all("~/$APP/config.json");
 // /home/username/myapp/config.json
 ```
 
+#### `expand_path<P: AsRef<Path>>(path: P) -> PathBuf`
+
+Alias for `expand_all`.
+
+#### `contract_tilde<P: AsRef<Path>>(path: P) -> String`
+
+Contract an absolute path under `$HOME` back to `~/…` for portable config storage.
+
+```rust
+use config_manager::utils::contract_tilde;
+
+let contracted = contract_tilde("/home/username/Projects/app");
+// ~/Projects/app
+```
+
 ### String Utilities
 
 #### `levenshtein_distance(s1: &str, s2: &str) -> usize`

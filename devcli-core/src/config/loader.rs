@@ -1,8 +1,11 @@
 // Configuration file loading and saving
 // Handles reading/writing JSON files from ~/.devcli/
+//
+// JSON I/O goes through config_manager_support (config-manager crate).
+// This module owns path discovery only.
 
 use super::models::{Config, Preferences};
-use crate::utils::path::expand_tilde;
+use crate::config_manager_support::{self, DevCliConfigManager};
 use crate::Result;
 use std::env;
 use std::fs;
@@ -12,139 +15,61 @@ use std::path::PathBuf;
 // Returns: ./.devcli/config.json (current dir) or ~/.devcli/config.json (home dir)
 // Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_config_path() -> Result<PathBuf> {
-    // Check for test override first
     if let Ok(config_dir) = env::var("devcli_CONFIG_DIR") {
         let path = PathBuf::from(config_dir).join("config.json");
-        // Ensure parent directory exists for tests
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         return Ok(path);
     }
 
-    // Check current directory for .devcli/config.json
     let current_dir = env::current_dir()?;
     let local_config = current_dir.join(".devcli").join("config.json");
     if local_config.exists() {
         return Ok(local_config);
     }
 
-    // Fall back to home directory ~/.devcli/config.json
     let home = env::var("HOME")?;
     Ok(PathBuf::from(home).join(".devcli").join("config.json"))
 }
 
 // Get the full path to the preferences file
-// Returns: ./.devcli/preferences.json (current dir) or ~/.devcli/preferences.json (home dir)
 // Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_preferences_path() -> Result<PathBuf> {
-    // Check for test override first
     if let Ok(config_dir) = env::var("devcli_CONFIG_DIR") {
         let path = PathBuf::from(config_dir).join("preferences.json");
-        // Ensure parent directory exists for tests
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         return Ok(path);
     }
 
-    // Check current directory for .devcli/preferences.json
     let current_dir = env::current_dir()?;
     let local_prefs = current_dir.join(".devcli").join("preferences.json");
     if local_prefs.exists() {
         return Ok(local_prefs);
     }
 
-    // Fall back to home directory ~/.devcli/preferences.json
     let home = env::var("HOME")?;
     Ok(PathBuf::from(home).join(".devcli").join("preferences.json"))
 }
 
-// Load and parse the main config file
-// Reads ~/.devcli/config.json and converts it to a Config struct
 pub fn load_config() -> Result<Config> {
-    // Get the config file path
     let config_path = get_config_path()?;
-
-    // Check if the file exists
-    // If not, show a helpful error message telling the user what to do
-    if !config_path.exists() {
-        anyhow::bail!(
-            "Config file not found at {}. Run 'devcli config init' to create one.",
-            config_path.display()
-        );
-    }
-
-    // Read the entire file as a UTF-8 string
-    let contents = fs::read_to_string(&config_path)?;
-
-    // Parse the JSON string into a Config struct
-    // serde_json::from_str automatically maps JSON fields to struct fields
-    let mut config: Config = serde_json::from_str(&contents)?;
-
-    // Expand tilde paths in all app configurations
-    for project in config.projects.values_mut() {
-        for app in project.apps.values_mut() {
-            // Expand the app path from ~ notation to absolute path
-            let expanded_path = expand_tilde(&app.path);
-            app.path = expanded_path.to_string_lossy().to_string();
-        }
-    }
-
-    Ok(config)
-}
-
-// Load user preferences from ~/.devcli/preferences.json
-// If the file doesn't exist, returns default preferences (not an error)
-pub fn load_preferences() -> Result<Preferences> {
-    let pref_path = get_preferences_path()?;
-
-    // If preferences file doesn't exist, that's okay - use defaults
-    // This happens when the user hasn't set any preferences yet
-    if !pref_path.exists() {
-        return Ok(Preferences::default());
-    }
-
-    // Read and parse the JSON file
-    let contents = fs::read_to_string(&pref_path)?;
-    let prefs: Preferences = serde_json::from_str(&contents)?;
-
-    Ok(prefs)
-}
-
-// Save preferences to ~/.devcli/preferences.json
-// Creates the directory if it doesn't exist
-pub fn save_preferences(prefs: &Preferences) -> Result<()> {
-    let pref_path = get_preferences_path()?;
-
-    // Create the ~/.devcli directory if it doesn't exist
-    // .parent() gets the directory containing the file
-    if let Some(parent) = pref_path.parent() {
-        // create_dir_all is like "mkdir -p" - creates parent directories too
-        fs::create_dir_all(parent)?;
-    }
-
-    // Convert the Preferences struct to pretty-printed JSON
-    // pretty = formatted with indentation for readability
-    let contents = serde_json::to_string_pretty(prefs)?;
-
-    // Write the JSON string to the file
-    // This will overwrite the file if it already exists
-    fs::write(&pref_path, contents)?;
-
-    Ok(())
+    DevCliConfigManager::for_path(&config_path)?.load()
 }
 
 pub fn save_config(config: &Config) -> Result<()> {
     let config_path = get_config_path()?;
+    DevCliConfigManager::for_path(&config_path)?.save(config)
+}
 
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+pub fn load_preferences() -> Result<Preferences> {
+    let pref_path = get_preferences_path()?;
+    config_manager_support::load_preferences(&pref_path)
+}
 
-    let contents = serde_json::to_string_pretty(config)?;
-
-    fs::write(&config_path, contents)?;
-
-    Ok(())
+pub fn save_preferences(prefs: &Preferences) -> Result<()> {
+    let pref_path = get_preferences_path()?;
+    config_manager_support::save_preferences(&pref_path, prefs)
 }

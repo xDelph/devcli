@@ -3,13 +3,13 @@
 #[cfg(test)]
 mod validate_tests {
     use crate::config::{Commands, Config};
+    use crate::config_manager_support::DevCliConfigValidator;
     use crate::test_utils::{AppBuilder, ConfigBuilder};
+    use config_manager::validation::Validator;
     use std::fs;
     use tempfile::TempDir;
 
-    /// Helper to create a valid test config
     fn create_valid_config(temp_dir: &TempDir) -> Config {
-        // Create a test app directory
         let app_dir = temp_dir.path().join("test-app");
         fs::create_dir_all(&app_dir).unwrap();
 
@@ -26,22 +26,11 @@ mod validate_tests {
 
     #[test]
     fn test_validate_config_structure() {
-        // Test validation logic without file I/O
         let temp_dir = TempDir::new().unwrap();
         let config = create_valid_config(&temp_dir);
 
-        // Test that config has expected structure for validation
-        assert!(!config.projects.is_empty());
-        assert!(config.projects.contains_key("test-project"));
-
-        let app = &config.projects["test-project"].apps["test-app"];
-        assert!(app.commands.local.is_some());
-        assert!(app.defaults.local.is_some());
-        assert_eq!(app.defaults.local.as_ref().unwrap(), "start");
-
-        // Test that local commands contain the default
-        let local_commands = app.commands.local.as_ref().unwrap();
-        assert!(local_commands.contains_key("start"));
+        let result = DevCliConfigValidator::new().validate(&config);
+        assert!(result.is_valid(), "{result}");
     }
 
     #[test]
@@ -49,7 +38,6 @@ mod validate_tests {
         let temp_dir = TempDir::new().unwrap();
         let mut config = create_valid_config(&temp_dir);
 
-        // Remove all commands
         config
             .projects
             .get_mut("test-project")
@@ -65,21 +53,12 @@ mod validate_tests {
             ..Default::default()
         };
 
-        // Test that validation would detect this issue
-        let app = &config.projects["test-project"].apps["test-app"];
-        let has_local = app
-            .commands
-            .local
-            .as_ref()
-            .map(|m| !m.is_empty())
-            .unwrap_or(false);
-        let has_docker = app
-            .commands
-            .docker
-            .as_ref()
-            .map(|m| !m.is_empty())
-            .unwrap_or(false);
-        assert!(!has_local && !has_docker, "App should have no commands");
+        let result = DevCliConfigValidator::new().validate(&config);
+        assert!(!result.is_valid());
+        assert!(result
+            .errors()
+            .iter()
+            .any(|e| e.message().contains("No commands defined")));
     }
 
     #[test]
@@ -87,7 +66,6 @@ mod validate_tests {
         let temp_dir = TempDir::new().unwrap();
         let mut config = create_valid_config(&temp_dir);
 
-        // Set default to non-existent command
         config
             .projects
             .get_mut("test-project")
@@ -98,12 +76,11 @@ mod validate_tests {
             .defaults
             .local = Some("nonexistent".to_string());
 
-        let app = &config.projects["test-project"].apps["test-app"];
-        let local_commands = app.commands.local.as_ref().unwrap();
-        let default_local = app.defaults.local.as_ref().unwrap();
-        assert!(
-            !local_commands.contains_key(default_local),
-            "Default should not exist in commands"
-        );
+        let result = DevCliConfigValidator::new().validate(&config);
+        assert!(!result.is_valid());
+        assert!(result
+            .errors()
+            .iter()
+            .any(|e| e.message().contains("Default local command")));
     }
 }

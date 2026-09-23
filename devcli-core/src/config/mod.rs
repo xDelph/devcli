@@ -1,10 +1,8 @@
 // Configuration module - Manages loading, saving, and resolving app configurations
 //
-// This module contains:
-// - models: Data structures for config.json and preferences.json
-// - loader: Functions to read/write configuration files
-// - resolver: Logic to find apps by name and resolve dependencies
-// - dependencies: Dependency graph resolution for app startup
+// JSON I/O, resolution, dependency graphs, and validation rules are backed by
+// config-manager via `crate::config_manager_support`. This module keeps domain
+// types and the public CLI-facing API.
 
 pub mod dependencies;
 pub mod loader;

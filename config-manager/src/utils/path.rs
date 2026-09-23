@@ -139,6 +139,43 @@ pub fn expand_all<P: AsRef<Path>>(path: P) -> PathBuf {
     expand_tilde(expand_env_vars(path))
 }
 
+/// Alias for [`expand_all`] — expand `$VAR` / `${VAR}` then `~`.
+pub fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
+    expand_all(path)
+}
+
+/// Contract an absolute path under `$HOME` back to tilde notation.
+///
+/// Useful when persisting paths in config so they stay portable across machines.
+///
+/// # Examples
+///
+/// ```rust
+/// use config_manager::utils::contract_tilde;
+/// use std::env;
+///
+/// # if cfg!(unix) {
+/// let home = env::var("HOME").unwrap();
+/// let contracted = contract_tilde(format!("{home}/Projects/app"));
+/// assert_eq!(contracted, "~/Projects/app");
+/// # }
+/// ```
+pub fn contract_tilde<P: AsRef<Path>>(path: P) -> String {
+    let path = path.as_ref();
+
+    if let Some(home) = env::var_os("HOME") {
+        let home_path = PathBuf::from(home);
+        if let Ok(relative) = path.strip_prefix(&home_path) {
+            if relative.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", relative.display());
+        }
+    }
+
+    path.display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +212,25 @@ mod tests {
         let path = "/absolute/path/config.json";
         let expanded = expand_tilde(path);
         assert_eq!(expanded, PathBuf::from(path));
+    }
+
+    #[test]
+    fn test_expand_path_alias() {
+        env::set_var("CM_PATH_ALIAS", "alias_val");
+        let expanded = expand_path("$CM_PATH_ALIAS/x");
+        assert_eq!(expanded, PathBuf::from("alias_val/x"));
+    }
+
+    #[test]
+    fn test_contract_tilde() {
+        if !cfg!(unix) {
+            return;
+        }
+        let home = env::var("HOME").unwrap();
+
+        let absolute_path = format!("{home}/test/path");
+        assert_eq!(contract_tilde(&absolute_path), "~/test/path");
+        assert_eq!(contract_tilde(&home), "~");
+        assert_eq!(contract_tilde("/usr/local/bin"), "/usr/local/bin");
     }
 }

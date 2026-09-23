@@ -1,9 +1,9 @@
 //! General utility modules
 //!
-//! Contains helper functions for:
 //! - `app`: Application-related utilities (e.g., environment listing)
 //! - `command`: Command execution helpers
-//! - `path`: Path manipulation and expansion
+//! - `path`: Re-exports path helpers from `config-manager`
+//! - `colors` / `date`: display helpers
 
 pub mod app;
 pub mod colors;

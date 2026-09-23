@@ -519,6 +519,15 @@ let loader = JsonLoader::new("~/$CONFIG_DIR/config.json")
     .with_path_expansion(true);  // Default
 ```
 
+### Contract home paths for storage
+
+```rust
+use config_manager::utils::contract_tilde;
+
+let portable = contract_tilde("/home/alice/Projects/app");
+// ~/Projects/app
+```
+
 ## Custom Implementations
 
 ### Custom Loader (HTTP)

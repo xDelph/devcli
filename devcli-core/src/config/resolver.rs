@@ -1,8 +1,11 @@
 // App resolution - finding apps in the config and handling ambiguities
-// This module helps find apps by name and provides helpful error messages
+// Core matching/fuzzy logic lives in config_manager_support::ProjectAppResolver.
+// This module keeps the public API and interactive ambiguity prompt.
 
 use super::models::{App, Config};
+use crate::config_manager_support::{map_resolve_error, ProjectAppResolver};
 use crate::Result;
+use config_manager::resolver::Resolver;
 use inquire::Select;
 
 // Container for a resolved app with full context
@@ -17,7 +20,7 @@ pub struct ResolvedApp {
 // Find an app by name across all projects
 // Handles three cases:
 // 1. App found in exactly one project → Success
-// 2. App found in multiple projects → Error with list of projects (ambiguous)
+// 2. App found in multiple projects → interactive Select (or error if cancelled)
 // 3. App not found → Error with typo suggestion if possible
 //
 // project_filter: If Some("project-name"), only search that project
@@ -26,114 +29,29 @@ pub fn resolve_app(
     app_name: &str,
     project_filter: Option<&str>,
 ) -> Result<ResolvedApp> {
-    // Vec to collect all matches (project_name, actual_app_name, app_config)
-    let mut matches = Vec::new();
+    let resolver = ProjectAppResolver::new();
 
-    // Search through all projects
-    // .iter() creates an iterator over (key, value) pairs
-    for (project_name, project) in &config.projects {
-        // If user specified a project, skip others
-        if let Some(filter) = project_filter {
-            if project_name != filter {
-                continue; // Skip this project
-            }
-        }
-
-        // Search by actual app name first, then by alternative_name
-        for (actual_app_name, app) in &project.apps {
-            // Match by actual app name
-            if actual_app_name == app_name {
-                matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
-            }
-            // Match by alternative_name if it exists
-            else if let Some(ref alt_name) = app.alternative_name {
-                if alt_name == app_name {
-                    matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
-                }
-            }
-        }
-    }
-
-    // Now analyze the matches to decide what to return
-    match matches.len() {
-        // Case 1: App not found anywhere
-        0 => {
-            // Try to find a similar app name (typo detection)
-            let suggestion = find_similar_app_name(config, app_name);
-
-            // If we found a similar name, suggest it
-            if let Some(similar) = suggestion {
-                anyhow::bail!(
-                    "App '{}' not found in config. Did you mean '{}'?",
-                    app_name,
-                    similar
-                );
-            } else {
-                // No similar names, just say it wasn't found
-                anyhow::bail!("App '{}' not found in config.", app_name);
-            }
-        }
-
-        // Case 2: Found exactly one match - this is what we want!
-        1 => {
-            // Extract the single match from the vector
-            // .into_iter() converts Vec into an iterator that takes ownership
-            // .next() gets the first item
-            let (project, actual_app_name, app) = matches
-                .into_iter()
-                .next()
-                .expect("BUG: matches should have exactly 1 element after len check");
-
-            // Return the resolved app with full context (using actual app name, not the search term)
-            Ok(ResolvedApp {
-                project,
-                app_name: actual_app_name,
-                app,
-            })
-        }
-
-        // Case 3: Found multiple matches - ambiguous!
-        _ => {
-            // Build a list of project names where we found the app
-            // .iter() = iterate over matches
-            // .map(|(p, _, _)| p.clone()) = extract just the project name
-            // .collect() = gather into a Vec<String>
-            let project_list: Vec<String> = matches.iter().map(|(p, _, _)| p.clone()).collect();
-
-            // Instead of just throwing an error, prompt the user to select
+    match resolver.resolve_with_filter(config, app_name, project_filter) {
+        Ok(resolved) => Ok(resolved),
+        Err(config_manager::Error::Ambiguous { candidates, .. }) => {
             let prompt_message = format!(
-                "App '{}' found in multiple projects. Please select one:",
-                app_name
+                "App '{app_name}' found in multiple projects. Please select one:"
             );
 
-            // Create an interactive selection prompt
-            let selection = Select::new(&prompt_message, project_list.clone()).prompt();
+            let selection = Select::new(&prompt_message, candidates.clone()).prompt();
 
             match selection {
-                Ok(selected_project) => {
-                    // User selected a project, find and return that app
-                    let (project, actual_app_name, app) = matches
-                        .into_iter()
-                        .find(|(p, _, _)| p == &selected_project)
-                        .expect("BUG: selected project should exist in matches");
-
-                    Ok(ResolvedApp {
-                        project,
-                        app_name: actual_app_name,
-                        app,
-                    })
-                }
-                Err(_) => {
-                    // User cancelled the prompt or there was an error
-                    // Fall back to the original error message
-                    anyhow::bail!(
-                        "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
-                        app_name,
-                        project_list.join(", ")
-                    );
-                }
+                Ok(selected_project) => resolver
+                    .resolve_with_filter(config, app_name, Some(&selected_project))
+                    .map_err(|err| map_resolve_error(err, app_name)),
+                Err(_) => Err(anyhow::anyhow!(
+                    "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
+                    app_name,
+                    candidates.join(", ")
+                )),
             }
         }
+        Err(err) => Err(map_resolve_error(err, app_name)),
     }
 }
 
@@ -141,26 +59,18 @@ pub fn resolve_app(
 // Similar to resolve_app but requires both project and app name
 // No ambiguity possible since we know exactly which one to get
 pub fn get_app_by_project(config: &Config, project: &str, app_name: &str) -> Result<ResolvedApp> {
-    // Try to get the project
-    // .get(project) returns Option<&Project>
-    // .ok_or_else() converts None to an error
-    let proj = config
-        .projects
-        .get(project)
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found in config.", project))?;
-
-    // Try to get the app from that project
-    let app = proj
-        .apps
-        .get(app_name)
-        .ok_or_else(|| anyhow::anyhow!("App '{}' not found in project '{}'.", app_name, project))?;
-
-    // Success! Return the resolved app
-    Ok(ResolvedApp {
-        project: project.to_string(),
-        app_name: app_name.to_string(),
-        app: app.clone(),
-    })
+    let resolver = ProjectAppResolver::new();
+    match resolver.resolve(config, &format!("{project}/{app_name}")) {
+        Ok(resolved) => Ok(resolved),
+        Err(config_manager::Error::NotFound { .. }) => {
+            // Preserve the more specific project/app error messages
+            if !config.projects.contains_key(project) {
+                anyhow::bail!("Project '{}' not found in config.", project);
+            }
+            anyhow::bail!("App '{}' not found in project '{}'.", app_name, project);
+        }
+        Err(err) => Err(map_resolve_error(err, app_name)),
+    }
 }
 
 // Get a flat list of all apps across all projects
@@ -169,95 +79,11 @@ pub fn get_app_by_project(config: &Config, project: &str, app_name: &str) -> Res
 pub fn list_all_apps(config: &Config) -> Vec<(String, String, App)> {
     let mut apps = Vec::new();
 
-    // Nested loops to iterate through all projects and all apps
     for (project_name, project) in &config.projects {
         for (app_name, app) in &project.apps {
-            // Add this app to the list with full context
             apps.push((project_name.clone(), app_name.clone(), app.clone()));
         }
     }
 
     apps
-}
-
-// Find an app name similar to the target (for typo suggestions)
-// Uses Levenshtein distance to measure similarity
-// Returns the closest match if distance <= 2
-//
-// Examples of distance 2 or less:
-// - "api-privat" vs "api-private" (distance = 1, missing 'e')
-// - "luve-api" vs "luce-api" (distance = 1, v→c)
-fn find_similar_app_name(config: &Config, target: &str) -> Option<String> {
-    // Get all app names
-    let all_apps = list_all_apps(config);
-
-    // Find the first app name with distance <= 2
-    // .iter() = iterate over the apps
-    // .map(|(_, app_name, _)| app_name) = extract just the app name
-    // .find(|&app_name| ...) = find the first one matching the condition
-    // .cloned() = convert &String to String
-    all_apps
-        .iter()
-        .map(|(_, app_name, _)| app_name)
-        .find(|&app_name| levenshtein_distance(app_name, target) <= 2)
-        .cloned()
-}
-
-// Calculate Levenshtein distance between two strings
-// This measures how many single-character edits (insert, delete, replace)
-// are needed to transform s1 into s2
-//
-// Examples:
-// - levenshtein("cat", "hat") = 1 (replace c with h)
-// - levenshtein("saturday", "sunday") = 3
-// - levenshtein("api", "api") = 0 (identical)
-//
-// Algorithm: Dynamic programming (builds a 2D table)
-fn levenshtein_distance(s1: &str, s2: &str) -> usize {
-    let len1 = s1.len();
-    let len2 = s2.len();
-
-    // Create a 2D matrix to store distances
-    // matrix[i][j] = distance between first i chars of s1 and first j chars of s2
-    let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
-
-    // Initialize first column: distance from empty string to prefixes of s1
-    // matrix[i][0] = i (need i deletions)
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..=len1 {
-        matrix[i][0] = i;
-    }
-
-    // Initialize first row: distance from empty string to prefixes of s2
-    // matrix[0][j] = j (need j insertions)
-    for (j, row) in matrix[0].iter_mut().enumerate().take(len2 + 1) {
-        *row = j;
-    }
-
-    // Fill in the rest of the matrix
-    // .enumerate() gives us (index, character) pairs
-    for (i, c1) in s1.chars().enumerate() {
-        for (j, c2) in s2.chars().enumerate() {
-            // If characters match, no cost. Otherwise, cost of 1 (replacement)
-            let cost = if c1 == c2 { 0 } else { 1 };
-
-            // Matrix is 1-indexed (we have the extra row/col for empty string)
-            // Three options:
-            // 1. Delete from s1: matrix[i][j+1] + 1
-            // 2. Insert into s1: matrix[i+1][j] + 1
-            // 3. Replace/match: matrix[i][j] + cost
-            // Take the minimum of these three
-            matrix[i + 1][j + 1] = std::cmp::min(
-                std::cmp::min(
-                    matrix[i][j + 1] + 1, // deletion
-                    matrix[i + 1][j] + 1, // insertion
-                ),
-                matrix[i][j] + cost, // replacement/match
-            );
-        }
-    }
-
-    // The answer is in the bottom-right corner
-    // This represents the distance between the full strings
-    matrix[len1][len2]
 }
