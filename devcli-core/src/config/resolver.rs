@@ -39,10 +39,11 @@ pub fn resolve_app(
 
             let selection = Select::new(&prompt_message, candidates.clone()).prompt();
 
+            // The user has already told us which project owns the app — pick it
+            // directly from the config instead of re-running a second resolution
+            // pass (the old code called `resolve_with_filter` again).
             match selection {
-                Ok(selected_project) => resolver
-                    .resolve_with_filter(config, app_name, Some(&selected_project))
-                    .map_err(|err| map_resolve_error(err, app_name)),
+                Ok(selected_project) => pick_app_in_project(config, &selected_project, app_name),
                 Err(_) => Err(anyhow::anyhow!(
                     "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
                     app_name,
@@ -75,6 +76,41 @@ pub fn get_app_by_project(config: &Config, project: &str, app_name: &str) -> Res
 // Get a flat list of all apps across all projects
 // Returns: Vec of (project_name, app_name, app_config) tuples
 // Useful for listing all available apps
+/// Pick an app that is already known to live in `project` after an ambiguity
+/// prompt — no second search pass.
+///
+/// Mirrors `ProjectAppResolver::resolve_in_project`: exact key first, then
+/// `alternative_name`. The caller knows the app exists here (it came from the
+/// initial resolution's candidate list), so failures are defensive only.
+pub fn pick_app_in_project(config: &Config, project: &str, app_name: &str) -> Result<ResolvedApp> {
+    let proj = config
+        .projects
+        .get(project)
+        .ok_or_else(|| anyhow::anyhow!("Project '{project}' not found in config."))?;
+
+    if let Some(app) = proj.apps.get(app_name) {
+        return Ok(ResolvedApp {
+            project: project.to_string(),
+            app_name: app_name.to_string(),
+            app: app.clone(),
+        });
+    }
+
+    if let Some((actual_name, app)) = proj
+        .apps
+        .iter()
+        .find(|(_, a)| a.alternative_name.as_deref() == Some(app_name))
+    {
+        return Ok(ResolvedApp {
+            project: project.to_string(),
+            app_name: actual_name.clone(),
+            app: app.clone(),
+        });
+    }
+
+    anyhow::bail!("App '{app_name}' not found in project '{project}'.")
+}
+
 pub fn list_all_apps(config: &Config) -> Vec<(String, String, App)> {
     let mut apps = Vec::new();
 

@@ -126,6 +126,61 @@ mod tests {
         assert_eq!(resolved.project, "project2");
     }
 
+    // Helper: single project with an app that has an alternative_name
+    fn config_with_alternate_named_app() -> Config {
+        let mut config = Config {
+            projects: HashMap::new(),
+        };
+        let mut projects = HashMap::new();
+        let mut apps = HashMap::new();
+
+        let mut api = AppBuilder::new("nodejs", "/tmp/api")
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .build();
+        api.alternative_name = Some("api-alias".to_string());
+        apps.insert("api".to_string(), api);
+
+        projects.insert(
+            "p1".to_string(),
+            Project {
+                apps,
+                alternative_name: None,
+            },
+        );
+        config.projects = projects;
+        config
+    }
+
+    // Test: pick_app_in_project resolves by exact app name
+    #[test]
+    fn test_pick_app_in_project_exact_name() {
+        let config = create_multi_project_config();
+        let resolved = pick_app_in_project(&config, "infrastructure", "redis").unwrap();
+        assert_eq!(resolved.project, "infrastructure");
+        assert_eq!(resolved.app_name, "redis");
+        assert_eq!(resolved.app.app_type, "redis");
+    }
+
+    // Test: pick_app_in_project resolves via alternative_name and returns the
+    // actual app key (not the alias)
+    #[test]
+    fn test_pick_app_in_project_by_alternative_name() {
+        let config = config_with_alternate_named_app();
+        let resolved = pick_app_in_project(&config, "p1", "api-alias").unwrap();
+        assert_eq!(resolved.project, "p1");
+        assert_eq!(resolved.app_name, "api");
+        assert_eq!(resolved.app.app_type, "nodejs");
+    }
+
+    // Test: pick_app_in_project errors on unknown project or app
+    #[test]
+    fn test_pick_app_in_project_missing() {
+        let config = create_multi_project_config();
+        assert!(pick_app_in_project(&config, "nope", "redis").is_err());
+        assert!(pick_app_in_project(&config, "infrastructure", "nope").is_err());
+    }
+
     // Test: List all apps
     #[test]
     fn test_list_all_apps() {

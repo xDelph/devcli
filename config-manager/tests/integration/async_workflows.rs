@@ -10,11 +10,11 @@ struct Config {
     value: String,
 }
 
-async fn save_config(loader: &AsyncJsonLoader, config: &Config) -> Result<()> {
+async fn save_config_async(loader: &AsyncJsonLoader, config: &Config) -> Result<()> {
     AsyncConfigLoader::<Config>::save(loader, config).await
 }
 
-async fn load_config(loader: &AsyncJsonLoader) -> Result<Config> {
+async fn load_config_async(loader: &AsyncJsonLoader) -> Result<Config> {
     AsyncConfigLoader::<Config>::load(loader).await
 }
 
@@ -34,7 +34,7 @@ async fn test_concurrent_async_loads() {
 
     for (path, config) in &configs {
         let loader = AsyncJsonLoader::new(path);
-        save_config(&loader, config).await.unwrap();
+        save_config_async(&loader, config).await.unwrap();
     }
 
     let handles: Vec<_> = configs
@@ -44,7 +44,7 @@ async fn test_concurrent_async_loads() {
             let expected = expected_config.clone();
             tokio::spawn(async move {
                 let loader = AsyncJsonLoader::new(&path);
-                let loaded = load_config(&loader).await.unwrap();
+                let loaded = load_config_async(&loader).await.unwrap();
                 assert_eq!(loaded, expected);
             })
         })
@@ -64,17 +64,17 @@ async fn test_async_read_write_cycle() {
     let config1 = Config {
         value: "initial".to_string(),
     };
-    save_config(&loader, &config1).await.unwrap();
+    save_config_async(&loader, &config1).await.unwrap();
 
-    let loaded1 = load_config(&loader).await.unwrap();
+    let loaded1 = load_config_async(&loader).await.unwrap();
     assert_eq!(loaded1, config1);
 
     let config2 = Config {
         value: "updated".to_string(),
     };
-    save_config(&loader, &config2).await.unwrap();
+    save_config_async(&loader, &config2).await.unwrap();
 
-    let loaded2 = load_config(&loader).await.unwrap();
+    let loaded2 = load_config_async(&loader).await.unwrap();
     assert_eq!(loaded2, config2);
     assert_ne!(loaded2.value, config1.value);
 }
@@ -100,7 +100,7 @@ async fn test_async_multiple_formats() {
         value: "test-value".to_string(),
     };
 
-    save_config(&json_loader, &config).await.unwrap();
+    save_config_async(&json_loader, &config).await.unwrap();
 
     #[cfg(feature = "toml")]
     {
@@ -116,7 +116,7 @@ async fn test_async_multiple_formats() {
             .unwrap();
     }
 
-    let loaded_json = load_config(&json_loader).await.unwrap();
+    let loaded_json = load_config_async(&json_loader).await.unwrap();
     assert_eq!(loaded_json, config);
 
     #[cfg(feature = "toml")]

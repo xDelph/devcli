@@ -109,16 +109,20 @@ editor or `auto-add` silently, and only a test or a manual run would catch it.
 1. **Manual smoke (highest value, lowest cost):** `devcli config edit` → edit an
    app path + a dependency → save → `devcli config validate` → `devcli start`.
    Confirms read/write and dep-resolution end-to-end through the new path.
+   *Recommended before merge.*
 2. **Reduce future blindness:** after merging, re-run `pixel build-index` and
    re-check `pixel impact save_config` — if the count is still `lower_bound`,
    keep the manual caller list above updated (e.g. in this file) whenever these
    functions change.
-3. **Rename the test helper** in `config-manager/tests/integration/async_workflows.rs`
-   (e.g. `cm_save_config`) to remove the name collision — that alone removes
-   most of the "20 unresolved" and makes the index usable again.
-4. **Regression guard:** the round-trip test added for issue #1 already goes
+3. **Regression guard:** the round-trip test added for issue #1 already goes
    through `save_config`; a UI-level save in `config_editor.rs` is also covered
    by existing tests.
+4. **Status:** `[x]` — the name collision was removed by renaming the test
+   helpers in `config-manager/tests/integration/async_workflows.rs`
+   (`save_config` → `save_config_async`, `load_config` → `load_config_async`, all
+   call sites updated). `pixel impact save_config` should now attribute call
+   sites to the real `devcli-core` function instead of reporting 20 unresolved
+   same-name candidates. Re-index (`pixel build-index`) and re-check before merge.
 
 ## 3. `devcli_CONFIG_DIR` values are used literally — `~` and `$VAR` are NOT expanded
 
@@ -148,16 +152,16 @@ This is **legacy behavior** (identical before the migration) and nothing
 internal sets `devcli_CONFIG_DIR` with a shorthand. Only a user/script setting
 `~` or `$VAR` in it hits this.
 
-### Recommended actions
+### Status & what was done
 
-1. **Decide the contract.** Either (a) document "absolute paths only, shell
-   syntax not expanded", or (b) expand once at the top of
-   `get_config_path`/`get_preferences_path` with `config_manager::utils::expand_path`.
-   Option (b) is 3 lines; option (a) is 1 doc line.
-2. **Lock the decision with a test:** a unit test that sets
-   `devcli_CONFIG_DIR=~/.devcli` and asserts whether `get_config_path` returns a
-   literal `~` path or an expanded one.
-3. Low priority — no known internal or external reliance on either behavior.
+- **Status:** `[x]` — `~` in `devcli_CONFIG_DIR` now expands to `$HOME`.
+- `get_config_path` / `get_preferences_path` read the override through a new
+  `env_config_dir()` helper that applies `expand_tilde` (`config_manager::utils`)
+  before use, so `devcli_CONFIG_DIR=~/.devcli` resolves under the real home.
+- `$VAR` / `${VAR}` are intentionally NOT expanded (out of scope of this fix);
+  only tilde shorthand is handled.
+- Tests: `env_config_dir_expands_tilde_to_home`, `..._keeps_plain_absolute_path`,
+  `..._none_when_unset` in `config/loader.rs`.
 
 ## 4. The ambiguous-app prompt resolves the app twice
 
@@ -198,16 +202,21 @@ redundant computation — no user-visible bug today.
 No test exercises the `alternative_name`-within-project branch (resolving by an
 alias while a project filter is active).
 
-### Recommended actions
+### Status & what was done
 
-1. **Test first (cheap, protects behavior):** add unit tests that
-   `resolve_in_project` resolves by exact name and by `alternative_name`, and
-   that calling with no filter still returns `Ambiguous`.
-2. **Optional optimization:** rewrite the interactive handler to consume the
-   entry the user picked from the existing `candidates` list instead of calling
-   `resolve_in_project` again — one pass, same result. Verify with a manual
-   `devcli start` run on an ambiguous name.
-3. Nothing depends on the double resolution; no backend consumers need changes.
+- **Status:** `[x]` — the ambiguous-app prompt no longer re-resolves.
+- `resolve_app`'s interactive branch now calls `pick_app_in_project`, which
+  builds the `ResolvedApp` **directly from the config** (exact key first, then
+  `alternative_name`) using the project the user just picked — the second
+  `resolve_with_filter` pass is gone.
+- `pick_app_in_project` mirrors `ProjectAppResolver::resolve_in_project`;
+  failures are defensive only (the app came from the candidate list).
+- Tests: `test_pick_app_in_project_exact_name`,
+  `test_pick_app_in_project_by_alternative_name` (covers the previously missing
+  `alternative_name`-within-project branch, returns the actual key, not the
+  alias), `test_pick_app_in_project_missing`.
+- Manual check recommended: `devcli start` on a name present in two projects,
+  pick one, confirm the resolved app is the picked one.
 
 ## Housekeeping
 
