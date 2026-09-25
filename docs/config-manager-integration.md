@@ -50,6 +50,9 @@ devcli-core
 
 - Circular dependencies error (config-manager DFS), not silent BFS truncation.
 - Domain types stay in `config/models.rs`.
+- Load/save round-trip preserves `~/...` shorthand: `load()` expands tilde paths
+  in memory, `save()` contracts paths under `$HOME` back to `~/...` before
+  writing (see `contract_app_paths` in `config_manager_support.rs`).
 
 ---
 

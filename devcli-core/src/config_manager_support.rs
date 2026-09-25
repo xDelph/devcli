@@ -13,10 +13,8 @@ use crate::Result;
 use config_manager::dependencies::{DependencyGraph, DependencyProvider};
 use config_manager::loader::ConfigLoader;
 use config_manager::resolver::{fuzzy_match, Resolver};
-use config_manager::utils::{expand_path, expand_tilde};
-use config_manager::validation::{
-    ValidationError, ValidationResult, ValidationWarning, Validator,
-};
+use config_manager::utils::{contract_tilde, expand_path, expand_tilde};
+use config_manager::validation::{ValidationError, ValidationResult, ValidationWarning, Validator};
 use config_manager::{ConfigManager, Error as CmError, JsonLoader};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -73,10 +71,30 @@ impl DevCliConfigManager {
     }
 
     /// Persist config.json (pretty-printed).
+    ///
+    /// Paths under `$HOME` are written back as `~/...` shorthand so that a
+    /// load → save round-trip does not rewrite portable tilde paths to
+    /// absolute paths (see `expand_app_paths` on load). The caller's in-memory
+    /// config is left untouched; only the persisted copy is contracted.
     pub fn save(&self, config: &Config) -> Result<()> {
+        let mut out = config.clone();
+        contract_app_paths(&mut out);
         self.manager
-            .save(config)
+            .save(&out)
             .map_err(|err| anyhow::anyhow!("{err}"))
+    }
+}
+
+/// Contract `~/...` paths in all app configurations (product-layer pre-save).
+///
+/// Mirrors [`expand_app_paths`]; only paths under `$HOME` are contracted, so
+/// explicitly absolute paths outside home and relative paths pass through
+/// unchanged.
+fn contract_app_paths(config: &mut Config) {
+    for project in config.projects.values_mut() {
+        for app in project.apps.values_mut() {
+            app.path = contract_tilde(&app.path);
+        }
     }
 }
 
@@ -183,11 +201,7 @@ impl ProjectAppResolver {
                 let name_matches = actual_app_name == app_name;
                 let alt_matches = app.alternative_name.as_deref() == Some(app_name);
                 if name_matches || alt_matches {
-                    matches.push((
-                        project_name.clone(),
-                        actual_app_name.clone(),
-                        app.clone(),
-                    ));
+                    matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
                 }
             }
         }
@@ -454,7 +468,13 @@ fn validate_app(result: &mut ValidationResult, field: &str, config: &Config, app
         ));
     }
 
-    validate_env_defaults(result, field, "local", &app.commands.local, &app.defaults.local);
+    validate_env_defaults(
+        result,
+        field,
+        "local",
+        &app.commands.local,
+        &app.defaults.local,
+    );
     validate_env_defaults(
         result,
         field,
@@ -464,8 +484,7 @@ fn validate_app(result: &mut ValidationResult, field: &str, config: &Config, app
     );
 
     for dep in &app.dependencies {
-        if let Err(e) =
-            crate::config::resolver::get_app_by_project(config, &dep.project, &dep.app)
+        if let Err(e) = crate::config::resolver::get_app_by_project(config, &dep.project, &dep.app)
         {
             result.add_error(ValidationError::new(
                 field,
@@ -552,6 +571,55 @@ mod tests {
     }
 
     #[test]
+    fn save_contracts_tilde_paths_on_roundtrip() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config.json");
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let json = r#"{
+              "projects": {
+                "p": {
+                  "apps": {
+                    "api": {
+                      "type": "nodejs",
+                      "path": "~/my-app",
+                      "commands": { "local": { "start": "npm start" } },
+                      "defaults": { "local": "start" },
+                      "dependencies": []
+                    }
+                  }
+                }
+              }
+            }"#;
+        fs::write(&path, json).unwrap();
+
+        let manager = DevCliConfigManager::for_path(&path).unwrap();
+        let config = manager.load().unwrap();
+        assert_eq!(
+            config.projects["p"].apps["api"].path,
+            format!("{home}/my-app")
+        );
+
+        // load → save round-trip must not rewrite ~/... to an absolute path
+        manager.save(&config).unwrap();
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains(r#""path": "~/my-app""#),
+            "save rewrote tilde shorthand to absolute: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains(&format!("{home}/my-app")),
+            "save leaked absolute home path to disk: {on_disk}"
+        );
+
+        // the caller's in-memory config stays expanded/absolute
+        assert_eq!(
+            config.projects["p"].apps["api"].path,
+            format!("{home}/my-app")
+        );
+    }
+
+    #[test]
     fn load_expands_tilde_in_app_paths() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("config.json");
@@ -590,9 +658,7 @@ mod tests {
             )
             .build();
 
-        let resolved = ProjectAppResolver::new()
-            .resolve(&config, "redis")
-            .unwrap();
+        let resolved = ProjectAppResolver::new().resolve(&config, "redis").unwrap();
         assert_eq!(resolved.project, "infra");
         assert_eq!(resolved.app_name, "redis");
     }

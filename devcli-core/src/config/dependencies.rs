@@ -6,8 +6,8 @@
 
 use super::models::Config;
 use super::resolver::ResolvedApp;
-use process_manager::StateStore;
 use crate::Result;
+use process_manager::StateStore;
 
 /// Remove duplicate dependencies, keyed by `project/app` (not app name alone).
 pub fn dedup_dependencies(dependencies: &mut Vec<ResolvedApp>) {

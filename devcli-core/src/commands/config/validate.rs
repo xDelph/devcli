@@ -25,7 +25,11 @@ pub async fn config_validate() -> Result<()> {
     if !result.warnings().is_empty() {
         println!("⚠ Warnings:");
         for warning in result.warnings() {
-            println!("  - [{field}] {msg}", field = warning.field(), msg = warning.message());
+            println!(
+                "  - [{field}] {msg}",
+                field = warning.field(),
+                msg = warning.message()
+            );
         }
         println!();
     }
@@ -33,7 +37,11 @@ pub async fn config_validate() -> Result<()> {
     if !result.is_valid() {
         println!("✗ Errors:");
         for error in result.errors() {
-            println!("  - [{field}] {msg}", field = error.field(), msg = error.message());
+            println!(
+                "  - [{field}] {msg}",
+                field = error.field(),
+                msg = error.message()
+            );
         }
         println!("\nValidation failed with {} error(s)", result.error_count());
         anyhow::bail!("Config validation failed");

@@ -34,9 +34,8 @@ pub fn resolve_app(
     match resolver.resolve_with_filter(config, app_name, project_filter) {
         Ok(resolved) => Ok(resolved),
         Err(config_manager::Error::Ambiguous { candidates, .. }) => {
-            let prompt_message = format!(
-                "App '{app_name}' found in multiple projects. Please select one:"
-            );
+            let prompt_message =
+                format!("App '{app_name}' found in multiple projects. Please select one:");
 
             let selection = Select::new(&prompt_message, candidates.clone()).prompt();
 

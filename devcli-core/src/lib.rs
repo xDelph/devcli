@@ -1,14 +1,14 @@
 // This is the main library file that exposes our modules to other crates
 // The 'pub' keyword makes these modules publicly accessible
 
+pub mod app_detector_support;
 pub mod commands;
 pub mod config;
+pub mod config_manager_support;
 pub mod detection;
+pub mod env_flow_support;
 pub mod logging;
 pub mod metrics;
-pub mod app_detector_support;
-pub mod config_manager_support;
-pub mod env_flow_support;
 pub mod process_manager_support;
 pub mod tui;
 pub mod utils;
