@@ -1,127 +1,218 @@
 # Known Issues & Possible Bugs
 
-Quick working list gathered after the config-manager migration review (see
+Working list gathered after the config-manager migration review (see
 `docs/config-manager-integration.md`). Order roughly by importance. Not a
 backlog — these are open items to investigate. Status fields: `[ ]` = open,
 `[x]` = done.
 
-## 1. Tilde path round-trip on save (`~/...` rewritten to absolute paths)
+## 1. Tilde path round-trip on save — FIXED, with one behavior change to be aware of
 
-- **File:** `devcli-core/src/config_manager_support.rs` (`DevCliConfigManager::load` / `save`)
-- **Symptom:** `load()` expands `~` → absolute in memory; `save()` writes the
-  struct as-is. Any load → modify → save flow (`devcli config edit`, `devcli env`,
-  TUI config editor, `auto-add`) rewrites every user `~/...` path to
-  `/Users/...`, destroying portability and mixing formats with the
-  `contract_tilde`-written paths produced by `auto-add` / `detection/nx` /
-  `app_detector_support`.
-- **Status:** `[x]` — fixed on `use-config-manager` (commit after rebase)
-- **What was done:** `DevCliConfigManager::save` now writes a clone of the
-  config through `contract_app_paths`, which applies `contract_tilde` to every
-  `app.path` **under `$HOME`** before persisting. Round-trip is now symmetric:
-  file `~/x` → in-memory `$HOME/x` → file `~/x`. The caller's in-memory config
-  stays expanded (consumers keep working with absolute paths); only the
-  persisted copy is contracted. Paths outside `$HOME` and relative paths are
-  untouched by `contract_tilde`.
-- **Side effects to re-check during review:**
-  - The **only** behavioral change is on-write: an `app.path` that is absolute
-    **under `$HOME`** and was written that way by the user is now persisted as
-    `~/...`. Intentional paths outside home and relative paths are unaffected.
-  - Not applied to `preferences.json` (no paths in the model).
-- **Test:** `save_contracts_tilde_paths_on_roundtrip` (load `~/my-app`, save,
-  assert `~/my-app` on disk and absolute in memory).
-- **Manual check (recommended):** edit an app path to `~/...` via
-  `devcli config edit`, save, re-open — the file must still say `~/...`.
+### The original problem
 
-## 2. Unresolved same-name call sites for config API
+`load()` converts every `~/...` app path to a full absolute path in memory
+(`~/code/app` → `/Users/thomas/code/app`). `save()` used to write the struct
+*as-is*, so any load → modify → save flow would rewrite `~/...` back to
+`/Users/...` in the file. That made configs non-portable (they pointed at one
+machine's home dir) and mixed formats with the `~/...` paths that `auto-add` /
+`detection/nx` / `app_detector_support` write.
 
-- **Files:** `load_config`, `save_config`, `load_preferences`,
-  `save_preferences`, `resolve_dependency_chain`
-- **Symptom:** static analysis (pixel) reports it cannot resolve all callers of
-  these symbols (lower-bound, risk flagged CRITICAL). This is a **static-analysis
-  limitation, not evidence of breakage**: the whole workspace builds and
-  `cargo test --workspace --all-features` passes (400+ tests across 23 suites).
-  What it means concretely: callers passed as function values, behind trait
-  objects, or through generated code are not resolved by the index, so a
-  signature/behavior change to these functions can ship unnoticed by the graph.
-- **Known call sites (manually confirmed):**
-  - `load_config`/`save_config` → `config/loader.rs`, then
-    `commands/config/edit.rs`, `commands/env.rs`,
-    `tui/views/main_view/config_editor.rs` (4 call sites), `commands/auto_add/nx_monorepo.rs`.
-  - `load_preferences`/`save_preferences` → TUI prefs editor, `commands/env.rs`.
-  - `resolve_dependency_chain` → `commands/start/executor.rs` (and `pre`-start dep auto-start).
-- **Status:** `[ ]`
-- **Recommended actions (in order of value):**
-  1. **Manual smoke (low effort, high value):** `devcli config edit` → change an
-     app path + a dependency → save → `devcli config validate` → `devcli start` —
-     confirms read/write formatting and dep-chain resolution end-to-end on the
-     new config-manager path.
-  2. **Green the resolver:** re-run `pixel build-index` after finalizing the
-     branch and re-check `pixel impact "save_config"` — the unresolved-caller
-     count should drop; if `lower_bound` is still true, add explicit integration
-     coverage for the flows above rather than trusting the graph.
-  3. **Regression guard:** the round-trip test added for issue #1 now exercises
-     `save_config` through the adapter; consider also a test driving
-     `config_editor.rs`'s save path if it isn't already covered by a UI test.
+### The fix
 
-## 3. `devcli_CONFIG_DIR` env-var paths are used raw (no `~`/`$VAR` expansion)
+`DevCliConfigManager::save()` now writes a **copy** of the config through
+`contract_app_paths`, which applies `contract_tilde` to every `app.path` whose
+value lies **under `$HOME`**. Round-trip is now symmetric:
 
-- **File:** `devcli-core/src/config/loader.rs` (`get_config_path` /
-  `get_preferences_path`) + adapter (`with_path_expansion(false)`)
-- **Symptom:** if `devcli_CONFIG_DIR` contains `~` or `$VAR`, the value is used
-  verbatim (e.g. `~/.devcli` → literal directory named `~`). Behavior is
-  **identical to the legacy pre-migration loader** — the migration did not
-  change this. The `with_path_expansion(false)` in the adapter is deliberate:
-  it keeps the adapter from re-expanding paths the resolver already handled.
-- **Who is affected:** only users/scripts that set `devcli_CONFIG_DIR` with a
-  shell-style shorthand. No known internal usage does this.
-- **Status:** `[ ]` (verify intent, low priority)
-- **Recommended actions:**
-  1. **Decide the desired contract** for `devcli_CONFIG_DIR`: either document
-     "absolute paths only" (current reality) or expand `~`/`$VAR` once at the
-     top of `get_config_path`/`get_preferences_path` (e.g. reuse
-     `config_manager::utils::expand_path`), keeping `with_path_expansion(false)`
-     in the adapter regardless.
-  2. If expansion is kept disabled, add one line in `docs/config-manager-integration.md`
-     stating that `devcli_CONFIG_DIR` is taken raw.
-  3. Cheap regression: a unit test asserting a literal `~/.devcli` in
-     `devcli_CONFIG_DIR` either expands or is taken verbatim, locking in the
-     decision.
+```
+file:  ~/code/app  --load-->  memory: /Users/thomas/code/app  --save-->  file: ~/code/app
+```
 
-## 4. Ambiguous-app prompt does double resolution
+The caller's in-memory config is untouched (still absolute), so all code that
+reads `app.path` behaves as before.
 
-- **File:** `devcli-core/src/config/resolver.rs` (`resolve_app`) +
-  `ProjectAppResolver` (`resolve` / `resolve_with_filter`)
-- **Symptom:** app resolution is attempted **twice** in the ambiguous case.
-  Pass 1: `resolve()` with no project filter returns
-  `Err(Error::Ambiguous { candidates })`. The interactive `Select` then runs
-  pass 2: if the user's choice resolves inside a single project, it re-resolves
-  with a `--project` filter (`resolve_in_project`). Two resolution passes where
-  one would do; the second pass's result could be derived directly from the
-  already-computed `candidates`. Behavior matches the old (pre-migration) code,
-  so this is a pre-existing inefficiency, not a regression.
-- **Missing coverage:** no dedicated test for the `alternative_name`-within-
-  project branch (resolving by `alternative_name` while a project filter is
-  active).
-- **Status:** `[ ]` (cosmetic / test coverage, no user-visible bug)
-- **Recommended actions:**
-  1. **Cheap correctness win (do first):** add a unit test for
-     `resolve_in_project` resolving by `alternative_name` and by exact name,
-     plus a test asserting `resolve_with_filter` with no filter still returns
-     `Ambiguous` — protects the existing behavior before any optimization.
-  2. **Optional optimization:** change the prompt handler to consume the
-     already-fetched `candidates` (pick the chosen `(project, app)` from the
-     list) instead of re-running `resolve_in_project` with a filter — one
-     unification pass, same output. Low risk, but needs a UI/functional check
-     of the interactive `devcli start` prompt.
-  3. Leave unresolved symbols in this path alone until #2 lands; there are no
-     known users that depend on double resolution.
+### The side effect (what changes in the file on write)
+
+`contract_tilde` normalizes **any** path inside `$HOME` to `~/...` — including
+paths the user typed as absolute. Concretely:
+
+| What's on disk before saving | What the file contains after `save()` |
+|---|---|
+| `~/code/app` | `~/code/app` (unchanged, was already portable) |
+| `/Users/thomas/code/app` (typed absolute by the user) | `~/code/app` (normalized) |
+| `/opt/project` (outside home) | `/opt/project` (untouched) |
+| `./relative` (relative path) | `./relative` (untouched) |
+
+So the *only* observable change is: an absolute path under home is persisted as
+`~/...` the first time a save happens after this fix. Purely cosmetic, no
+resolution behavior changes (the value is expanded again on the next load), but
+a reviewer should know the on-disk text of such paths can differ from what the
+user typed. Test: `save_contracts_tilde_paths_on_roundtrip`.
+
+## 2. The index can't "see" the callers of the new config API
+
+### The change that triggered this
+
+After the migration, `load_config`, `save_config`, `load_preferences`,
+`save_preferences` and `resolve_dependency_chain` are thin functions in
+`devcli-core` that forward to the `config-manager` crate. Their call graph
+changed, and the static-analysis tool (pixel) reports it cannot track them.
+
+### What the tool actually says
+
+Running `pixel impact save_config` on the real function reports:
+
+```
+summary: "save_config: 0 at depth 1, 0 at depth 2, 0 at depth 3 ... risk UNKNOWN
+          (lower bound: 20 unresolved same-name call sites)"
+notes:    "no caller was found: the symbol is either unused or reached only
+           through a reference class the index does not record ..."
+epistemics.lower_bound = true
+```
+
+### Why it says that (two independent reasons)
+
+1. **A name collision.** There are two different `save_config` functions in the
+   repo: the real one in `devcli-core/src/config/loader.rs`, and an unrelated
+   test helper `save_config` in `config-manager/tests/integration/async_workflows.rs`.
+   The index matches call sites by symbol name, so these 20 candidate call sites
+   can't be attributed to either function — hence "same-name unresolved".
+2. **The index's known blind spots** (callbacks passed as arguments, dynamic
+   dispatch / `obj[method]()`, macro-generated calls). Any caller that reaches
+   the function through one of those channels is invisible to it.
+
+### What it does NOT mean
+
+- It does **not** mean the code is broken. `cargo build --workspace`,
+  `cargo test --workspace --all-features` (400+ tests, 23 suites) and
+  `cargo clippy -- -D warnings` all pass — if a caller were truly missing,
+  compilation would fail.
+- It does **not** mean the function is dead code (it has 27 real call sites
+  across 8 files, listed below).
+
+### Why it matters anyway (the real risk)
+
+This is a *maintenance* risk, not a runtime bug: because the tool cannot see the
+callers, if you later change the signature/behavior of `save_config` (or one of
+the other forwarded functions), **the tool will not warn you about the callers
+that need updating** — you could break `devcli config edit`, the TUI config
+editor or `auto-add` silently, and only a test or a manual run would catch it.
+
+### Known call sites (manually confirmed, 27 for `save_config`)
+
+- `save_config` / `load_config`: `commands/config/edit.rs` (4), `commands/env.rs` (3),
+  `commands/auto_add/single_app.rs` (2), `commands/auto_add/nx_monorepo.rs` (1),
+  `tui/views/main_view/config_editor.rs` (9) + TUI tests (7), `config/loader.rs`.
+- `load_preferences` / `save_preferences`: TUI preferences editor, `commands/env.rs`.
+- `resolve_dependency_chain`: `commands/start/executor.rs` (pre-start dep auto-start).
+
+### Recommended actions
+
+1. **Manual smoke (highest value, lowest cost):** `devcli config edit` → edit an
+   app path + a dependency → save → `devcli config validate` → `devcli start`.
+   Confirms read/write and dep-resolution end-to-end through the new path.
+2. **Reduce future blindness:** after merging, re-run `pixel build-index` and
+   re-check `pixel impact save_config` — if the count is still `lower_bound`,
+   keep the manual caller list above updated (e.g. in this file) whenever these
+   functions change.
+3. **Rename the test helper** in `config-manager/tests/integration/async_workflows.rs`
+   (e.g. `cm_save_config`) to remove the name collision — that alone removes
+   most of the "20 unresolved" and makes the index usable again.
+4. **Regression guard:** the round-trip test added for issue #1 already goes
+   through `save_config`; a UI-level save in `config_editor.rs` is also covered
+   by existing tests.
+
+## 3. `devcli_CONFIG_DIR` values are used literally — `~` and `$VAR` are NOT expanded
+
+### The problem
+
+`devcli_CONFIG_DIR` is an env var that overrides where the config file lives
+(see `get_config_path` / `get_preferences_path` in `config/loader.rs`). The
+value is used **verbatim** — no tilde or environment-variable expansion.
+
+Concrete example:
+
+```sh
+export devcli_CONFIG_DIR="~/.devcli"
+devcli ...        # devcli looks for a directory literally named "~"
+                  # (relative to the current directory), NOT your home directory.
+                  # The config silently goes to ./~/.devcli/config.json
+```
+
+It would even **create** that stray directory automatically (`fs::create_dir_all`
+on the parent). Same for `$VAR`/`${VAR}`. The adapter also calls
+`with_path_expansion(false)`, which is deliberate — it keeps the adapter from
+re-expanding paths the resolver already handles, and is unrelated to this issue.
+
+### Why it's currently not a big deal
+
+This is **legacy behavior** (identical before the migration) and nothing
+internal sets `devcli_CONFIG_DIR` with a shorthand. Only a user/script setting
+`~` or `$VAR` in it hits this.
+
+### Recommended actions
+
+1. **Decide the contract.** Either (a) document "absolute paths only, shell
+   syntax not expanded", or (b) expand once at the top of
+   `get_config_path`/`get_preferences_path` with `config_manager::utils::expand_path`.
+   Option (b) is 3 lines; option (a) is 1 doc line.
+2. **Lock the decision with a test:** a unit test that sets
+   `devcli_CONFIG_DIR=~/.devcli` and asserts whether `get_config_path` returns a
+   literal `~` path or an expanded one.
+3. Low priority — no known internal or external reliance on either behavior.
+
+## 4. The ambiguous-app prompt resolves the app twice
+
+### The problem
+
+When an app name exists in several projects, `devcli start` (and friends) must
+ask you which one you mean. It currently does the lookup **twice**:
+
+1. First resolution pass — no project filter:
+   `ProjectAppResolver::resolve()` returns `Ambiguous { candidates }` with the
+   list of matching (project, app) pairs.
+2. You pick one entry in the interactive `Select` prompt.
+3. Second resolution pass — `resolve_in_project()` re-resolves with a
+   `--project` filter to turn your choice into the final `ResolvedApp`.
+
+Both passes search the same in-memory config. Pass 2 could simply *pick your
+choice from the already-computed `candidates` list*; instead it re-runs the
+matching logic (name / alternative_name / project filter) a second time. If
+matching rules ever diverge between the two paths, what you selected and what
+gets resolved could disagree.
+
+Concrete example:
+
+```sh
+# two projects both contain an app named "api":
+devcli start api
+# → resolve() finds both → "Ambiguous"
+# → you select "web/api"
+# → resolve_in_project(config, "web", "api") runs again to compute the result
+#    (could have just used the entry you picked)
+```
+
+This is **pre-existing** (same in the old pre-migration code), purely a
+redundant computation — no user-visible bug today.
+
+### Missing coverage
+
+No test exercises the `alternative_name`-within-project branch (resolving by an
+alias while a project filter is active).
+
+### Recommended actions
+
+1. **Test first (cheap, protects behavior):** add unit tests that
+   `resolve_in_project` resolves by exact name and by `alternative_name`, and
+   that calling with no filter still returns `Ambiguous`.
+2. **Optional optimization:** rewrite the interactive handler to consume the
+   entry the user picked from the existing `candidates` list instead of calling
+   `resolve_in_project` again — one pass, same result. Verify with a manual
+   `devcli start` run on an ambiguous name.
+3. Nothing depends on the double resolution; no backend consumers need changes.
 
 ## Housekeeping
 
-- `tui-debug.log` (449 KB) checked out of `.gitignore`? — should stay ignored.
+- `tui-debug.log` (449 KB) — should stay in `.gitignore` (it is).
 - `.pixel/` added to `.gitignore` (fine).
-- **fmt drift:** the repository has a large pre-existing rustfmt-1.8.0 drift
-  (~90 files) inherited from an older formatter version. The config-manager
-  branch files are now rustfmt-clean (validated with `skip_children=true` for
-  module roots); a repo-wide `cargo fmt --all` commit is still needed before the
-  CI `fmt` gate can pass globally.
+- **fmt:** repo-wide rustfmt 1.8 drift fixed in a dedicated commit
+  (`style: apply rustfmt 1.8 across the whole workspace`); `cargo fmt --check`
+  now passes globally.
