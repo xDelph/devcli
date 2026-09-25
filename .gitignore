@@ -8,3 +8,4 @@ Cargo.lock
 tui-debug.log
 .obsidian
 graphify-out
+.pixel/

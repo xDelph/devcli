@@ -159,4 +159,67 @@ resolver = "2"
         );
         assert_eq!(apps.len(), 2, "expected workspace + website only, got {names:?}");
     }
+
+    // Build a fake node monorepo: root package.json + sub-apps in standard
+    // container dirs (apps/, packages/, libs/, modules/).
+    fn write_package_json(dir: &std::path::Path, name: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"{name}","scripts":{{"dev":"echo {name}"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn discover_node_monorepo_apps_in_containers() {
+        let root_dir = create_temp_dir();
+        write_package_json(root_dir.path(), "monorepo");
+
+        write_package_json(&root_dir.path().join("apps/web"), "web");
+        write_package_json(&root_dir.path().join("apps/api"), "api");
+        write_package_json(&root_dir.path().join("packages/shared"), "shared");
+        write_package_json(&root_dir.path().join("libs/ui"), "ui");
+        write_package_json(&root_dir.path().join("modules/worker"), "worker");
+        write_package_json(&root_dir.path().join("services/cron"), "cron");
+
+        // Non-container subdir with its own package.json still gets discovered
+        write_package_json(&root_dir.path().join("standalone"), "standalone");
+
+        let apps = discover_all_apps(root_dir.path()).unwrap();
+        let names: Vec<String> = apps.iter().map(|a| a.app_name.clone()).collect();
+
+        assert!(
+            names.contains(&"monorepo".to_string()),
+            "root app missing: {names:?}"
+        );
+        for expected in ["web", "api", "shared", "ui", "worker", "cron", "standalone"] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "expected {expected} discovered, got {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn discover_container_recursion_is_one_level_only() {
+        let root_dir = create_temp_dir();
+        write_package_json(root_dir.path(), "monorepo");
+
+        // apps/web should be found, apps/web/deeper must not
+        write_package_json(&root_dir.path().join("apps/web"), "web");
+        write_package_json(&root_dir.path().join("apps/web/deeper"), "deeper");
+
+        let apps = discover_all_apps(root_dir.path()).unwrap();
+        let names: Vec<String> = apps.iter().map(|a| a.app_name.clone()).collect();
+
+        assert!(
+            names.contains(&"web".to_string()),
+            "should find apps/web: {names:?}"
+        );
+        assert!(
+            !names.contains(&"deeper".to_string()),
+            "should not recurse past one level: {names:?}"
+        );
+    }
 }

@@ -153,11 +153,64 @@ pub fn discover_all_apps(
 
                 // Discover individual apps in this subdirectory
                 discovered_apps.extend(discover_individual_apps(&entry.path())?);
+
+                // Standard monorepo container dirs (apps/, packages/, libs/, …)
+                // hold the real projects one level deeper — recurse into them
+                // so e.g. `apps/web/package.json` is discovered, not just the
+                // root-level app.
+                if is_workspace_container_dir(&dir_name_str) {
+                    discovered_apps.extend(discover_apps_in_container(
+                        &entry.path(),
+                        workspace_members.as_ref(),
+                    )?);
+                }
             }
         }
     }
 
     Ok(discovered_apps)
+}
+
+/// Standard monorepo container directory names whose direct children are
+/// individual projects (e.g. `apps/web`, `packages/shared`, `libs/ui`).
+fn is_workspace_container_dir(dir_name: &str) -> bool {
+    matches!(
+        dir_name,
+        "apps" | "packages" | "libs" | "modules" | "services"
+    )
+}
+
+/// Discover the sub-apps inside a workspace container dir.
+///
+/// Only recurses one level: `apps/web` is scanned, `apps/web/deeper` is not.
+/// Cargo workspace members (leaf names) are skipped to avoid double-detection.
+fn discover_apps_in_container(
+    container_path: &std::path::Path,
+    workspace_members: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<crate::detection::DetectedApp>> {
+    let mut apps = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(container_path) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+
+            let dir_name = entry.file_name();
+            let dir_name_str = dir_name.to_string_lossy();
+            if should_skip_scan_dir(&dir_name_str) {
+                continue;
+            }
+
+            if workspace_members.is_some_and(|members| members.contains(dir_name_str.as_ref())) {
+                continue;
+            }
+
+            apps.extend(discover_individual_apps(&entry.path())?);
+        }
+    }
+
+    Ok(apps)
 }
 
 fn normalize_scan_root(path: &std::path::Path) -> std::path::PathBuf {
