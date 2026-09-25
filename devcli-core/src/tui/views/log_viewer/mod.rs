@@ -26,7 +26,7 @@ use self::{
     json_formatter::JsonFormatter,
     search::SearchState,
     syntax_highlighter::SyntaxHighlighter,
-    viewport::ViewportState,
+    viewport::{ScrollAnchor, ViewportState},
 };
 
 /// Result of handling input in LogViewerView
@@ -310,13 +310,12 @@ impl LogViewerView {
                     // Reset viewport state for remaining panels to handle layout change
                     // When going from multi-panel to single-panel, the viewport needs adjustment
                     for panel in &mut self.panels {
-                        // Reset the visual scroll offset so it recalculates for the new layout
-                        panel.viewport.last_visual_scroll = 0;
-
-                        // If the cursor was at the bottom, keep it at the bottom
-                        // This maintains the "follow latest logs" behavior
+                        // If the cursor was at the bottom, keep following the latest logs;
+                        // otherwise just reveal the cursor in the new layout.
                         if panel.viewport.cursor_line + 1 >= panel.total_lines {
-                            panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
+                            panel.viewport.follow_bottom(panel.total_lines);
+                        } else {
+                            panel.viewport.anchor = ScrollAnchor::None;
                         }
                     }
 
@@ -778,22 +777,44 @@ impl SingleLogView {
         }
 
         // Get visual row position for cursor
+        let total_visual_rows = current_visual_row;
         let cursor_visual_row = visual_row_positions
             .get(self.viewport.cursor_line)
             .copied()
             .unwrap_or(0);
 
-        // Calculate scroll offset to keep cursor visible
-        // Only scrolls when cursor moves outside the visible range
-        let scroll_offset = if cursor_visual_row < self.viewport.last_visual_scroll {
-            // Cursor moved above viewport - scroll up to show it at top
-            cursor_visual_row
-        } else if cursor_visual_row >= self.viewport.last_visual_scroll + visible_height {
-            // Cursor moved below viewport - scroll down to show it at bottom
-            cursor_visual_row.saturating_sub(visible_height - 1)
+        // Standard anchored scrolling, decided here because the wrapped visual
+        // layout is only known at render time:
+        // - scroll up (Top): cursor becomes the FIRST visible line
+        // - scroll down (Bottom): cursor becomes the LAST visible line
+        // - otherwise: keep the current position, only reveal the cursor if it
+        //   leaves the visible range (jumps, search, layout changes)
+        // Always clamped, so the first/last lines are always reachable and the
+        // view never scrolls past the content.
+        let anchor = std::mem::take(&mut self.viewport.anchor);
+        let max_scroll = total_visual_rows.saturating_sub(visible_height);
+        let scroll_offset = if total_visual_rows <= visible_height {
+            // Everything fits on screen - never hide the first lines
+            0
         } else {
-            // Cursor is within visible range - maintain current scroll position
-            self.viewport.last_visual_scroll
+            match anchor {
+                ScrollAnchor::Top => cursor_visual_row.min(max_scroll),
+                ScrollAnchor::Bottom => (cursor_visual_row + 1)
+                    .saturating_sub(visible_height)
+                    .min(max_scroll),
+                ScrollAnchor::None => {
+                    let current = self.viewport.last_visual_scroll.min(max_scroll);
+                    if cursor_visual_row < current {
+                        cursor_visual_row
+                    } else if cursor_visual_row >= current + visible_height {
+                        (cursor_visual_row + 1)
+                            .saturating_sub(visible_height)
+                            .min(max_scroll)
+                    } else {
+                        current
+                    }
+                }
+            }
         };
 
         // Remember scroll position for next frame
@@ -1099,12 +1120,12 @@ impl SingleLogView {
             }
             // Jump to top
             KeyCode::Home | KeyCode::Char('g') => {
-                self.viewport.cursor_line = 0;
+                self.viewport.jump_top();
                 Ok(LogInputResult::Handled)
             }
             // Jump to bottom
             KeyCode::End | KeyCode::Char('G') => {
-                self.viewport.cursor_line = self.content.len().saturating_sub(1);
+                self.viewport.jump_bottom(self.total_lines);
                 Ok(LogInputResult::Handled)
             }
             // Enter search mode
@@ -1176,7 +1197,7 @@ impl SingleLogView {
 
         // If we were at the bottom, stay at the bottom (auto-scroll)
         if was_at_bottom && new_total_lines > 0 {
-            self.viewport.cursor_line = new_total_lines.saturating_sub(1);
+            self.viewport.follow_bottom(new_total_lines);
         }
 
         Ok(true)
