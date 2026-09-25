@@ -76,10 +76,7 @@ fn workspace_info(path: &str) -> WorkspaceInfo {
 /// Parse `[workspace].members` from a Cargo.toml manifest.
 pub fn cargo_workspace_members(content: &str) -> Option<Vec<String>> {
     let value: toml::Value = toml::from_str(content).ok()?;
-    let members = value
-        .get("workspace")?
-        .get("members")?
-        .as_array()?;
+    let members = value.get("workspace")?.get("members")?.as_array()?;
     Some(
         members
             .iter()
@@ -136,8 +133,16 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("crates/api")).unwrap();
         fs::create_dir_all(dir.path().join("crates/lib")).unwrap();
-        fs::write(dir.path().join("crates/api/Cargo.toml"), "[package]\nname=\"api\"\n").unwrap();
-        fs::write(dir.path().join("crates/lib/Cargo.toml"), "[package]\nname=\"lib\"\n").unwrap();
+        fs::write(
+            dir.path().join("crates/api/Cargo.toml"),
+            "[package]\nname=\"api\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/lib/Cargo.toml"),
+            "[package]\nname=\"lib\"\n",
+        )
+        .unwrap();
 
         let members = expand_workspace_members(dir.path(), &["crates/*".to_string()]);
         assert_eq!(members.len(), 2);

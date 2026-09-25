@@ -143,7 +143,9 @@ fn test_form_field_backspace() {
     view.active_tab = MainTab::Config;
     view.config_mode = ConfigMode::Add;
     view.config_focused_field = ConfigField::ProjectName;
-    view.config_form.project_name.set_content("test".to_string());
+    view.config_form
+        .project_name
+        .set_content("test".to_string());
 
     let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
     assert!(view.handle_input(key, &state).unwrap());

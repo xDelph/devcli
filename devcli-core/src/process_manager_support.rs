@@ -58,12 +58,7 @@ pub fn find_process(
 ) -> Result<Option<ManagedProcess>> {
     let candidates = store.find_by_metadata("project", project)?;
     for proc in candidates {
-        if proc
-            .metadata
-            .get("app_config_name")
-            .map(String::as_str)
-            != Some(app_name)
-        {
+        if proc.metadata.get("app_config_name").map(String::as_str) != Some(app_name) {
             continue;
         }
 

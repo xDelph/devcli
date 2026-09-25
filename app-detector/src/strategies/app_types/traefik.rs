@@ -1,11 +1,6 @@
 //! Traefik reverse proxy detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 
 /// Detects Traefik reverse proxy via traefik.yml/yaml/toml
@@ -67,7 +62,8 @@ impl DetectionStrategy for TraefikStrategy {
             if ctx.file_exists(compose_file) {
                 if let Ok(content) = ctx.read_file(compose_file) {
                     let content_lower = content.to_lowercase();
-                    if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                    if content_lower.contains("traefik") || content_lower.contains("image: traefik")
+                    {
                         return true;
                     }
                 }
@@ -107,7 +103,9 @@ impl DetectionStrategy for TraefikStrategy {
                     && (file_name_str.ends_with(".yml")
                         || file_name_str.ends_with(".yaml")
                         || file_name_str.ends_with(".toml"))
-                    && !config_files.iter().any(|p| p.to_string_lossy() == file_name_str)
+                    && !config_files
+                        .iter()
+                        .any(|p| p.to_string_lossy() == file_name_str)
                 {
                     config_files.push(std::path::PathBuf::from(file_name_str.to_string()));
                 }
@@ -119,7 +117,8 @@ impl DetectionStrategy for TraefikStrategy {
             if ctx.file_exists(compose_file) {
                 if let Ok(content) = ctx.read_file(compose_file) {
                     let content_lower = content.to_lowercase();
-                    if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                    if content_lower.contains("traefik") || content_lower.contains("image: traefik")
+                    {
                         metadata.insert("in_docker_compose".to_string(), serde_json::json!(true));
                         break;
                     }
@@ -127,7 +126,10 @@ impl DetectionStrategy for TraefikStrategy {
             }
         }
 
-        metadata.insert("config_files_count".to_string(), serde_json::json!(config_files.len()));
+        metadata.insert(
+            "config_files_count".to_string(),
+            serde_json::json!(config_files.len()),
+        );
 
         Ok(DetectionResult {
             strategy_id: self.id().to_string(),
@@ -158,10 +160,8 @@ mod tests {
         // Create traefik.yml
         let traefik_yml = temp_dir.path().join("traefik.yml");
         let mut file = fs::File::create(&traefik_yml).unwrap();
-        file.write_all(
-            b"api:\n  dashboard: true\nentryPoints:\n  web:\n    address: :80\n",
-        )
-        .unwrap();
+        file.write_all(b"api:\n  dashboard: true\nentryPoints:\n  web:\n    address: :80\n")
+            .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let strategy = TraefikStrategy;
@@ -178,7 +178,9 @@ mod tests {
         match result.data {
             DetectionData::Service(info) => {
                 assert_eq!(info.name, "Traefik");
-                assert!(info.config_files.contains(&std::path::PathBuf::from("traefik.yml")));
+                assert!(info
+                    .config_files
+                    .contains(&std::path::PathBuf::from("traefik.yml")));
             }
             _ => panic!("Expected Service data"),
         }

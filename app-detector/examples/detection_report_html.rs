@@ -21,9 +21,7 @@ fn main() {
     let fixtures_dir = env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-        });
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"));
 
     if !fixtures_dir.exists() {
         eprintln!("Fixtures directory not found: {}", fixtures_dir.display());
@@ -44,10 +42,17 @@ fn main() {
     let results: Vec<FixtureResult> = dirs
         .iter()
         .map(|dir| {
-            let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             match engine.detect(dir) {
                 Ok(report) => FixtureResult::Ok { name, report },
-                Err(e)     => FixtureResult::Err { name, error: e.to_string() },
+                Err(e) => FixtureResult::Err {
+                    name,
+                    error: e.to_string(),
+                },
             }
         })
         .collect();
@@ -67,11 +72,20 @@ fn main() {
 // ─────────────────────────────────────────────────────────────
 
 enum FixtureResult {
-    Ok  { name: String, report: DetectionReport },
-    Err { name: String, error: String },
+    Ok {
+        name: String,
+        report: DetectionReport,
+    },
+    Err {
+        name: String,
+        error: String,
+    },
 }
 
-struct Warning { fixture: String, message: String }
+struct Warning {
+    fixture: String,
+    message: String,
+}
 
 // ─────────────────────────────────────────────────────────────
 // Open browser
@@ -80,11 +94,19 @@ struct Warning { fixture: String, message: String }
 fn open_browser(path: &std::path::Path) {
     let url = format!("file://{}", path.display());
     #[cfg(target_os = "macos")]
-    { let _ = std::process::Command::new("open").arg(&url).spawn(); }
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
     #[cfg(target_os = "linux")]
-    { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn(); }
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", &url])
+            .spawn();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -100,11 +122,17 @@ fn render_html(results: &[FixtureResult]) -> String {
             collect_warnings(name, report, &mut warnings);
         }
         if let FixtureResult::Err { name, error } = r {
-            warnings.push(Warning { fixture: name.clone(), message: format!("detection error: {error}") });
+            warnings.push(Warning {
+                fixture: name.clone(),
+                message: format!("detection error: {error}"),
+            });
         }
     }
 
-    let ok_count  = results.iter().filter(|r| matches!(r, FixtureResult::Ok { .. })).count();
+    let ok_count = results
+        .iter()
+        .filter(|r| matches!(r, FixtureResult::Ok { .. }))
+        .count();
     let warn_count = warnings.len();
 
     let cards_html: String = results.iter().map(render_card).collect();
@@ -112,7 +140,8 @@ fn render_html(results: &[FixtureResult]) -> String {
     let warnings_html = render_warnings(&warnings);
     let date = chrono_now();
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -348,7 +377,11 @@ function goToCard(id) {{
         total = results.len(),
         ok_count = ok_count,
         warn_count = warn_count,
-        warn_badge = if warn_count > 0 { format!("({warn_count})") } else { String::new() },
+        warn_badge = if warn_count > 0 {
+            format!("({warn_count})")
+        } else {
+            String::new()
+        },
         table_html = table_html,
         cards_html = cards_html,
         warnings_html = warnings_html,
@@ -360,42 +393,54 @@ function goToCard(id) {{
 // ─────────────────────────────────────────────────────────────
 
 fn render_summary_table(results: &[FixtureResult]) -> String {
-    let rows: String = results.iter().map(|r| match r {
-        FixtureResult::Err { name, error } => format!(
-            r#"<tr>
+    let rows: String = results
+        .iter()
+        .map(|r| match r {
+            FixtureResult::Err { name, error } => format!(
+                r#"<tr>
               <td class="fix-name">{name}</td>
               <td>—</td><td>—</td><td>—</td>
               <td class="status-err" title="{error}">✗ error</td>
             </tr>"#
-        ),
-        FixtureResult::Ok { name, report } => {
-            let app_badges = app_type_badges(report);
-            let env_badges = env_cap_badges(report);
-            let ws = if report.children.is_empty() {
-                r#"<span style="color:var(--muted)">—</span>"#.to_string()
-            } else {
-                format!(r#"<span class="ws-count">{}</span>"#, report.children.len())
-            };
-            let mut warns: Vec<Warning> = Vec::new();
-            collect_warnings(name, report, &mut warns);
-            let status = if warns.is_empty() {
-                r#"<span class="status-ok">✓</span>"#.to_string()
-            } else {
-                format!(r#"<span class="status-warn" title="{}">⚠ {}</span>"#,
-                    warns.iter().map(|w| &*w.message).collect::<Vec<_>>().join("; "),
-                    warns.len())
-            };
-            format!(r#"<tr>
+            ),
+            FixtureResult::Ok { name, report } => {
+                let app_badges = app_type_badges(report);
+                let env_badges = env_cap_badges(report);
+                let ws = if report.children.is_empty() {
+                    r#"<span style="color:var(--muted)">—</span>"#.to_string()
+                } else {
+                    format!(r#"<span class="ws-count">{}</span>"#, report.children.len())
+                };
+                let mut warns: Vec<Warning> = Vec::new();
+                collect_warnings(name, report, &mut warns);
+                let status = if warns.is_empty() {
+                    r#"<span class="status-ok">✓</span>"#.to_string()
+                } else {
+                    format!(
+                        r#"<span class="status-warn" title="{}">⚠ {}</span>"#,
+                        warns
+                            .iter()
+                            .map(|w| &*w.message)
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                        warns.len()
+                    )
+                };
+                format!(
+                    r#"<tr>
               <td class="fix-name"><a href="javascript:goToCard('{name}')">{name}</a></td>
               <td>{app_badges}</td>
               <td>{env_badges}</td>
               <td>{ws}</td>
               <td>{status}</td>
-            </tr>"#)
-        }
-    }).collect();
+            </tr>"#
+                )
+            }
+        })
+        .collect();
 
-    format!(r#"<table>
+    format!(
+        r#"<table>
       <thead><tr>
         <th>Fixture</th>
         <th>App Types</th>
@@ -404,7 +449,8 @@ fn render_summary_table(results: &[FixtureResult]) -> String {
         <th>Status</th>
       </tr></thead>
       <tbody>{rows}</tbody>
-    </table>"#)
+    </table>"#
+    )
 }
 
 fn app_type_badges(report: &DetectionReport) -> String {
@@ -412,15 +458,18 @@ fn app_type_badges(report: &DetectionReport) -> String {
     if types.is_empty() {
         return r#"<span class="badge badge-none">none</span>"#.to_string();
     }
-    types.iter().map(|r| {
-        let (label, cls) = match &r.data {
-            DetectionData::Language(i)  => (i.name.clone(),    "badge-lang"),
-            DetectionData::Monorepo(i)  => (i.tool.clone(),    "badge-mono"),
-            DetectionData::Service(i)   => (i.name.clone(),    "badge-svc"),
-            _                           => (r.strategy_id.clone(), "badge-lang"),
-        };
-        format!(r#"<span class="badge {cls}">{label}</span>"#)
-    }).collect()
+    types
+        .iter()
+        .map(|r| {
+            let (label, cls) = match &r.data {
+                DetectionData::Language(i) => (i.name.clone(), "badge-lang"),
+                DetectionData::Monorepo(i) => (i.tool.clone(), "badge-mono"),
+                DetectionData::Service(i) => (i.name.clone(), "badge-svc"),
+                _ => (r.strategy_id.clone(), "badge-lang"),
+            };
+            format!(r#"<span class="badge {cls}">{label}</span>"#)
+        })
+        .collect()
 }
 
 fn env_cap_badges(report: &DetectionReport) -> String {
@@ -428,17 +477,19 @@ fn env_cap_badges(report: &DetectionReport) -> String {
     if caps.is_empty() {
         return r#"<span class="badge badge-none">none</span>"#.to_string();
     }
-    caps.iter().map(|r| {
-        let (label, cls) = match r.strategy_id.as_str() {
-            "docker"         => ("docker",  "badge-docker"),
-            "orbstack-env"   => ("orbstack","badge-docker"),
-            "kubernetes-env" => ("k8s",     "badge-k8s"),
-            "local-env"      => ("local",   "badge-local"),
-            "nx-env"         => ("nx",      "badge-mono"),
-            _                => (r.strategy_id.as_str(), "badge-lang"),
-        };
-        format!(r#"<span class="badge {cls}">{label}</span>"#)
-    }).collect()
+    caps.iter()
+        .map(|r| {
+            let (label, cls) = match r.strategy_id.as_str() {
+                "docker" => ("docker", "badge-docker"),
+                "orbstack-env" => ("orbstack", "badge-docker"),
+                "kubernetes-env" => ("k8s", "badge-k8s"),
+                "local-env" => ("local", "badge-local"),
+                "nx-env" => ("nx", "badge-mono"),
+                _ => (r.strategy_id.as_str(), "badge-lang"),
+            };
+            format!(r#"<span class="badge {cls}">{label}</span>"#)
+        })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -465,7 +516,7 @@ fn render_card(result: &FixtureResult) -> String {
 
             let app_section = render_card_app_types(report);
             let env_section = render_card_env_caps(report);
-            let ws_section  = render_card_workspaces(report);
+            let ws_section = render_card_workspaces(report);
 
             let warn_tag = if has_warn {
                 format!(r#"<span class="badge badge-warn">⚠ {}</span>"#, warns.len())
@@ -479,7 +530,8 @@ fn render_card(result: &FixtureResult) -> String {
                 .next()
                 .unwrap_or(&path_display);
 
-            format!(r#"<div class="card{extra}" id="card-{name}">
+            format!(
+                r#"<div class="card{extra}" id="card-{name}">
               <div class="card-header">
                 <div>
                   <span class="card-name">{name}</span>
@@ -503,52 +555,67 @@ fn render_card_app_types(report: &DetectionReport) -> String {
     let types = report.app_types();
     let label = r#"<div class="card-label">App Types</div>"#;
     if types.is_empty() {
-        return format!(r#"{label}<div class="card-section"><span class="badge badge-none">none detected</span></div>"#);
+        return format!(
+            r#"{label}<div class="card-section"><span class="badge badge-none">none detected</span></div>"#
+        );
     }
-    let items: String = types.iter().map(|r| {
-        let (name, version, extras) = match &r.data {
-            DetectionData::Language(i) => {
-                let v = i.version.clone().unwrap_or_default();
-                let mut ex = Vec::new();
-                if let Some(pm) = i.metadata.get("package_manager") {
-                    ex.push(format!("pkg mgr: {}", pm.as_str().unwrap_or("")));
+    let items: String = types
+        .iter()
+        .map(|r| {
+            let (name, version, extras) = match &r.data {
+                DetectionData::Language(i) => {
+                    let v = i.version.clone().unwrap_or_default();
+                    let mut ex = Vec::new();
+                    if let Some(pm) = i.metadata.get("package_manager") {
+                        ex.push(format!("pkg mgr: {}", pm.as_str().unwrap_or("")));
+                    }
+                    if let Some(ts) = i.metadata.get("typescript") {
+                        if ts.as_bool() == Some(true) {
+                            ex.push("TypeScript".to_string());
+                        }
+                    }
+                    (i.name.clone(), v, ex)
                 }
-                if let Some(ts) = i.metadata.get("typescript") {
-                    if ts.as_bool() == Some(true) { ex.push("TypeScript".to_string()); }
+                DetectionData::Monorepo(i) => {
+                    let v = i.version.clone().unwrap_or_default();
+                    let ex = vec![format!("{} workspaces", i.workspace_info.len())];
+                    (i.tool.clone(), v, ex)
                 }
-                (i.name.clone(), v, ex)
-            }
-            DetectionData::Monorepo(i) => {
-                let v = i.version.clone().unwrap_or_default();
-                let ex = vec![format!("{} workspaces", i.workspace_info.len())];
-                (i.tool.clone(), v, ex)
-            }
-            DetectionData::Service(i) => {
-                let v = i.version.clone().unwrap_or_default();
-                (i.name.clone(), v, vec![])
-            }
-            _ => (r.strategy_id.clone(), String::new(), vec![]),
-        };
-        let badge_cls = match &r.data {
-            DetectionData::Language(_) => "badge-lang",
-            DetectionData::Monorepo(_) => "badge-mono",
-            DetectionData::Service(_)  => "badge-svc",
-            _ => "badge-lang",
-        };
-        let conf_tag = if r.confidence < 1.0 {
-            format!(r#"<span class="badge badge-warn">{:.0}%</span>"#, r.confidence * 100.0)
-        } else { String::new() };
-        let extras_html: String = extras.iter()
-            .map(|e| format!(r#"<span class="badge badge-none">{e}</span>"#))
-            .collect();
+                DetectionData::Service(i) => {
+                    let v = i.version.clone().unwrap_or_default();
+                    (i.name.clone(), v, vec![])
+                }
+                _ => (r.strategy_id.clone(), String::new(), vec![]),
+            };
+            let badge_cls = match &r.data {
+                DetectionData::Language(_) => "badge-lang",
+                DetectionData::Monorepo(_) => "badge-mono",
+                DetectionData::Service(_) => "badge-svc",
+                _ => "badge-lang",
+            };
+            let conf_tag = if r.confidence < 1.0 {
+                format!(
+                    r#"<span class="badge badge-warn">{:.0}%</span>"#,
+                    r.confidence * 100.0
+                )
+            } else {
+                String::new()
+            };
+            let extras_html: String = extras
+                .iter()
+                .map(|e| format!(r#"<span class="badge badge-none">{e}</span>"#))
+                .collect();
 
-        format!(r#"<div style="margin:0.25rem 0">
+            format!(
+                r#"<div style="margin:0.25rem 0">
           <span class="badge {badge_cls}">{name}</span>
           {conf_tag}
           <span style="color:var(--muted);font-size:0.75rem">{version}</span>
           {extras_html}
-        </div>"#)
-    }).collect();
+        </div>"#
+            )
+        })
+        .collect();
 
     format!(r#"<div class="card-section">{label}{items}</div>"#)
 }
@@ -557,7 +624,9 @@ fn render_card_env_caps(report: &DetectionReport) -> String {
     let caps = report.env_capabilities();
     let label = r#"<div class="card-label">Env Capabilities</div>"#;
     if caps.is_empty() {
-        return format!(r#"{label}<div class="card-section"><span class="badge badge-none">none</span></div>"#);
+        return format!(
+            r#"{label}<div class="card-section"><span class="badge badge-none">none</span></div>"#
+        );
     }
     let items: String = caps.into_iter().map(render_env_cap_item).collect();
     format!(r#"<div class="card-section">{label}{items}</div>"#)
@@ -569,51 +638,75 @@ fn render_env_cap_item(r: &app_detector::types::DetectionResult) -> String {
             let badge = r#"<span class="badge badge-docker">docker</span>"#;
             let mut details = Vec::new();
             if !info.dockerfiles.is_empty() {
-                details.push(format!(r#"<div class="detail-row">
+                details.push(format!(
+                    r#"<div class="detail-row">
                   <span class="detail-key">Dockerfiles</span>
                   <span class="detail-val">{}</span></div>"#,
-                    info.dockerfiles.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+                    info.dockerfiles
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             if !info.stages.is_empty() {
-                details.push(format!(r#"<div class="detail-row">
+                details.push(format!(
+                    r#"<div class="detail-row">
                   <span class="detail-key">Stages</span>
                   <span class="detail-val highlight">{}</span></div>"#,
                     info.stages.join(" → ")
                 ));
             }
             if !info.compose_files.is_empty() {
-                details.push(format!(r#"<div class="detail-row">
+                details.push(format!(
+                    r#"<div class="detail-row">
                   <span class="detail-key">Compose</span>
                   <span class="detail-val">{}</span></div>"#,
-                    info.compose_files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+                    info.compose_files
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             let cmds = render_commands(&info.commands, None);
             let warn = if info.commands.is_empty() {
                 r#"<span class="badge badge-warn">⚠ no commands</span>"#
-            } else { "" };
-            format!(r#"<div style="margin:0.4rem 0">
+            } else {
+                ""
+            };
+            format!(
+                r#"<div style="margin:0.4rem 0">
               {badge} {warn}
               <div style="margin:0.3rem 0 0.3rem 0.5rem">{}</div>
               <div style="margin-left:0.5rem">{cmds}</div>
-            </div>"#, details.join(""))
+            </div>"#,
+                details.join("")
+            )
         }
         DetectionData::OrbStackEnv(info) => {
             let badge = r#"<span class="badge badge-docker">orbstack</span>"#;
             let cmds = render_commands(&info.commands, None);
             let warn = if info.commands.is_empty() {
                 r#"<span class="badge badge-warn">⚠ no commands</span>"#
-            } else { "" };
-            format!(r#"<div style="margin:0.4rem 0">{badge} {warn}<div style="margin:0.3rem 0 0 0.5rem">{cmds}</div></div>"#)
+            } else {
+                ""
+            };
+            format!(
+                r#"<div style="margin:0.4rem 0">{badge} {warn}<div style="margin:0.3rem 0 0 0.5rem">{cmds}</div></div>"#
+            )
         }
         DetectionData::LocalEnv(info) => {
             let badge = r#"<span class="badge badge-local">local</span>"#;
             let cmds = render_commands(&info.commands, info.suggested_default.as_deref());
             let warn = if info.commands.is_empty() {
                 r#"<span class="badge badge-warn">⚠ no commands</span>"#
-            } else { "" };
-            format!(r#"<div style="margin:0.4rem 0">{badge} {warn}<div style="margin:0.3rem 0 0 0.5rem">{cmds}</div></div>"#)
+            } else {
+                ""
+            };
+            format!(
+                r#"<div style="margin:0.4rem 0">{badge} {warn}<div style="margin:0.3rem 0 0 0.5rem">{cmds}</div></div>"#
+            )
         }
         DetectionData::KubernetesEnv(info) => {
             let badge = r#"<span class="badge badge-k8s">kubernetes</span>"#;
@@ -627,19 +720,29 @@ fn render_env_cap_item(r: &app_detector::types::DetectionResult) -> String {
             let cmds = render_commands(&info.commands, info.suggested_default.as_deref());
             let warn = if info.commands.is_empty() {
                 r#"<span class="badge badge-warn">⚠ no commands</span>"#
-            } else { "" };
-            format!(r#"<div style="margin:0.4rem 0">
+            } else {
+                ""
+            };
+            format!(
+                r#"<div style="margin:0.4rem 0">
               {badge} {warn}
               <div style="margin:0.3rem 0 0.3rem 0.5rem">{details}</div>
               <div style="margin-left:0.5rem">{cmds}</div>
-            </div>"#)
+            </div>"#
+            )
         }
         DetectionData::NxEnv(info) => {
             let badge = r#"<span class="badge badge-mono">nx</span>"#;
-            let from_defaults = info.metadata.get("targets_from_defaults")
-                .and_then(|v| v.as_u64()).unwrap_or(0);
-            let from_projects = info.metadata.get("targets_from_projects")
-                .and_then(|v| v.as_u64()).unwrap_or(0);
+            let from_defaults = info
+                .metadata
+                .get("targets_from_defaults")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let from_projects = info
+                .metadata
+                .get("targets_from_projects")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let details = format!(
                 r#"<div class="detail-row">
                   <span class="detail-key">Targets</span>
@@ -654,47 +757,74 @@ fn render_env_cap_item(r: &app_detector::types::DetectionResult) -> String {
             let cmds = render_commands(&info.commands, info.suggested_default.as_deref());
             let warn = if info.commands.is_empty() {
                 r#"<span class="badge badge-warn">⚠ no targets found in config</span>"#
-            } else { "" };
-            format!(r#"<div style="margin:0.4rem 0">
+            } else {
+                ""
+            };
+            format!(
+                r#"<div style="margin:0.4rem 0">
               {badge} {warn}
               <div style="margin:0.3rem 0 0.3rem 0.5rem">{details}</div>
               <div style="margin-left:0.5rem">{cmds}</div>
-            </div>"#)
+            </div>"#
+            )
         }
-        _ => format!(r#"<div style="margin:0.25rem 0"><span class="badge badge-none">{}</span></div>"#, r.strategy_id),
+        _ => format!(
+            r#"<div style="margin:0.25rem 0"><span class="badge badge-none">{}</span></div>"#,
+            r.strategy_id
+        ),
     }
 }
 
-fn render_commands(commands: &std::collections::HashMap<String, String>, default: Option<&str>) -> String {
-    if commands.is_empty() { return String::new(); }
+fn render_commands(
+    commands: &std::collections::HashMap<String, String>,
+    default: Option<&str>,
+) -> String {
+    if commands.is_empty() {
+        return String::new();
+    }
     let mut keys: Vec<&String> = commands.keys().collect();
     keys.sort();
-    let items: String = keys.iter().map(|k| {
-        let is_default = default == Some(k.as_str());
-        let cls = if is_default { "cmd default-cmd" } else { "cmd" };
-        let val = &commands[*k];
-        format!(r#"<span class="{cls}" title="{val}"><span class="cmd-key">{k}</span></span>"#)
-    }).collect();
+    let items: String = keys
+        .iter()
+        .map(|k| {
+            let is_default = default == Some(k.as_str());
+            let cls = if is_default { "cmd default-cmd" } else { "cmd" };
+            let val = &commands[*k];
+            format!(r#"<span class="{cls}" title="{val}"><span class="cmd-key">{k}</span></span>"#)
+        })
+        .collect();
     format!(r#"<div class="cmd-grid">{items}</div>"#)
 }
 
 fn render_card_workspaces(report: &DetectionReport) -> String {
-    if report.children.is_empty() { return String::new(); }
+    if report.children.is_empty() {
+        return String::new();
+    }
     let label = r#"<div class="card-label">Workspaces</div>"#;
-    let items: String = report.children.iter().map(|child| {
-        let ws_name = child.path.file_name().unwrap_or_default().to_string_lossy();
-        let app_badges = app_type_badges(child);
-        let env_badges = env_cap_badges(child);
-        // Show commands for each env cap in workspace
-        let env_details: String = child.env_capabilities().into_iter().map(render_env_cap_item).collect();
-        format!(r#"<div class="ws-item">
+    let items: String = report
+        .children
+        .iter()
+        .map(|child| {
+            let ws_name = child.path.file_name().unwrap_or_default().to_string_lossy();
+            let app_badges = app_type_badges(child);
+            let env_badges = env_cap_badges(child);
+            // Show commands for each env cap in workspace
+            let env_details: String = child
+                .env_capabilities()
+                .into_iter()
+                .map(render_env_cap_item)
+                .collect();
+            format!(
+                r#"<div class="ws-item">
           <div class="ws-item-name">📦 {ws_name}</div>
           <div style="margin-left:0.5rem">
             <div style="margin-bottom:0.25rem">{app_badges} {env_badges}</div>
             {env_details}
           </div>
-        </div>"#)
-    }).collect();
+        </div>"#
+            )
+        })
+        .collect();
     format!(r#"<div class="card-section">{label}<div class="ws-tree">{items}</div></div>"#)
 }
 
@@ -704,14 +834,21 @@ fn render_card_workspaces(report: &DetectionReport) -> String {
 
 fn render_warnings(warnings: &[Warning]) -> String {
     if warnings.is_empty() {
-        return r#"<div class="all-ok">✓ No warnings — all fixtures look correct.</div>"#.to_string();
+        return r#"<div class="all-ok">✓ No warnings — all fixtures look correct.</div>"#
+            .to_string();
     }
-    let items: String = warnings.iter().map(|w| {
-        format!(r#"<div class="warning-item">
+    let items: String = warnings
+        .iter()
+        .map(|w| {
+            format!(
+                r#"<div class="warning-item">
           <span class="warn-fix">{}</span>
           <span class="warn-msg">{}</span>
-        </div>"#, w.fixture, w.message)
-    }).collect();
+        </div>"#,
+                w.fixture, w.message
+            )
+        })
+        .collect();
     format!(r#"<div class="warnings-box">{items}</div>"#)
 }
 
@@ -722,11 +859,11 @@ fn render_warnings(warnings: &[Warning]) -> String {
 fn collect_warnings(name: &str, report: &DetectionReport, warnings: &mut Vec<Warning>) {
     for r in report.env_capabilities() {
         let has_commands = match &r.data {
-            DetectionData::DockerEnv(i)     => !i.commands.is_empty(),
-            DetectionData::OrbStackEnv(i)   => !i.commands.is_empty(),
-            DetectionData::LocalEnv(i)      => !i.commands.is_empty(),
+            DetectionData::DockerEnv(i) => !i.commands.is_empty(),
+            DetectionData::OrbStackEnv(i) => !i.commands.is_empty(),
+            DetectionData::LocalEnv(i) => !i.commands.is_empty(),
             DetectionData::KubernetesEnv(i) => !i.commands.is_empty(),
-            DetectionData::NxEnv(i)         => !i.commands.is_empty(),
+            DetectionData::NxEnv(i) => !i.commands.is_empty(),
             _ => true,
         };
         if !has_commands {
@@ -738,7 +875,11 @@ fn collect_warnings(name: &str, report: &DetectionReport, warnings: &mut Vec<War
         if r.confidence < 0.8 {
             warnings.push(Warning {
                 fixture: name.to_string(),
-                message: format!("low confidence on '{}' ({:.0}%)", r.strategy_id, r.confidence * 100.0),
+                message: format!(
+                    "low confidence on '{}' ({:.0}%)",
+                    r.strategy_id,
+                    r.confidence * 100.0
+                ),
             });
         }
     }
@@ -746,7 +887,11 @@ fn collect_warnings(name: &str, report: &DetectionReport, warnings: &mut Vec<War
         if r.confidence < 0.8 {
             warnings.push(Warning {
                 fixture: name.to_string(),
-                message: format!("low confidence on '{}' ({:.0}%)", r.strategy_id, r.confidence * 100.0),
+                message: format!(
+                    "low confidence on '{}' ({:.0}%)",
+                    r.strategy_id,
+                    r.confidence * 100.0
+                ),
             });
         }
     }
@@ -754,9 +899,9 @@ fn collect_warnings(name: &str, report: &DetectionReport, warnings: &mut Vec<War
         let ws_name = child.path.file_name().unwrap_or_default().to_string_lossy();
         for r in child.env_capabilities() {
             let has_commands = match &r.data {
-                DetectionData::DockerEnv(i)     => !i.commands.is_empty(),
-                DetectionData::OrbStackEnv(i)   => !i.commands.is_empty(),
-                DetectionData::LocalEnv(i)      => !i.commands.is_empty(),
+                DetectionData::DockerEnv(i) => !i.commands.is_empty(),
+                DetectionData::OrbStackEnv(i) => !i.commands.is_empty(),
+                DetectionData::LocalEnv(i) => !i.commands.is_empty(),
                 DetectionData::KubernetesEnv(i) => !i.commands.is_empty(),
                 _ => true,
             };
@@ -777,7 +922,10 @@ fn collect_warnings(name: &str, report: &DetectionReport, warnings: &mut Vec<War
 fn chrono_now() -> String {
     // Simple timestamp without chrono dependency
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let s = secs % 86400;
     let h = s / 3600;
     let m = (s % 3600) / 60;
@@ -793,15 +941,32 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     loop {
         let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
         let dy = if leap { 366 } else { 365 };
-        if days < dy { break; }
+        if days < dy {
+            break;
+        }
         days -= dy;
         y += 1;
     }
     let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
-    let months = [31u64, if leap {29} else {28}, 31,30,31,30,31,31,30,31,30,31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
     for dm in months {
-        if days < dm { break; }
+        if days < dm {
+            break;
+        }
         days -= dm;
         mo += 1;
     }

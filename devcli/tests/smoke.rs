@@ -13,7 +13,11 @@ fn help_exits_successfully() {
         .output()
         .expect("run devcli --help");
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("start"));
     assert!(stdout.contains("ui"));

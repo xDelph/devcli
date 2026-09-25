@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
-use crate::{Error, Result, types::EnvEntry};
+use crate::{types::EnvEntry, Error, Result};
 
 /// Interpolate all values in the map in-place.
 ///
@@ -221,10 +221,7 @@ mod tests {
 
     #[test]
     fn interpolate_all_updates_map() {
-        let mut m = map_from(&[
-            ("BASE", "hello"),
-            ("GREETING", "${BASE}_world"),
-        ]);
+        let mut m = map_from(&[("BASE", "hello"), ("GREETING", "${BASE}_world")]);
         interpolate_all(&mut m).unwrap();
         assert_eq!(m.get("GREETING").unwrap().value, "hello_world");
         // BASE unchanged

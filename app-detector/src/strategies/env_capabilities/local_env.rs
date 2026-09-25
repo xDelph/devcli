@@ -1,12 +1,7 @@
 //! Local environment capability detection strategy
 //! Extracts local commands based on detected app type
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 
 /// Detects local environment commands based on app type
@@ -85,7 +80,10 @@ impl DetectionStrategy for LocalEnvStrategy {
         // Suggest a default command
         let suggested_default = suggest_default_command(detected_app_type, &commands);
 
-        metadata.insert("command_count".to_string(), serde_json::json!(commands.len()));
+        metadata.insert(
+            "command_count".to_string(),
+            serde_json::json!(commands.len()),
+        );
 
         Ok(DetectionResult {
             strategy_id: self.id().to_string(),
@@ -180,7 +178,10 @@ fn extract_python_package_commands(ctx: &DetectionContext, commands: &mut HashMa
     if ctx.file_exists("main.py") {
         commands.insert("start".to_string(), python_run_main_command(&pm));
     } else if ctx.file_exists("src/main.py") {
-        commands.insert("start".to_string(), python_run_module_command(&pm, "src.main"));
+        commands.insert(
+            "start".to_string(),
+            python_run_module_command(&pm, "src.main"),
+        );
     } else {
         commands.insert("start".to_string(), python_run_main_command(&pm));
     }
@@ -394,21 +395,15 @@ fn extract_cargo_workspace_commands(info: &MonorepoInfo, commands: &mut HashMap<
     commands.insert("run".to_string(), "cargo run --workspace".to_string());
 
     for workspace in &info.workspace_info {
-        let name = workspace
-            .name
-            .clone()
-            .unwrap_or_else(|| {
-                workspace
-                    .path
-                    .split('/')
-                    .next_back()
-                    .unwrap_or("crate")
-                    .to_string()
-            });
-        commands.insert(
-            format!("build-{name}"),
-            format!("cargo build -p {name}"),
-        );
+        let name = workspace.name.clone().unwrap_or_else(|| {
+            workspace
+                .path
+                .split('/')
+                .next_back()
+                .unwrap_or("crate")
+                .to_string()
+        });
+        commands.insert(format!("build-{name}"), format!("cargo build -p {name}"));
         commands.insert(format!("test-{name}"), format!("cargo test -p {name}"));
         commands.insert(format!("run-{name}"), format!("cargo run -p {name}"));
     }
@@ -533,7 +528,10 @@ mod tests {
         match result.data {
             DetectionData::LocalEnv(info) => {
                 assert_eq!(info.commands.len(), 3);
-                assert_eq!(info.commands.get("start"), Some(&"npm run start".to_string()));
+                assert_eq!(
+                    info.commands.get("start"),
+                    Some(&"npm run start".to_string())
+                );
                 assert_eq!(info.commands.get("dev"), Some(&"npm run dev".to_string()));
                 assert_eq!(info.commands.get("test"), Some(&"npm run test".to_string()));
                 // Should suggest "start" as default
@@ -568,7 +566,10 @@ mod tests {
             DetectionData::LocalEnv(info) => {
                 assert!(info.commands.contains_key("start"));
                 assert!(info.commands.contains_key("install"));
-                assert_eq!(info.commands.get("start"), Some(&"python main.py".to_string()));
+                assert_eq!(
+                    info.commands.get("start"),
+                    Some(&"python main.py".to_string())
+                );
                 assert_eq!(
                     info.commands.get("install"),
                     Some(&"pip install -r requirements.txt".to_string())
@@ -641,7 +642,11 @@ mod tests {
             "[tool.uv.workspace]\nmembers = [\"packages/api\"]\n",
         )
         .unwrap();
-        fs::write(temp_dir.path().join("packages/api/pyproject.toml"), "name = \"api\"\n").unwrap();
+        fs::write(
+            temp_dir.path().join("packages/api/pyproject.toml"),
+            "name = \"api\"\n",
+        )
+        .unwrap();
         fs::write(temp_dir.path().join("uv.lock"), "").unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();

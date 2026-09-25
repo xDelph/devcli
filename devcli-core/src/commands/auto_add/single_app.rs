@@ -128,8 +128,7 @@ pub fn discover_all_apps(
 ) -> Result<Vec<crate::detection::DetectedApp>> {
     let root_path = normalize_scan_root(root_path);
     let mut discovered_apps = Vec::new();
-    let workspace_members =
-        crate::app_detector_support::cargo_workspace_member_dirs(&root_path);
+    let workspace_members = crate::app_detector_support::cargo_workspace_member_dirs(&root_path);
 
     // Discover individual config files in the root directory
     discovered_apps.extend(discover_individual_apps(&root_path)?);

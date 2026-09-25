@@ -7,11 +7,12 @@
 //!   cargo run --example report -p env-flow -- /my/project
 
 use env_flow::{
-    EnvFlow, EnvVars, LayerType, RuntimeContext, Stage,
-    detector,
-    types::ResolvedLayer,
+    detector, types::ResolvedLayer, EnvFlow, EnvVars, LayerType, RuntimeContext, Stage,
 };
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 // ─────────────────────────────────────────────────────────────
 // Data model
@@ -40,16 +41,16 @@ enum LoadMode {
 impl LoadMode {
     fn label(&self) -> &'static str {
         match self {
-            LoadMode::Cascade   => "cascade",
+            LoadMode::Cascade => "cascade",
             LoadMode::NoCascade => "no-cascade",
-            LoadMode::FromFile  => "from-file",
+            LoadMode::FromFile => "from-file",
         }
     }
     fn css_class(&self) -> &'static str {
         match self {
-            LoadMode::Cascade   => "badge-mode-cascade",
+            LoadMode::Cascade => "badge-mode-cascade",
             LoadMode::NoCascade => "badge-mode-nocascade",
-            LoadMode::FromFile  => "badge-mode-fromfile",
+            LoadMode::FromFile => "badge-mode-fromfile",
         }
     }
 }
@@ -61,7 +62,10 @@ struct ScenarioResult {
     vars: Result<EnvVars, env_flow::Error>,
 }
 
-struct Warning { fixture: String, message: String }
+struct Warning {
+    fixture: String,
+    message: String,
+}
 
 // ─────────────────────────────────────────────────────────────
 // Entry point
@@ -71,9 +75,7 @@ fn main() {
     let fixtures_dir = env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-        });
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"));
 
     if !fixtures_dir.exists() {
         eprintln!("Directory not found: {}", fixtures_dir.display());
@@ -136,26 +138,33 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
     let file_count = detected.len();
 
     // Extract unique stages and contexts from discovered files
-    let mut stages: Vec<String> = detected.iter()
+    let mut stages: Vec<String> = detected
+        .iter()
         .filter_map(|f| f.stage.clone())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
 
-    let mut contexts: Vec<String> = detected.iter()
+    let mut contexts: Vec<String> = detected
+        .iter()
         .filter_map(|f| f.context.clone())
         .filter(|c| c != "local") // 'local' is the default, show separately
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
 
-    if stages.is_empty() { stages.push("(none)".into()); }
-    if contexts.is_empty() { contexts.push("local".into()); }
+    if stages.is_empty() {
+        stages.push("(none)".into());
+    }
+    if contexts.is_empty() {
+        contexts.push("local".into());
+    }
 
     // Build representative scenarios based on what's in the fixture
     let mut scenarios = Vec::new();
     let actual_stages: Vec<Option<Stage>> = {
-        let mut s: Vec<Option<Stage>> = detected.iter()
+        let mut s: Vec<Option<Stage>> = detected
+            .iter()
             .filter_map(|f| f.stage.as_deref())
             .map(|s| Some(Stage::from(s)))
             .collect::<std::collections::BTreeSet<_>>() // deduplicate via Ord
@@ -171,7 +180,7 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
     for ctx in &probe_contexts {
         for stage in &actual_stages {
             let stage_label = stage.as_ref().map(|s| s.as_str()).unwrap_or("base");
-            let base_label  = format!("{stage_label} / {}", ctx.as_str());
+            let base_label = format!("{stage_label} / {}", ctx.as_str());
 
             let layers = match EnvFlow::from_dir(dir)
                 .context(ctx.clone())
@@ -219,11 +228,7 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
             // Only do this for fixtures with <= 4 existing files to keep report concise
             if existing_count <= 4 {
                 for layer in layers.iter().filter(|l| l.exists) {
-                    let file_label = format!(
-                        "{} [from-file: {}]",
-                        base_label,
-                        layer.relative_path
-                    );
+                    let file_label = format!("{} [from-file: {}]", base_label, layer.relative_path);
                     let vars_ff = EnvFlow::from_file(&layer.path).load();
                     // Reuse single-element layer list for the from-file view
                     scenarios.push(ScenarioResult {
@@ -248,7 +253,15 @@ fn analyse(dir: &Path, root: &Path) -> FixtureResult {
         }
     }
 
-    FixtureResult { name, path: dir.to_path_buf(), file_count, stages, contexts, scenarios, warnings }
+    FixtureResult {
+        name,
+        path: dir.to_path_buf(),
+        file_count,
+        stages,
+        contexts,
+        scenarios,
+        warnings,
+    }
 }
 
 /// Build a deduplicated list of runtime contexts to probe, based on what files exist.
@@ -266,7 +279,10 @@ fn build_probe_contexts(detected: &[detector::DetectedFile]) -> Vec<RuntimeConte
         }
     }
 
-    ctx_names.into_iter().map(|s| RuntimeContext::from(s.as_str())).collect()
+    ctx_names
+        .into_iter()
+        .map(|s| RuntimeContext::from(s.as_str()))
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -276,11 +292,19 @@ fn build_probe_contexts(detected: &[detector::DetectedFile]) -> Vec<RuntimeConte
 fn open_browser(path: &std::path::Path) {
     let url = format!("file://{}", path.display());
     #[cfg(target_os = "macos")]
-    { let _ = std::process::Command::new("open").arg(&url).spawn(); }
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
     #[cfg(target_os = "linux")]
-    { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn(); }
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", &url])
+            .spawn();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -291,7 +315,10 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
     let mut warnings: Vec<Warning> = Vec::new();
     for r in results {
         for w in &r.warnings {
-            warnings.push(Warning { fixture: r.name.clone(), message: w.clone() });
+            warnings.push(Warning {
+                fixture: r.name.clone(),
+                message: w.clone(),
+            });
         }
     }
 
@@ -305,9 +332,14 @@ fn render_html(results: &[FixtureResult], fixtures_dir: &Path) -> String {
     let cards_html: String = results.iter().map(render_card).collect();
     let warnings_html = render_warnings(&warnings);
     let mode_comparison_html = render_mode_comparison(results);
-    let warn_badge = if warn_count > 0 { format!("({warn_count})") } else { String::new() };
+    let warn_badge = if warn_count > 0 {
+        format!("({warn_count})")
+    } else {
+        String::new()
+    };
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -612,31 +644,48 @@ function toggleScenario(el) {{
 // ─────────────────────────────────────────────────────────────
 
 fn render_summary_table(results: &[FixtureResult]) -> String {
-    let rows: String = results.iter().map(|r| {
-        let stage_badges: String = r.stages.iter()
-            .map(|s| format!(r#"<span class="badge badge-stage">{s}</span>"#))
-            .collect();
-        let ctx_badges: String = r.contexts.iter()
-            .map(|c| format!(r#"<span class="badge badge-ctx">{c}</span>"#))
-            .collect();
-        let file_badge = format!(r#"<span class="badge badge-file">{} files</span>"#, r.file_count);
-        let status = if r.warnings.is_empty() {
-            r#"<span class="status-ok">✓</span>"#.to_string()
-        } else {
-            let msgs = r.warnings.join("; ");
-            format!(r#"<span class="status-warn" title="{msgs}">⚠ {}</span>"#, r.warnings.len())
-        };
+    let rows: String = results
+        .iter()
+        .map(|r| {
+            let stage_badges: String = r
+                .stages
+                .iter()
+                .map(|s| format!(r#"<span class="badge badge-stage">{s}</span>"#))
+                .collect();
+            let ctx_badges: String = r
+                .contexts
+                .iter()
+                .map(|c| format!(r#"<span class="badge badge-ctx">{c}</span>"#))
+                .collect();
+            let file_badge = format!(
+                r#"<span class="badge badge-file">{} files</span>"#,
+                r.file_count
+            );
+            let status = if r.warnings.is_empty() {
+                r#"<span class="status-ok">✓</span>"#.to_string()
+            } else {
+                let msgs = r.warnings.join("; ");
+                format!(
+                    r#"<span class="status-warn" title="{msgs}">⚠ {}</span>"#,
+                    r.warnings.len()
+                )
+            };
 
-        format!(r#"<tr>
+            format!(
+                r#"<tr>
           <td class="fix-name"><a href="javascript:goToCard('{name}')">{name}</a></td>
           <td>{file_badge}</td>
           <td>{stage_badges}</td>
           <td>{ctx_badges}</td>
           <td>{status}</td>
-        </tr>"#, name = r.name)
-    }).collect();
+        </tr>"#,
+                name = r.name
+            )
+        })
+        .collect();
 
-    format!(r#"<table>
+    format!(
+        r#"<table>
       <thead><tr>
         <th>Fixture</th>
         <th>Files</th>
@@ -645,7 +694,8 @@ fn render_summary_table(results: &[FixtureResult]) -> String {
         <th>Status</th>
       </tr></thead>
       <tbody>{rows}</tbody>
-    </table>"#)
+    </table>"#
+    )
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -655,20 +705,29 @@ fn render_summary_table(results: &[FixtureResult]) -> String {
 fn render_card(r: &FixtureResult) -> String {
     let has_warn = !r.warnings.is_empty();
     let warn_tag = if has_warn {
-        format!(r#"<span class="badge badge-warn">⚠ {}</span>"#, r.warnings.len())
+        format!(
+            r#"<span class="badge badge-warn">⚠ {}</span>"#,
+            r.warnings.len()
+        )
     } else {
         r#"<span class="status-ok">✓</span>"#.to_string()
     };
 
-    let scenarios_html: String = r.scenarios.iter().enumerate().map(|(i, s)| {
-        render_scenario(s, i == 0)
-    }).collect();
+    let scenarios_html: String = r
+        .scenarios
+        .iter()
+        .enumerate()
+        .map(|(i, s)| render_scenario(s, i == 0))
+        .collect();
 
     let no_scenarios = if r.scenarios.is_empty() {
         r#"<div style="color:var(--muted);font-size:0.8rem">No .env files found in this directory.</div>"#
-    } else { "" };
+    } else {
+        ""
+    };
 
-    format!(r#"<div class="card{extra}" id="card-{name}">
+    format!(
+        r#"<div class="card{extra}" id="card-{name}">
       <div class="card-header">
         <div>
           <span class="card-name">{name}</span>
@@ -696,7 +755,8 @@ fn render_scenario(s: &ScenarioResult, open: bool) -> String {
 
     let mode_badge = format!(
         r#"<span class="badge {}">{}</span>"#,
-        s.mode.css_class(), s.mode.label()
+        s.mode.css_class(),
+        s.mode.label()
     );
 
     let status_badge = match &s.vars {
@@ -707,11 +767,13 @@ fn render_scenario(s: &ScenarioResult, open: bool) -> String {
     let layers_html = render_layers(&s.layers);
     let vars_html = match &s.vars {
         Ok(v) if !v.is_empty() => render_vars(v),
-        Ok(_) => r#"<span style="color:var(--muted);font-size:0.75rem">— no variables —</span>"#.to_string(),
+        Ok(_) => r#"<span style="color:var(--muted);font-size:0.75rem">— no variables —</span>"#
+            .to_string(),
         Err(e) => format!(r#"<div style="color:var(--red);font-size:0.75rem">{e}</div>"#),
     };
 
-    format!(r#"<div class="scenario">
+    format!(
+        r#"<div class="scenario">
       <div class="scenario-hdr" onclick="toggleScenario(this)">
         <span class="scenario-label">{label}</span>
         <span style="display:flex;gap:0.3rem;align-items:center">
@@ -732,67 +794,81 @@ fn render_scenario(s: &ScenarioResult, open: bool) -> String {
 
 fn render_layers(layers: &[ResolvedLayer]) -> String {
     if layers.is_empty() {
-        return r#"<div style="color:var(--muted);font-size:0.75rem">— no layers —</div>"#.to_string();
+        return r#"<div style="color:var(--muted);font-size:0.75rem">— no layers —</div>"#
+            .to_string();
     }
-    let rows: String = layers.iter().map(|l| {
-        let type_name = layer_type_name(&l.layer_type);
-        let pill_cls = format!("lp-{}", type_name.replace(' ', ""));
-        let path_cls = if l.exists { "layer-path" } else { "layer-path missing" };
-        let tick = if l.exists {
-            r#"<span class="layer-check">✓</span>"#
-        } else {
-            r#"<span class="layer-dash">○</span>"#
-        };
-        format!(r#"<div class="layer-row">
+    let rows: String = layers
+        .iter()
+        .map(|l| {
+            let type_name = layer_type_name(&l.layer_type);
+            let pill_cls = format!("lp-{}", type_name.replace(' ', ""));
+            let path_cls = if l.exists {
+                "layer-path"
+            } else {
+                "layer-path missing"
+            };
+            let tick = if l.exists {
+                r#"<span class="layer-check">✓</span>"#
+            } else {
+                r#"<span class="layer-dash">○</span>"#
+            };
+            format!(
+                r#"<div class="layer-row">
           {tick}
           <span class="layer-pill {pill_cls}">{type_name}</span>
           <span class="{path_cls}">{rel}</span>
         </div>"#,
-            type_name = type_name,
-            rel = l.relative_path,
-        )
-    }).collect();
+                type_name = type_name,
+                rel = l.relative_path,
+            )
+        })
+        .collect();
     format!(r#"<div style="margin:0.2rem 0">{rows}</div>"#)
 }
 
 fn layer_type_name(lt: &LayerType) -> &'static str {
     match lt {
-        LayerType::Base              => "Base",
-        LayerType::ContextBase       => "ContextBase",
-        LayerType::StageBase         => "StageBase",
-        LayerType::StageContext      => "StageContext",
-        LayerType::LocalOverride     => "LocalOverride",
+        LayerType::Base => "Base",
+        LayerType::ContextBase => "ContextBase",
+        LayerType::StageBase => "StageBase",
+        LayerType::StageContext => "StageContext",
+        LayerType::LocalOverride => "LocalOverride",
         LayerType::StageLocalOverride => "StageLocalOverride",
     }
 }
 
 fn render_vars(vars: &EnvVars) -> String {
-    let rows: String = vars.iter().map(|(k, v)| {
-        let (_, path) = vars.get_with_source(k).unwrap_or((v, Path::new("")));
-        let src = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        // Truncate long values
-        let display_val = if v.len() > 80 {
-            format!("{}…", &v[..80])
-        } else {
-            v.replace('<', "&lt;").replace('>', "&gt;")
-        };
-        format!(r#"<tr>
+    let rows: String = vars
+        .iter()
+        .map(|(k, v)| {
+            let (_, path) = vars.get_with_source(k).unwrap_or((v, Path::new("")));
+            let src = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Truncate long values
+            let display_val = if v.len() > 80 {
+                format!("{}…", &v[..80])
+            } else {
+                v.replace('<', "&lt;").replace('>', "&gt;")
+            };
+            format!(
+                r#"<tr>
           <td class="var-key">{k}</td>
           <td class="var-val">{display_val}</td>
           <td class="var-src">{src}</td>
-        </tr>"#)
-    }).collect();
+        </tr>"#
+            )
+        })
+        .collect();
 
-    format!(r#"<table class="vars-table">
+    format!(
+        r#"<table class="vars-table">
       <thead><tr>
         <td style="color:var(--muted);font-size:0.65rem">KEY</td>
         <td style="color:var(--muted);font-size:0.65rem">VALUE</td>
         <td style="color:var(--muted);font-size:0.65rem">SOURCE</td>
       </tr></thead>
       <tbody>{rows}</tbody>
-    </table>"#)
+    </table>"#
+    )
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -801,14 +877,21 @@ fn render_vars(vars: &EnvVars) -> String {
 
 fn render_warnings(warnings: &[Warning]) -> String {
     if warnings.is_empty() {
-        return r#"<div class="all-ok">✓ No warnings — all fixtures loaded correctly.</div>"#.to_string();
+        return r#"<div class="all-ok">✓ No warnings — all fixtures loaded correctly.</div>"#
+            .to_string();
     }
-    let items: String = warnings.iter().map(|w| {
-        format!(r#"<div class="warning-item">
+    let items: String = warnings
+        .iter()
+        .map(|w| {
+            format!(
+                r#"<div class="warning-item">
           <span class="warn-fix">{}</span>
           <span class="warn-msg">{}</span>
-        </div>"#, w.fixture, w.message)
-    }).collect();
+        </div>"#,
+                w.fixture, w.message
+            )
+        })
+        .collect();
     format!(r#"<div class="warnings-box">{items}</div>"#)
 }
 
@@ -821,7 +904,7 @@ fn render_mode_comparison(results: &[FixtureResult]) -> String {
     let comparable: Vec<&FixtureResult> = results
         .iter()
         .filter(|r| {
-            let has_cascade    = r.scenarios.iter().any(|s| s.mode == LoadMode::Cascade);
+            let has_cascade = r.scenarios.iter().any(|s| s.mode == LoadMode::Cascade);
             let has_no_cascade = r.scenarios.iter().any(|s| s.mode == LoadMode::NoCascade);
             has_cascade && has_no_cascade
         })
@@ -911,20 +994,45 @@ fn render_mode_comparison(results: &[FixtureResult]) -> String {
 
 fn render_legend() -> String {
     let layers = [
-        ("Base",              "lp-Base",              "`.env` — always loaded first"),
-        ("ContextBase",       "lp-ContextBase",       "`.env.{ctx}` or `{ctx}/.env` — skipped for Local context"),
-        ("StageBase",        "lp-StageBase",         "`.env.{stage}` — stage-specific overrides"),
-        ("StageContext",     "lp-StageContext",      "`.env.{stage}.{ctx}` or `{ctx}/.env.{stage}`"),
-        ("LocalOverride",    "lp-LocalOverride",     "`.env.local` — machine-local secrets; skipped in containers/CI"),
-        ("StageLocalOverride","lp-StageLocalOverride","`.env.{stage}.local` — local + stage override; skipped in containers/CI"),
+        ("Base", "lp-Base", "`.env` — always loaded first"),
+        (
+            "ContextBase",
+            "lp-ContextBase",
+            "`.env.{ctx}` or `{ctx}/.env` — skipped for Local context",
+        ),
+        (
+            "StageBase",
+            "lp-StageBase",
+            "`.env.{stage}` — stage-specific overrides",
+        ),
+        (
+            "StageContext",
+            "lp-StageContext",
+            "`.env.{stage}.{ctx}` or `{ctx}/.env.{stage}`",
+        ),
+        (
+            "LocalOverride",
+            "lp-LocalOverride",
+            "`.env.local` — machine-local secrets; skipped in containers/CI",
+        ),
+        (
+            "StageLocalOverride",
+            "lp-StageLocalOverride",
+            "`.env.{stage}.local` — local + stage override; skipped in containers/CI",
+        ),
     ];
 
-    let rows: String = layers.iter().map(|(name, cls, desc)| {
-        format!(r#"<tr>
+    let rows: String = layers
+        .iter()
+        .map(|(name, cls, desc)| {
+            format!(
+                r#"<tr>
           <td style="padding:0.4rem 0.6rem"><span class="layer-pill {cls}">{name}</span></td>
           <td style="padding:0.4rem 0.6rem;color:var(--text);font-size:0.8rem">{desc}</td>
-        </tr>"#)
-    }).collect();
+        </tr>"#
+            )
+        })
+        .collect();
 
     let matrix = r#"
 <div style="margin-top:1.5rem;margin-bottom:0.5rem;color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em">
@@ -961,7 +1069,8 @@ fn render_legend() -> String {
   </tbody>
 </table>"#;
 
-    format!(r#"
+    format!(
+        r#"
 <div style="margin-bottom:0.5rem;color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em">
   Layer types (low → high priority)
 </div>
@@ -973,7 +1082,8 @@ fn render_legend() -> String {
   <tbody>{rows}</tbody>
 </table>
 {matrix}
-"#)
+"#
+    )
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1000,15 +1110,32 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     loop {
         let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
         let dy = if leap { 366 } else { 365 };
-        if days < dy { break; }
+        if days < dy {
+            break;
+        }
         days -= dy;
         y += 1;
     }
     let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
-    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
     for dm in months {
-        if days < dm { break; }
+        if days < dm {
+            break;
+        }
         days -= dm;
         mo += 1;
     }

@@ -12,7 +12,9 @@ mod tests {
 
     #[test]
     fn detect_repo_root_workspace() {
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
         if !repo_root.join("Cargo.toml").exists() {
             return;
         }
@@ -23,7 +25,9 @@ mod tests {
 
     #[test]
     fn detect_each_workspace_member() {
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
         for member in [
             "app-detector",
             "config-manager",
@@ -38,17 +42,20 @@ mod tests {
                 continue;
             }
             let detected = crate::detection::detect_app(&path).unwrap();
-            let expected = if member == "website" { "nodejs" } else { "rust" };
-            assert_eq!(
-                detected.app_type, expected,
-                "unexpected type for {member}"
-            );
+            let expected = if member == "website" {
+                "nodejs"
+            } else {
+                "rust"
+            };
+            assert_eq!(detected.app_type, expected, "unexpected type for {member}");
         }
     }
 
     #[test]
     fn detect_app_relative_dot_path() {
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
         if !repo_root.join("Cargo.toml").exists() {
             return;
         }
@@ -68,7 +75,9 @@ mod tests {
 
     #[test]
     fn discover_relative_repo_root_includes_workspace() {
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
         if !repo_root.join("website").join("package.json").exists() {
             return;
         }
@@ -157,7 +166,11 @@ resolver = "2"
             types.contains(&"nodejs"),
             "expected nodejs website in {types:?}"
         );
-        assert_eq!(apps.len(), 2, "expected workspace + website only, got {names:?}");
+        assert_eq!(
+            apps.len(),
+            2,
+            "expected workspace + website only, got {names:?}"
+        );
     }
 
     // Build a fake node monorepo: root package.json + sub-apps in standard

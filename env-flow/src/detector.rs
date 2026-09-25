@@ -74,11 +74,7 @@ pub fn discover(root: &Path) -> Result<Vec<DetectedFile>> {
 /// Scan one directory for `.env*` files.
 ///
 /// `dir_context` is set when scanning a sub-directory (directory-style convention).
-fn scan_dir(
-    dir: &Path,
-    root: &Path,
-    dir_context: Option<&str>,
-) -> Result<Vec<DetectedFile>> {
+fn scan_dir(dir: &Path, root: &Path, dir_context: Option<&str>) -> Result<Vec<DetectedFile>> {
     let mut results = Vec::new();
 
     let entries = match std::fs::read_dir(dir) {
@@ -146,11 +142,7 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
             .and_then(|s| s.strip_suffix(".env"))
         {
             let parts: Vec<&str> = inner.split('.').collect();
-            let non_local: Vec<&str> = parts
-                .iter()
-                .copied()
-                .filter(|&p| p != "local")
-                .collect();
+            let non_local: Vec<&str> = parts.iter().copied().filter(|&p| p != "local").collect();
 
             if parts.last() == Some(&"local") {
                 is_local = true;
@@ -200,11 +192,7 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
         }
 
         // Classify the remaining tokens
-        let non_local: Vec<&str> = parts
-            .iter()
-            .copied()
-            .filter(|&p| p != "local")
-            .collect();
+        let non_local: Vec<&str> = parts.iter().copied().filter(|&p| p != "local").collect();
 
         match non_local.len() {
             0 => {
@@ -254,7 +242,7 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
     // else: bare `.env` in root or in a sub-dir (dir_context already set)
 
     DetectedFile {
-        path: PathBuf::new(), // filled in by caller
+        path: PathBuf::new(),         // filled in by caller
         relative_path: String::new(), // filled in by caller
         stage,
         context,
@@ -265,7 +253,10 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
 
 /// Known runtime context names (used to distinguish stage tokens from context tokens).
 fn is_known_context(s: &str) -> bool {
-    matches!(s, "docker" | "k8s" | "kubernetes" | "orbstack" | "ci" | "compose")
+    matches!(
+        s,
+        "docker" | "k8s" | "kubernetes" | "orbstack" | "ci" | "compose"
+    )
 }
 
 #[cfg(test)]

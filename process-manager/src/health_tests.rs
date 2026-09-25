@@ -197,9 +197,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        tokio::spawn(async move {
-            while listener.accept().await.is_ok() {}
-        });
+        tokio::spawn(async move { while listener.accept().await.is_ok() {} });
 
         let check = HealthCheck::Tcp {
             host: "127.0.0.1".to_string(),

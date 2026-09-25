@@ -14,12 +14,7 @@
 //! nx run-many --target=<target>
 //! ```
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::process::Command;
 
@@ -181,8 +176,12 @@ impl DetectionStrategy for NxEnvStrategy {
 /// Parse `nx.json`, extract `targetDefaults` keys into `targets`.
 /// Returns the number of new targets added.
 fn collect_targets_from_nx_json(ctx: &DetectionContext, targets: &mut BTreeSet<String>) -> usize {
-    let Ok(content) = ctx.read_file("nx.json") else { return 0 };
-    let Ok(nx_json) = serde_json::from_str::<serde_json::Value>(&content) else { return 0 };
+    let Ok(content) = ctx.read_file("nx.json") else {
+        return 0;
+    };
+    let Ok(nx_json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return 0;
+    };
 
     let Some(defaults) = nx_json.get("targetDefaults").and_then(|v| v.as_object()) else {
         return 0;
@@ -211,7 +210,9 @@ fn collect_targets_from_project_jsons(
             continue;
         }
 
-        let Ok(workspace_entries) = std::fs::read_dir(&dir_path) else { continue };
+        let Ok(workspace_entries) = std::fs::read_dir(&dir_path) else {
+            continue;
+        };
 
         for workspace in workspace_entries.flatten() {
             let project_json_path = workspace.path().join("project.json");
@@ -219,8 +220,12 @@ fn collect_targets_from_project_jsons(
                 continue;
             }
 
-            let Ok(content) = std::fs::read_to_string(&project_json_path) else { continue };
-            let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
+            let Ok(content) = std::fs::read_to_string(&project_json_path) else {
+                continue;
+            };
+            let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
 
             let Some(project_targets) = project.get("targets").and_then(|v| v.as_object()) else {
                 continue;
@@ -273,7 +278,8 @@ mod tests {
 
         // nx.json with targetDefaults only
         let mut f = fs::File::create(dir.path().join("nx.json")).unwrap();
-        f.write_all(br#"{"targetDefaults": {"build": {}, "test": {}, "lint": {}}}"#).unwrap();
+        f.write_all(br#"{"targetDefaults": {"build": {}, "test": {}, "lint": {}}}"#)
+            .unwrap();
 
         let ctx = make_nx_context(&dir);
         let strategy = NxEnvStrategy;
@@ -303,17 +309,23 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         // nx.json without targetDefaults
-        fs::write(dir.path().join("nx.json"), r#"{"extends": "nx/presets/npm.json"}"#).unwrap();
+        fs::write(
+            dir.path().join("nx.json"),
+            r#"{"extends": "nx/presets/npm.json"}"#,
+        )
+        .unwrap();
 
         // apps/web/project.json with targets
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
         let mut f = fs::File::create(dir.path().join("apps/web/project.json")).unwrap();
-        f.write_all(br#"{"name":"web","targets":{"build":{},"serve":{},"test":{}}}"#).unwrap();
+        f.write_all(br#"{"name":"web","targets":{"build":{},"serve":{},"test":{}}}"#)
+            .unwrap();
 
         // apps/api/project.json with overlapping + unique targets
         fs::create_dir_all(dir.path().join("apps/api")).unwrap();
         let mut f = fs::File::create(dir.path().join("apps/api/project.json")).unwrap();
-        f.write_all(br#"{"name":"api","targets":{"build":{},"serve":{},"e2e":{}}}"#).unwrap();
+        f.write_all(br#"{"name":"api","targets":{"build":{},"serve":{},"e2e":{}}}"#)
+            .unwrap();
 
         let ctx = make_nx_context(&dir);
         let strategy = NxEnvStrategy;
@@ -342,12 +354,14 @@ mod tests {
 
         // nx.json with targetDefaults
         let mut f = fs::File::create(dir.path().join("nx.json")).unwrap();
-        f.write_all(br#"{"targetDefaults": {"build": {}, "lint": {}}}"#).unwrap();
+        f.write_all(br#"{"targetDefaults": {"build": {}, "lint": {}}}"#)
+            .unwrap();
 
         // project.json with overlapping + unique targets
         fs::create_dir_all(dir.path().join("apps/web")).unwrap();
         let mut f = fs::File::create(dir.path().join("apps/web/project.json")).unwrap();
-        f.write_all(br#"{"targets":{"build":{},"serve":{},"test":{}}}"#).unwrap();
+        f.write_all(br#"{"targets":{"build":{},"serve":{},"test":{}}}"#)
+            .unwrap();
 
         let ctx = make_nx_context(&dir);
         let result = NxEnvStrategy.detect(&ctx).unwrap();
@@ -373,7 +387,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         // nx.json with no targetDefaults, no project.json files
-        fs::write(dir.path().join("nx.json"), r#"{"extends": "nx/presets/npm.json"}"#).unwrap();
+        fs::write(
+            dir.path().join("nx.json"),
+            r#"{"extends": "nx/presets/npm.json"}"#,
+        )
+        .unwrap();
 
         let ctx = make_nx_context(&dir);
         let result = NxEnvStrategy.detect(&ctx).unwrap();
@@ -392,7 +410,11 @@ mod tests {
     #[test]
     fn test_nx_env_not_applied_without_nx_result() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("nx.json"), r#"{"extends": "nx/presets/npm.json"}"#).unwrap();
+        fs::write(
+            dir.path().join("nx.json"),
+            r#"{"extends": "nx/presets/npm.json"}"#,
+        )
+        .unwrap();
 
         // Context without the nx result stored — simulates non-Nx project
         let ctx = DetectionContext::new(dir.path()).unwrap();
@@ -404,7 +426,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         let mut f = fs::File::create(dir.path().join("nx.json")).unwrap();
-        f.write_all(br#"{"targetDefaults": {"test": {}, "build": {}, "lint": {}, "serve": {}}}"#).unwrap();
+        f.write_all(br#"{"targetDefaults": {"test": {}, "build": {}, "lint": {}, "serve": {}}}"#)
+            .unwrap();
 
         let ctx = make_nx_context(&dir);
         let result = NxEnvStrategy.detect(&ctx).unwrap();
@@ -416,7 +439,10 @@ mod tests {
                     v.sort();
                     v
                 };
-                assert_eq!(info.targets, sorted, "Targets must be alphabetically sorted");
+                assert_eq!(
+                    info.targets, sorted,
+                    "Targets must be alphabetically sorted"
+                );
             }
             _ => panic!("Expected NxEnv data"),
         }

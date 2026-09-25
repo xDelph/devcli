@@ -119,7 +119,10 @@ fn detect_crate(ctx: &DetectionContext, content: &str) -> Result<DetectionResult
     let mut metadata = HashMap::new();
     metadata.insert("package_name".to_string(), serde_json::json!(name));
     if let Some(pkg_version) = package_version(content) {
-        metadata.insert("package_version".to_string(), serde_json::json!(pkg_version));
+        metadata.insert(
+            "package_version".to_string(),
+            serde_json::json!(pkg_version),
+        );
     }
     if let Some(edition) = package_edition(content) {
         metadata.insert("edition".to_string(), serde_json::json!(edition));

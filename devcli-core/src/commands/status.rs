@@ -108,7 +108,13 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
                 println!(
                     "  [{}{}{}]  PID: {}  {}  {}  {}",
-                    display_name, env_display, variant_display, process.pid, status, uptime, process.task.command
+                    display_name,
+                    env_display,
+                    variant_display,
+                    process.pid,
+                    status,
+                    uptime,
+                    process.task.command
                 );
             }
         }
@@ -151,15 +157,16 @@ async fn show_with_dependencies(
         println!("\nDependencies:");
         for dep in dependencies {
             let dep_key = format!("{}/{}", dep.project, dep.app_name);
-            let is_running = if let Some(process) = find_process(store, &dep.project, &dep.app_name, None)? {
-                if store.is_running(&process) {
-                    format_running_detail(&process)
+            let is_running =
+                if let Some(process) = find_process(store, &dep.project, &dep.app_name, None)? {
+                    if store.is_running(&process) {
+                        format_running_detail(&process)
+                    } else {
+                        "✗ stopped".to_string()
+                    }
                 } else {
-                    "✗ stopped".to_string()
-                }
-            } else {
-                "✗ not started".to_string()
-            };
+                    "✗ not started".to_string()
+                };
             println!("  - {} {}", dep_key, is_running);
         }
     }

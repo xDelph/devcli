@@ -1,11 +1,6 @@
 //! Nx monorepo detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -63,7 +58,10 @@ impl DetectionStrategy for NxStrategy {
         // Parse package.json for monorepo name
         let _package_name = if ctx.file_exists("package.json") {
             let package_json: PackageJson = ctx.parse_json("package.json")?;
-            metadata.insert("package_name".to_string(), serde_json::json!(package_json.name));
+            metadata.insert(
+                "package_name".to_string(),
+                serde_json::json!(package_json.name),
+            );
             if let Some(ref version) = package_json.version {
                 metadata.insert("package_version".to_string(), serde_json::json!(version));
             }
@@ -84,7 +82,10 @@ impl DetectionStrategy for NxStrategy {
         // Detect workspaces with structured info
         let workspace_info = detect_nx_workspace_info(ctx);
         let workspaces: Vec<String> = workspace_info.iter().map(|w| w.path.clone()).collect();
-        metadata.insert("workspace_count".to_string(), serde_json::json!(workspace_info.len()));
+        metadata.insert(
+            "workspace_count".to_string(),
+            serde_json::json!(workspace_info.len()),
+        );
 
         // Suggest Node.js strategy since Nx is built on Node
         let suggested_strategies = vec!["nodejs".to_string()];
@@ -123,9 +124,8 @@ fn detect_nx_workspace_info(ctx: &DetectionContext) -> Vec<WorkspaceInfo> {
     for dir in &["apps", "libs", "packages"] {
         if ctx.file_exists(dir) {
             if let Ok(entries) = std::fs::read_dir(ctx.root_path.join(dir)) {
-                let mut dir_entries: Vec<_> = entries.flatten()
-                    .filter(|e| e.path().is_dir())
-                    .collect();
+                let mut dir_entries: Vec<_> =
+                    entries.flatten().filter(|e| e.path().is_dir()).collect();
                 // Sort for deterministic order
                 dir_entries.sort_by_key(|e| e.file_name());
 
@@ -204,8 +204,15 @@ mod tests {
             DetectionData::Monorepo(info) => {
                 assert_eq!(info.tool, "nx");
                 assert_eq!(info.config_file, std::path::PathBuf::from("nx.json"));
-                assert!(info.workspace_info.len() >= 2, "Should detect workspace_info");
-                assert_eq!(info.workspace_info.len(), info.workspaces.len(), "workspace_info and workspaces should match");
+                assert!(
+                    info.workspace_info.len() >= 2,
+                    "Should detect workspace_info"
+                );
+                assert_eq!(
+                    info.workspace_info.len(),
+                    info.workspaces.len(),
+                    "workspace_info and workspaces should match"
+                );
                 assert!(info.workspace_info.iter().any(|w| w.path == "apps/web"));
                 assert!(info.workspace_info.iter().any(|w| w.path == "apps/api"));
                 assert!(info.metadata.contains_key("package_name"));

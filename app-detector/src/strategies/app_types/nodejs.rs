@@ -1,11 +1,6 @@
 //! Node.js language detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -60,13 +55,25 @@ impl DetectionStrategy for NodeJsStrategy {
         let key_files = vec!["package.json".into()];
 
         let mut metadata = HashMap::new();
-        metadata.insert("package_name".to_string(), serde_json::json!(package_json.name));
+        metadata.insert(
+            "package_name".to_string(),
+            serde_json::json!(package_json.name),
+        );
         if let Some(ref version) = package_json.version {
             metadata.insert("package_version".to_string(), serde_json::json!(version));
         }
-        metadata.insert("package_manager".to_string(), serde_json::json!(package_manager));
-        metadata.insert("script_count".to_string(), serde_json::json!(package_json.scripts.len()));
-        metadata.insert("dependency_count".to_string(), serde_json::json!(package_json.dependencies.len()));
+        metadata.insert(
+            "package_manager".to_string(),
+            serde_json::json!(package_manager),
+        );
+        metadata.insert(
+            "script_count".to_string(),
+            serde_json::json!(package_json.scripts.len()),
+        );
+        metadata.insert(
+            "dependency_count".to_string(),
+            serde_json::json!(package_json.dependencies.len()),
+        );
 
         // Check for TypeScript
         let has_typescript = ctx.file_exists("tsconfig.json")
@@ -166,7 +173,9 @@ mod tests {
                 assert_eq!(info.name, "Node.js");
                 // Should only include key config files, not all source files
                 assert_eq!(info.primary_files.len(), 1);
-                assert!(info.primary_files[0].to_string_lossy().contains("package.json"));
+                assert!(info.primary_files[0]
+                    .to_string_lossy()
+                    .contains("package.json"));
             }
             _ => panic!("Expected Language data"),
         }

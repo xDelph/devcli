@@ -131,8 +131,14 @@ fn test_workspace_web_has_multi_stage_docker_commands() {
     match &docker[0].data {
         DetectionData::DockerEnv(info) => {
             // web/Dockerfile has builder and production stages
-            assert!(info.stages.contains(&"builder".to_string()), "Should detect 'builder' stage");
-            assert!(info.stages.contains(&"production".to_string()), "Should detect 'production' stage");
+            assert!(
+                info.stages.contains(&"builder".to_string()),
+                "Should detect 'builder' stage"
+            );
+            assert!(
+                info.stages.contains(&"production".to_string()),
+                "Should detect 'production' stage"
+            );
             assert!(
                 info.commands.contains_key("builder"),
                 "Should have stage-specific builder command"
@@ -154,7 +160,11 @@ fn test_all_reports_flat_traversal() {
 
     let all = report.all_reports();
     // Should include root + 2 workspace children
-    assert_eq!(all.len(), 3, "all_reports() should return root + 2 children");
+    assert_eq!(
+        all.len(),
+        3,
+        "all_reports() should return root + 2 children"
+    );
 }
 
 // ─── Workspace detection config ───────────────────────────────────────────────
@@ -276,11 +286,13 @@ fn test_flat_report_json_omits_children() {
 fn create_nx_workspace(root: &std::path::Path, workspace_path: &str) {
     // nx.json
     let mut f = fs::File::create(root.join("nx.json")).unwrap();
-    f.write_all(b"{\"extends\": \"nx/presets/npm.json\"}").unwrap();
+    f.write_all(b"{\"extends\": \"nx/presets/npm.json\"}")
+        .unwrap();
 
     // package.json
     let mut f = fs::File::create(root.join("package.json")).unwrap();
-    f.write_all(b"{\"name\": \"test-monorepo\", \"version\": \"1.0.0\"}").unwrap();
+    f.write_all(b"{\"name\": \"test-monorepo\", \"version\": \"1.0.0\"}")
+        .unwrap();
 
     // Create workspace directory
     let ws_path = root.join(workspace_path);

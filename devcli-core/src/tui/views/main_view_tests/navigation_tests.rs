@@ -13,7 +13,7 @@ fn create_test_app_state_data() -> AppStateData {
         });
     }
     commands_map.insert("local".to_string(), local_cmds);
-    
+
     AppStateData {
         name: "test-app".to_string(),
         alternative_name: None,

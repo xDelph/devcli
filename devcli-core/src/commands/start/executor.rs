@@ -307,7 +307,13 @@ async fn start_single_app_process(
             .unwrap_or_else(|| app_name.clone());
         let output_tx_clone = output_tx.clone();
         tokio::spawn(async move {
-            stream_output(output_rx, show_output, &display_name, output_tx_clone.as_ref()).await;
+            stream_output(
+                output_rx,
+                show_output,
+                &display_name,
+                output_tx_clone.as_ref(),
+            )
+            .await;
         });
     } else {
         drop(output_rx);
@@ -438,7 +444,9 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
     store.cleanup_dead()?;
 
     // Check if this dependency is already running
-    if let Some(existing) = find_process(&store, &resolved_app.project, app_name, Some(&environment))? {
+    if let Some(existing) =
+        find_process(&store, &resolved_app.project, app_name, Some(&environment))?
+    {
         if store.is_running(&existing) {
             // Already running - no need to start again
             return Ok(());
@@ -473,4 +481,3 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
 
     Ok(())
 }
-

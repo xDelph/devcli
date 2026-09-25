@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use crate::{
-    Result,
     types::{LayerType, ResolvedLayer, RuntimeContext, Stage},
+    Result,
 };
 
 /// Build the ordered layer chain for the given combination.
@@ -161,8 +161,7 @@ mod tests {
     #[test]
     fn local_with_stage() {
         let dir = tmp();
-        let layers =
-            resolve(dir.path(), Some(&Stage::Dev), &RuntimeContext::Local).unwrap();
+        let layers = resolve(dir.path(), Some(&Stage::Dev), &RuntimeContext::Local).unwrap();
         assert_eq!(layers.len(), 4);
         assert_eq!(layers[0].layer_type, LayerType::Base);
         assert_eq!(layers[1].layer_type, LayerType::StageBase);
@@ -189,8 +188,7 @@ mod tests {
     #[test]
     fn docker_with_stage() {
         let dir = tmp();
-        let layers =
-            resolve(dir.path(), Some(&Stage::Prod), &RuntimeContext::Docker).unwrap();
+        let layers = resolve(dir.path(), Some(&Stage::Prod), &RuntimeContext::Docker).unwrap();
         assert_eq!(layers.len(), 4);
         assert_eq!(layers[0].layer_type, LayerType::Base);
         assert_eq!(layers[1].layer_type, LayerType::ContextBase);
@@ -206,7 +204,10 @@ mod tests {
         touch(dir.path(), "docker/.env");
 
         let layers = resolve(dir.path(), None, &RuntimeContext::Docker).unwrap();
-        let ctx = layers.iter().find(|l| l.layer_type == LayerType::ContextBase).unwrap();
+        let ctx = layers
+            .iter()
+            .find(|l| l.layer_type == LayerType::ContextBase)
+            .unwrap();
         assert_eq!(ctx.relative_path, ".env.docker");
         assert!(ctx.exists);
     }
@@ -218,7 +219,10 @@ mod tests {
         touch(dir.path(), "docker/.env");
 
         let layers = resolve(dir.path(), None, &RuntimeContext::Docker).unwrap();
-        let ctx = layers.iter().find(|l| l.layer_type == LayerType::ContextBase).unwrap();
+        let ctx = layers
+            .iter()
+            .find(|l| l.layer_type == LayerType::ContextBase)
+            .unwrap();
         assert_eq!(ctx.relative_path, "docker/.env");
         assert!(ctx.exists);
     }
@@ -245,9 +249,10 @@ mod tests {
         touch(dir.path(), ".env.dev.local");
 
         let layers = resolve(dir.path(), Some(&Stage::Dev), &RuntimeContext::CI).unwrap();
-        assert!(!layers
-            .iter()
-            .any(|l| matches!(l.layer_type, LayerType::LocalOverride | LayerType::StageLocalOverride)));
+        assert!(!layers.iter().any(|l| matches!(
+            l.layer_type,
+            LayerType::LocalOverride | LayerType::StageLocalOverride
+        )));
     }
 
     #[test]
@@ -256,7 +261,10 @@ mod tests {
         touch(dir.path(), "k8s/.env");
 
         let layers = resolve(dir.path(), None, &RuntimeContext::Kubernetes).unwrap();
-        let ctx = layers.iter().find(|l| l.layer_type == LayerType::ContextBase).unwrap();
+        let ctx = layers
+            .iter()
+            .find(|l| l.layer_type == LayerType::ContextBase)
+            .unwrap();
         assert_eq!(ctx.relative_path, "k8s/.env");
         assert!(ctx.exists);
     }

@@ -398,7 +398,10 @@ mod tests {
 
         assert!(prepared.final_command.contains("--env-file"));
         assert!(prepared.final_command.contains("orbstack/.env"));
-        assert_eq!(prepared.env_vars.get("DOCKER_CONTEXT"), Some(&"orbstack".to_string()));
+        assert_eq!(
+            prepared.env_vars.get("DOCKER_CONTEXT"),
+            Some(&"orbstack".to_string())
+        );
     }
 
     #[test]

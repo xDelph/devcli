@@ -65,9 +65,7 @@ impl PopupManager {
                 let updated = state.status_updated;
 
                 let app_status = if self.active_popup.is_some() {
-                    state
-                        .selected_app()
-                        .map(|app| app.status.display_label())
+                    state.selected_app().map(|app| app.status.display_label())
                 } else {
                     None
                 };

@@ -13,10 +13,7 @@ fn main() -> env_flow::Result<()> {
     // Push all vars into std::env so child processes inherit them
     vars.apply();
 
-    println!(
-        "Applied {} env vars to process environment.",
-        vars.len()
-    );
+    println!("Applied {} env vars to process environment.", vars.len());
 
     // Read back via std::env to confirm
     if let Ok(val) = std::env::var("APP_NAME") {

@@ -219,7 +219,9 @@ impl StateStore {
 
     fn spawn_daemon(&self) -> Result<()> {
         let Some(daemon_bin) = Self::find_daemon_binary() else {
-            tracing::debug!("pm-daemon not found alongside executable or in PATH — process monitoring disabled");
+            tracing::debug!(
+                "pm-daemon not found alongside executable or in PATH — process monitoring disabled"
+            );
             return Ok(());
         };
 

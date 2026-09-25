@@ -12,10 +12,7 @@
 /// - Strict mode: malformed lines → `Error::Parse`; lenient mode: skip with `tracing::warn!`
 use std::path::Path;
 
-use crate::{
-    Error, Result,
-    types::ParsedEntry,
-};
+use crate::{types::ParsedEntry, Error, Result};
 
 pub struct ParsedFile {
     pub entries: Vec<ParsedEntry>,

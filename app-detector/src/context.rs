@@ -44,14 +44,21 @@ impl DetectionScope {
     }
 
     /// Create a child workspace scope from a parent scope
-    pub fn workspace(parent: &DetectionScope, workspace_name: String, monorepo_root: PathBuf) -> Self {
+    pub fn workspace(
+        parent: &DetectionScope,
+        workspace_name: String,
+        monorepo_root: PathBuf,
+    ) -> Self {
         let mut parent_paths = parent.parent_paths.clone();
         parent_paths.push(monorepo_root.clone());
         Self {
             depth: parent.depth + 1,
             max_depth: parent.max_depth,
             parent_paths,
-            scope_type: ScopeType::Workspace { monorepo_root, workspace_name },
+            scope_type: ScopeType::Workspace {
+                monorepo_root,
+                workspace_name,
+            },
         }
     }
 
@@ -272,7 +279,15 @@ impl FileTree {
         let mut files = Vec::new();
         let mut directories = Vec::new();
 
-        Self::scan_dir(root, root, 0, max_depth, ignore_patterns, &mut files, &mut directories)?;
+        Self::scan_dir(
+            root,
+            root,
+            0,
+            max_depth,
+            ignore_patterns,
+            &mut files,
+            &mut directories,
+        )?;
 
         Ok(Self { files, directories })
     }
@@ -305,7 +320,15 @@ impl FileTree {
                 if let Ok(rel_path) = path.strip_prefix(root) {
                     directories.push(rel_path.to_path_buf());
                 }
-                Self::scan_dir(root, &path, depth + 1, max_depth, ignore_patterns, files, directories)?;
+                Self::scan_dir(
+                    root,
+                    &path,
+                    depth + 1,
+                    max_depth,
+                    ignore_patterns,
+                    files,
+                    directories,
+                )?;
             } else if path.is_file() {
                 if let Ok(rel_path) = path.strip_prefix(root) {
                     files.push(rel_path.to_path_buf());
@@ -365,7 +388,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.json");
         let mut file = File::create(&test_file).unwrap();
-        file.write_all(b"{\"name\":\"test\",\"version\":\"1.0\"}").unwrap();
+        file.write_all(b"{\"name\":\"test\",\"version\":\"1.0\"}")
+            .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
 
@@ -397,7 +421,8 @@ mod tests {
         let results = ctx.glob("**/Dockerfile*");
         assert_eq!(results.len(), 3, "Should find all Dockerfile variants");
 
-        let result_strs: Vec<String> = results.iter()
+        let result_strs: Vec<String> = results
+            .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
 

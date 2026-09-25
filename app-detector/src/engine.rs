@@ -113,7 +113,10 @@ impl DetectionEngine {
         tracing::debug!(depth = scope.depth, "Phase 1: Detecting app types");
 
         let app_type_applicable = self.find_app_type_strategies(&context, config);
-        tracing::debug!(count = app_type_applicable.len(), "Found applicable app type strategies");
+        tracing::debug!(
+            count = app_type_applicable.len(),
+            "Found applicable app type strategies"
+        );
 
         let app_type_order = self.resolve_execution_order(&app_type_applicable)?;
 
@@ -150,10 +153,16 @@ impl DetectionEngine {
 
         // Phase 2: Find and execute Environment Capability strategies
         // Re-evaluate can_apply now that app types are detected
-        tracing::debug!(depth = scope.depth, "Phase 2: Detecting environment capabilities");
+        tracing::debug!(
+            depth = scope.depth,
+            "Phase 2: Detecting environment capabilities"
+        );
 
         let env_applicable = self.find_env_capability_strategies(&context, config);
-        tracing::debug!(count = env_applicable.len(), "Found applicable environment strategies");
+        tracing::debug!(
+            count = env_applicable.len(),
+            "Found applicable environment strategies"
+        );
 
         let env_order = self.resolve_execution_order(&env_applicable)?;
 
@@ -167,10 +176,7 @@ impl DetectionEngine {
             report.env_capabilities().len()
         );
 
-        tracing::debug!(
-            total_results = report.results.len(),
-            "Detection complete"
-        );
+        tracing::debug!(total_results = report.results.len(), "Detection complete");
 
         Ok(report)
     }
@@ -184,11 +190,15 @@ impl DetectionEngine {
                 }
                 // Fallback: convert legacy workspaces strings to WorkspaceInfo
                 if !monorepo_info.workspaces.is_empty() {
-                    return monorepo_info.workspaces.iter().map(|path| WorkspaceInfo {
-                        path: path.clone(),
-                        name: path.split('/').next_back().map(|s| s.to_string()),
-                        should_detect: true,
-                    }).collect();
+                    return monorepo_info
+                        .workspaces
+                        .iter()
+                        .map(|path| WorkspaceInfo {
+                            path: path.clone(),
+                            name: path.split('/').next_back().map(|s| s.to_string()),
+                            should_detect: true,
+                        })
+                        .collect();
                 }
             }
         }
@@ -227,7 +237,9 @@ impl DetectionEngine {
                 continue;
             }
 
-            let workspace_name = workspace.name.clone()
+            let workspace_name = workspace
+                .name
+                .clone()
                 .unwrap_or_else(|| workspace.path.clone());
 
             let child_scope = DetectionScope::workspace(
@@ -291,7 +303,6 @@ impl DetectionEngine {
             }
         }
     }
-
 
     /// Find all app type strategies that can apply
     fn find_app_type_strategies(
@@ -417,8 +428,12 @@ impl DetectionEngine {
                     } else {
                         // Check if this is a cross-phase dependency (e.g., local-env depends on nodejs)
                         // Cross-phase deps are resolved via ctx.get_result() at runtime, not via ordering.
-                        let is_cross_phase = self.registry.get(dep)
-                            .map(|s| s.category().is_app_type() != strategy.category().is_app_type())
+                        let is_cross_phase = self
+                            .registry
+                            .get(dep)
+                            .map(|s| {
+                                s.category().is_app_type() != strategy.category().is_app_type()
+                            })
                             .unwrap_or(false);
 
                         if is_cross_phase {
@@ -511,7 +526,9 @@ mod tests {
         }));
 
         let engine = DetectionEngine::new(registry);
-        let order = engine.resolve_execution_order(&["A".to_string(), "B".to_string()]).unwrap();
+        let order = engine
+            .resolve_execution_order(&["A".to_string(), "B".to_string()])
+            .unwrap();
 
         // A should execute before B despite B having higher priority
         assert_eq!(order, vec!["A", "B"]);
