@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{backend::Backend, Terminal};
 use std::time::{Duration, Instant};
 
@@ -43,6 +43,14 @@ impl Runtime {
                         app.handle_key_event(key)?;
                         app.set_needs_redraw(true);
                     }
+                    Event::Mouse(mouse) => {
+                        // Translate wheel scrolling into arrow keys so every view
+                        // that already handles Up/Down scrolls with the mouse too.
+                        if let Some(key) = mouse_scroll_key(&mouse) {
+                            app.handle_key_event(key)?;
+                            app.set_needs_redraw(true);
+                        }
+                    }
                     Event::Resize(_, _) => {
                         // Terminal was resized - force a redraw
                         terminal.clear()?;
@@ -60,5 +68,17 @@ impl Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Maps a mouse wheel event to the equivalent arrow key.
+///
+/// Returns `None` for clicks / drags / moves so the app keeps ignoring them
+/// (only wheel scrolling is captured).
+fn mouse_scroll_key(mouse: &MouseEvent) -> Option<KeyEvent> {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => Some(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        MouseEventKind::ScrollDown => Some(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        _ => None,
     }
 }

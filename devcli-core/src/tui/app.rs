@@ -47,7 +47,7 @@ use crate::config::loader::load_config;
 use crate::process_manager_support::{find_process, state_store};
 
 use anyhow::{Context, Result};
-use crossterm::event::KeyEvent;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyEvent};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -208,8 +208,11 @@ impl TuiApp {
         // Setup terminal
         enable_raw_mode().context("Failed to enable raw mode")?;
         let mut stdout = io::stdout();
-        // Don't enable mouse capture to avoid mouse event codes appearing
-        execute!(stdout, EnterAlternateScreen).context("Failed to enter alternate screen")?;
+        // Capture the mouse so wheel events reach the app (routed to scroll in
+        // Runtime). In the alternate screen this only enables scrolling; text
+        // selection with the mouse is disabled while the TUI is running.
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+            .context("Failed to enter alternate screen")?;
 
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
@@ -227,6 +230,8 @@ impl TuiApp {
         polling_handle.abort();
 
         // Cleanup terminal
+        execute!(terminal.backend_mut(), DisableMouseCapture)
+            .context("Failed to disable mouse capture")?;
         disable_raw_mode().context("Failed to disable raw mode")?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)
             .context("Failed to leave alternate screen")?;

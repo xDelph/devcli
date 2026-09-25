@@ -776,6 +776,13 @@ impl SingleLogView {
             current_visual_row += wrapped_rows;
         }
 
+        // A shrunk/rotated file can leave the cursor past the content — never
+        // let the selection point into the void (keeps the highlight visible).
+        let max_cursor = self.content.len().saturating_sub(1);
+        if self.viewport.cursor_line > max_cursor {
+            self.viewport.cursor_line = max_cursor;
+        }
+
         // Get visual row position for cursor
         let total_visual_rows = current_visual_row;
         let cursor_visual_row = visual_row_positions
@@ -1194,6 +1201,13 @@ impl SingleLogView {
         self.content = new_content;
         self.total_lines = new_total_lines;
         self.last_file_size = current_size;
+
+        // Shrunk/rotated file: clamp a cursor that fell past the new content
+        // and re-reveal the closest line so the selection stays visible.
+        if self.viewport.cursor_line >= new_total_lines {
+            self.viewport.cursor_line = new_total_lines.saturating_sub(1);
+            self.viewport.anchor = ScrollAnchor::None;
+        }
 
         // If we were at the bottom, stay at the bottom (auto-scroll)
         if was_at_bottom && new_total_lines > 0 {
