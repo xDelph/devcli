@@ -489,14 +489,9 @@ mod tests {
             Commands::Metrics
         ));
 
-        let spawner = Cli::try_parse_from([
-            "devcli",
-            "internal-spawner",
-            "--payload",
-            "dGVzdA==",
-        ])
-        .expect("parse internal-spawner")
-        .command;
+        let spawner = Cli::try_parse_from(["devcli", "internal-spawner", "--payload", "dGVzdA=="])
+            .expect("parse internal-spawner")
+            .command;
         assert_eq!(
             spawner,
             Commands::InternalSpawner {

@@ -600,9 +600,7 @@ impl TuiApp {
 
             // Get the current app status if popup is open
             let app_status = if self.popup_manager.is_active() {
-                state
-                    .selected_app()
-                    .map(|app| app.status.display_label())
+                state.selected_app().map(|app| app.status.display_label())
             } else {
                 None
             };

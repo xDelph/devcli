@@ -11,11 +11,11 @@ use crate::Result;
 
 // Arguments for the restart command
 pub struct RestartCommandArgs {
-    pub app_name: String,        // Name of the app to restart
-    pub project: Option<String>, // Optional: specify project if name is ambiguous
-    pub env: Option<String>,     // Optional: "local" or "docker" (overrides existing config)
-    pub skip_deps: bool,         // If true, don't check/start dependencies
-    pub silent: bool,            // If true, don't print to terminal (for TUI mode)
+    pub app_name: String,                 // Name of the app to restart
+    pub project: Option<String>,          // Optional: specify project if name is ambiguous
+    pub env: Option<String>, // Optional: "local" or "docker" (overrides existing config)
+    pub skip_deps: bool,     // If true, don't check/start dependencies
+    pub silent: bool,        // If true, don't print to terminal (for TUI mode)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
@@ -34,25 +34,26 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let actual_app_name = resolved_app.app_name.clone();
 
     // Check if process exists and is running
-    let existing_process =
-        if let Some(process) = find_process(&store, &project_name, &actual_app_name, args.env.as_deref())? {
-            if store.is_running(&process) {
-                Some(process)
-            } else {
-                store.delete(&process.id)?;
-                emit_line(
-                    silent,
-                    args.output_tx.as_ref(),
-                    format!(
-                        "Process '{}' was not running (cleaning up stale state file)",
-                        args.app_name
-                    ),
-                );
-                None
-            }
+    let existing_process = if let Some(process) =
+        find_process(&store, &project_name, &actual_app_name, args.env.as_deref())?
+    {
+        if store.is_running(&process) {
+            Some(process)
         } else {
+            store.delete(&process.id)?;
+            emit_line(
+                silent,
+                args.output_tx.as_ref(),
+                format!(
+                    "Process '{}' was not running (cleaning up stale state file)",
+                    args.app_name
+                ),
+            );
             None
-        };
+        }
+    } else {
+        None
+    };
 
     let Some(process) = existing_process else {
         anyhow::bail!(
@@ -135,4 +136,3 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     Ok(())
 }
-

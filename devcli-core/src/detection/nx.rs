@@ -99,11 +99,7 @@ fn nx_show_project_commands(app_name: &str, workspace_root: &Path) -> HashMap<St
     let mut local_commands = HashMap::new();
 
     for nx_cmd in &["npx nx", "nx"] {
-        let mut cmd = std::process::Command::new(if nx_cmd.contains("npx") {
-            "npx"
-        } else {
-            "nx"
-        });
+        let mut cmd = std::process::Command::new(if nx_cmd.contains("npx") { "npx" } else { "nx" });
         if nx_cmd.contains("npx") {
             cmd.arg("nx");
         }
@@ -380,7 +376,10 @@ mod tests {
         assert!(result.docker_commands.is_some());
         assert!(result.orbstack_commands.is_some());
         let orbstack = result.orbstack_commands.unwrap();
-        assert!(orbstack.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack
+            .get("build")
+            .unwrap()
+            .contains("--context orbstack"));
         assert!(orbstack.get("run").unwrap().contains("-p 3000:3000"));
     }
 
@@ -398,6 +397,9 @@ mod tests {
         assert!(result.docker_commands.is_some());
         assert!(result.orbstack_commands.is_some());
         let orbstack = result.orbstack_commands.unwrap();
-        assert!(orbstack.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack
+            .get("build")
+            .unwrap()
+            .contains("--context orbstack"));
     }
 }

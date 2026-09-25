@@ -12,11 +12,11 @@ use process_manager::engine;
 
 // Arguments for the stop command
 pub struct StopCommandArgs {
-    pub app_name: Option<String>, // Optional: specific app to stop
-    pub project: Option<String>,  // Optional: stop all apps in a project
-    pub all: bool,                // If true, stop all running processes
-    pub force: bool,              // If true, use SIGKILL instead of SIGTERM
-    pub silent: bool,             // If true, don't print to terminal (for TUI mode)
+    pub app_name: Option<String>,         // Optional: specific app to stop
+    pub project: Option<String>,          // Optional: stop all apps in a project
+    pub all: bool,                        // If true, stop all running processes
+    pub force: bool,                      // If true, use SIGKILL instead of SIGTERM
+    pub silent: bool,                     // If true, don't print to terminal (for TUI mode)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
@@ -51,12 +51,15 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         .into_iter()
         .filter(|p| store.is_running(p))
         .collect();
-    let processes_to_stop =
-        filter_processes(&args, &actual_app_name, running_processes, &store)?;
+    let processes_to_stop = filter_processes(&args, &actual_app_name, running_processes, &store)?;
 
     if processes_to_stop.is_empty() {
         if args.all {
-            emit_line(silent, args.output_tx.as_ref(), "No processes are currently running");
+            emit_line(
+                silent,
+                args.output_tx.as_ref(),
+                "No processes are currently running",
+            );
         } else if let Some(app_name) = &args.app_name {
             emit_line(
                 silent,
@@ -67,7 +70,10 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
             emit_line(
                 silent,
                 args.output_tx.as_ref(),
-                format!("No processes are currently running for project '{}'", project),
+                format!(
+                    "No processes are currently running for project '{}'",
+                    project
+                ),
             );
         } else {
             emit_line(
@@ -88,7 +94,8 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let mut errors = Vec::new();
 
     for process in &processes_to_stop {
-        match stop_single_process(process, args.force, &store, silent, args.output_tx.as_ref()).await
+        match stop_single_process(process, args.force, &store, silent, args.output_tx.as_ref())
+            .await
         {
             Ok(_) => {
                 if !silent {
@@ -283,4 +290,3 @@ async fn stop_single_process(
     store.delete(&process.id)?;
     Ok(())
 }
-

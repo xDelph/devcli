@@ -1,11 +1,6 @@
 //! OrbStack environment capability detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 
 /// Detects OrbStack environment (Docker/Kubernetes on macOS)
 #[derive(Default)]
@@ -45,15 +40,23 @@ impl DetectionStrategy for OrbStackEnvStrategy {
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
         // OrbStack is a superset of Docker - reuse Docker's detection
-        let docker_result = ctx.get_result("docker")
+        let docker_result = ctx
+            .get_result("docker")
             .ok_or_else(|| anyhow::anyhow!("Docker strategy must run first"))?;
 
         // Extract Docker's data
-        let (docker_commands, docker_metadata, docker_suggested_default) = match &docker_result.data {
-            DetectionData::DockerEnv(info) => {
-                (info.commands.clone(), info.metadata.clone(), info.suggested_default.clone())
+        let (docker_commands, docker_metadata, docker_suggested_default) = match &docker_result.data
+        {
+            DetectionData::DockerEnv(info) => (
+                info.commands.clone(),
+                info.metadata.clone(),
+                info.suggested_default.clone(),
+            ),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Expected DockerEnv data from docker strategy"
+                ))
             }
-            _ => return Err(anyhow::anyhow!("Expected DockerEnv data from docker strategy")),
         };
 
         // OrbStack uses Docker commands with `--context orbstack`.
@@ -105,10 +108,8 @@ mod tests {
         // Create docker-compose.yml
         let compose = temp_dir.path().join("docker-compose.yml");
         let mut file = fs::File::create(&compose).unwrap();
-        file.write_all(
-            b"services:\n  app:\n    build: .\n    ports:\n      - 3000:3000\n",
-        )
-        .unwrap();
+        file.write_all(b"services:\n  app:\n    build: .\n    ports:\n      - 3000:3000\n")
+            .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
 

@@ -204,7 +204,9 @@ mod tests {
                     .load("crash-restart")
                     .ok()
                     .flatten()
-                    .map(|p| p.runtime.restart_count >= 1 && p.pid != dead_pid && store.is_running(&p))
+                    .map(|p| {
+                        p.runtime.restart_count >= 1 && p.pid != dead_pid && store.is_running(&p)
+                    })
                     .unwrap_or(false)
             },
             Duration::from_secs(5),

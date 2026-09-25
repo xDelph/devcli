@@ -258,7 +258,11 @@ pub struct Commands {
     pub k8s: Option<HashMap<String, String>>,
 
     // Docker Compose commands
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "docker-compose")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "docker-compose"
+    )]
     pub docker_compose: Option<HashMap<String, String>>,
 
     // CI pipeline commands
@@ -368,7 +372,11 @@ pub struct Defaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k8s: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "docker-compose")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "docker-compose"
+    )]
     pub docker_compose: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]

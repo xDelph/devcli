@@ -69,7 +69,8 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
         let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
 
         // Check if this app is already running
-        if let Some(existing) = find_process(&store, &resolved_app.project, app_name, Some(&environment))?
+        if let Some(existing) =
+            find_process(&store, &resolved_app.project, app_name, Some(&environment))?
         {
             if store.is_running(&existing) {
                 tracing::info!(

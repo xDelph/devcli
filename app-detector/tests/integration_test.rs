@@ -24,7 +24,9 @@ fn test_detect_nodejs_docker_project() {
 
     // Should detect both Node.js and Docker
     assert!(!report.by_app_type(&AppTypeCategory::Language).is_empty());
-    assert!(!report.by_env_capability(&EnvCapabilityCategory::Docker).is_empty());
+    assert!(!report
+        .by_env_capability(&EnvCapabilityCategory::Docker)
+        .is_empty());
 
     // Check Node.js detection
     let nodejs = report.by_app_type(&AppTypeCategory::Language);
@@ -114,7 +116,9 @@ fn test_detect_nodejs_react_project() {
     assert_eq!(nodejs[0].strategy_id, "nodejs");
 
     // Should suggest React framework
-    assert!(nodejs[0].suggested_strategies.contains(&"react".to_string()));
+    assert!(nodejs[0]
+        .suggested_strategies
+        .contains(&"react".to_string()));
 
     // Verify TypeScript detection
     use app_detector::types::DetectionData;
@@ -170,7 +174,9 @@ fn test_detect_python_project() {
     assert_eq!(python[0].strategy_id, "python");
 
     // Should suggest Flask framework
-    assert!(python[0].suggested_strategies.contains(&"flask".to_string()));
+    assert!(python[0]
+        .suggested_strategies
+        .contains(&"flask".to_string()));
 
     // Should detect Docker environment
     let docker = report.by_env_capability(&EnvCapabilityCategory::Docker);
@@ -206,7 +212,11 @@ fn test_detect_nx_monorepo() {
     // Node.js should NOT be detected at root level (Nx suppresses it)
     // Node.js apps exist within the monorepo workspaces
     let nodejs = report.by_app_type(&AppTypeCategory::Language);
-    assert_eq!(nodejs.len(), 0, "Node.js should be suppressed by Nx at root level");
+    assert_eq!(
+        nodejs.len(),
+        0,
+        "Node.js should be suppressed by Nx at root level"
+    );
 
     // Should detect Local environment
     let local = report.by_env_capability(&EnvCapabilityCategory::Local);
@@ -303,7 +313,11 @@ fn test_detect_k8s_app_multi_environment() {
     for cap in &env_caps {
         eprintln!("  - {}", cap.strategy_id);
     }
-    assert_eq!(env_caps.len(), 4, "Expected 4 env capabilities: docker, orbstack-env, kubernetes-env, local-env");
+    assert_eq!(
+        env_caps.len(),
+        4,
+        "Expected 4 env capabilities: docker, orbstack-env, kubernetes-env, local-env"
+    );
 
     // Check Docker
     let docker = report.by_env_capability(&EnvCapabilityCategory::Docker);
@@ -325,14 +339,20 @@ fn test_detect_k8s_app_multi_environment() {
     };
 
     eprintln!("\n=== DOCKER ===");
-    eprintln!("Commands: {:?}", docker_data.commands.keys().collect::<Vec<_>>());
+    eprintln!(
+        "Commands: {:?}",
+        docker_data.commands.keys().collect::<Vec<_>>()
+    );
     for (k, v) in &docker_data.commands {
         eprintln!("  {}: {}", k, v);
     }
     eprintln!("Metadata: {:?}", docker_data.metadata);
 
     eprintln!("\n=== ORBSTACK ===");
-    eprintln!("Commands: {:?}", orbstack_data.commands.keys().collect::<Vec<_>>());
+    eprintln!(
+        "Commands: {:?}",
+        orbstack_data.commands.keys().collect::<Vec<_>>()
+    );
     for (k, v) in &orbstack_data.commands {
         eprintln!("  {}: {}", k, v);
     }
@@ -353,7 +373,8 @@ fn test_detect_k8s_app_multi_environment() {
         assert_eq!(
             orbstack_data.commands.get(key),
             Some(&expected),
-            "OrbStack should have the same '{}' command as Docker (with context)", key
+            "OrbStack should have the same '{}' command as Docker (with context)",
+            key
         );
     }
 
@@ -399,7 +420,10 @@ fn test_two_phase_detection_order() {
             // Should have extracted npm scripts from Node.js app
             assert!(info.commands.len() >= 3);
             assert!(info.commands.contains_key("start"));
-            assert_eq!(info.metadata.get("app_type").unwrap(), &serde_json::json!("nodejs"));
+            assert_eq!(
+                info.metadata.get("app_type").unwrap(),
+                &serde_json::json!("nodejs")
+            );
         }
         _ => panic!("Expected LocalEnv data"),
     }

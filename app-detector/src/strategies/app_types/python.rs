@@ -123,7 +123,10 @@ fn detect_single_package(ctx: &DetectionContext) -> Result<DetectionResult> {
 
     let mut metadata = package_metadata(ctx, &content);
     let python_files = ctx.glob("**/*.py");
-    metadata.insert("python_files".to_string(), serde_json::json!(python_files.len()));
+    metadata.insert(
+        "python_files".to_string(),
+        serde_json::json!(python_files.len()),
+    );
 
     let mut suggested = Vec::new();
     if ctx.file_exists("requirements.txt") {
@@ -221,7 +224,8 @@ mod tests {
 
         let requirements = temp_dir.path().join("requirements.txt");
         let mut file = fs::File::create(&requirements).unwrap();
-        file.write_all(b"django==4.2.0\nrequests==2.31.0\n").unwrap();
+        file.write_all(b"django==4.2.0\nrequests==2.31.0\n")
+            .unwrap();
 
         fs::create_dir(temp_dir.path().join("src")).unwrap();
         fs::File::create(temp_dir.path().join("src/main.py")).unwrap();
@@ -254,8 +258,16 @@ members = ["packages/*"]
 "#,
         )
         .unwrap();
-        fs::write(temp_dir.path().join("packages/api/pyproject.toml"), "name = \"api\"\n").unwrap();
-        fs::write(temp_dir.path().join("packages/lib/pyproject.toml"), "name = \"lib\"\n").unwrap();
+        fs::write(
+            temp_dir.path().join("packages/api/pyproject.toml"),
+            "name = \"api\"\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("packages/lib/pyproject.toml"),
+            "name = \"lib\"\n",
+        )
+        .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let result = PythonStrategy.detect(&ctx).unwrap();

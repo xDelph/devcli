@@ -389,7 +389,10 @@ pub enum AppStatus {
 
 impl AppStatus {
     /// Build status from a managed process entry.
-    pub fn from_process(store: &process_manager::StateStore, process: &process_manager::state::ManagedProcess) -> Self {
+    pub fn from_process(
+        store: &process_manager::StateStore,
+        process: &process_manager::state::ManagedProcess,
+    ) -> Self {
         if !store.is_running(process) {
             return AppStatus::Stopped;
         }

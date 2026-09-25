@@ -180,12 +180,15 @@ pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -
 pub fn directory_basename(path: &Path) -> Option<String> {
     path.canonicalize()
         .ok()
-        .and_then(|canonical| canonical.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .and_then(|canonical| {
+            canonical
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
         .or_else(|| {
-            std::env::current_dir().ok().and_then(|cwd| {
-                cwd.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-            })
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| cwd.file_name().map(|n| n.to_string_lossy().into_owned()))
         })
 }
 
@@ -197,8 +200,7 @@ pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::Hash
         return None;
     }
 
-    let expanded =
-        app_detector::utils::workspace::expand_workspace_members(path, &members);
+    let expanded = app_detector::utils::workspace::expand_workspace_members(path, &members);
     Some(
         expanded
             .into_iter()
@@ -227,7 +229,9 @@ pub fn extract_local_commands(report: &DetectionReport) -> Option<HashMap<String
 pub fn extract_k8s_commands(report: &DetectionReport) -> Option<HashMap<String, String>> {
     let result = report.get("kubernetes-env")?;
     match &result.data {
-        DetectionData::KubernetesEnv(info) if !info.commands.is_empty() => Some(info.commands.clone()),
+        DetectionData::KubernetesEnv(info) if !info.commands.is_empty() => {
+            Some(info.commands.clone())
+        }
         _ => None,
     }
 }
@@ -245,7 +249,9 @@ pub fn extract_docker_commands(report: &DetectionReport) -> Option<HashMap<Strin
 pub fn extract_orbstack_commands(report: &DetectionReport) -> Option<HashMap<String, String>> {
     let result = report.get("orbstack-env")?;
     match &result.data {
-        DetectionData::OrbStackEnv(info) if !info.commands.is_empty() => Some(info.commands.clone()),
+        DetectionData::OrbStackEnv(info) if !info.commands.is_empty() => {
+            Some(info.commands.clone())
+        }
         _ => None,
     }
 }
@@ -269,15 +275,12 @@ pub fn resolve_dockerfile_path(path: &Path, report: &DetectionReport) -> Option<
         }
     }
 
-    find_dockerfile(path)
-        .ok()
-        .flatten()
-        .and_then(|dockerfile| {
-            dockerfile
-                .strip_prefix(path)
-                .ok()
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-        })
+    find_dockerfile(path).ok().flatten().and_then(|dockerfile| {
+        dockerfile
+            .strip_prefix(path)
+            .ok()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+    })
 }
 
 pub fn suggest_local_default(
@@ -502,7 +505,10 @@ mod tests {
         let detected = detect_app(dir.path()).unwrap();
         assert!(detected.orbstack_commands.is_some());
         let orbstack = detected.orbstack_commands.unwrap();
-        assert!(orbstack.get("build").unwrap().contains("--context orbstack"));
+        assert!(orbstack
+            .get("build")
+            .unwrap()
+            .contains("--context orbstack"));
     }
 
     #[test]

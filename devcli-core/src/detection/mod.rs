@@ -12,9 +12,9 @@ pub use env_files::{
 };
 pub use nx::{detect_nx_apps, detect_single_nx_app};
 
+use crate::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use crate::Result;
 
 /// Complete detection results for an app.
 #[derive(Debug, Clone)]

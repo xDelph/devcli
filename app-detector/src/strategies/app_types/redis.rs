@@ -1,11 +1,6 @@
 //! Redis service detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 
 /// Detects Redis service via redis.conf or docker-compose
@@ -23,7 +18,9 @@ fn compose_redis_only(ctx: &DetectionContext) -> bool {
         let lower = content.to_lowercase();
         // Very lightweight heuristic: treat as "redis app" only if compose defines redis
         // and does not contain other obvious services.
-        if (lower.contains("\n  redis:") || lower.contains("\nredis:") || lower.contains("image: redis"))
+        if (lower.contains("\n  redis:")
+            || lower.contains("\nredis:")
+            || lower.contains("image: redis"))
             && !lower.contains("\n  app:")
             && !lower.contains("\napp:")
             && !lower.contains("build:")
@@ -109,7 +106,9 @@ impl DetectionStrategy for RedisStrategy {
                 let file_name_str = file_name.to_string_lossy();
                 if file_name_str.starts_with("redis")
                     && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
-                    && !config_files.iter().any(|p| p.to_string_lossy() == file_name_str)
+                    && !config_files
+                        .iter()
+                        .any(|p| p.to_string_lossy() == file_name_str)
                 {
                     config_files.push(std::path::PathBuf::from(file_name_str.to_string()));
                 }
@@ -129,7 +128,10 @@ impl DetectionStrategy for RedisStrategy {
             }
         }
 
-        metadata.insert("config_files_count".to_string(), serde_json::json!(config_files.len()));
+        metadata.insert(
+            "config_files_count".to_string(),
+            serde_json::json!(config_files.len()),
+        );
 
         Ok(DetectionResult {
             strategy_id: self.id().to_string(),
@@ -177,7 +179,9 @@ mod tests {
         match result.data {
             DetectionData::Service(info) => {
                 assert_eq!(info.name, "Redis");
-                assert!(info.config_files.contains(&std::path::PathBuf::from("redis.conf")));
+                assert!(info
+                    .config_files
+                    .contains(&std::path::PathBuf::from("redis.conf")));
             }
             _ => panic!("Expected Service data"),
         }
@@ -192,17 +196,17 @@ mod tests {
         // Create docker-compose.yml that references redis as a service dependency
         let compose = temp_dir.path().join("docker-compose.yml");
         let mut file = fs::File::create(&compose).unwrap();
-        file.write_all(
-            b"services:\n  app:\n    build: .\n  redis:\n    image: redis:7-alpine\n",
-        )
-        .unwrap();
+        file.write_all(b"services:\n  app:\n    build: .\n  redis:\n    image: redis:7-alpine\n")
+            .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let strategy = RedisStrategy;
 
         // Should NOT apply: this project uses Redis but is not itself Redis
-        assert!(!strategy.can_apply(&ctx),
-            "Redis should not be detected just because docker-compose.yml references redis image");
+        assert!(
+            !strategy.can_apply(&ctx),
+            "Redis should not be detected just because docker-compose.yml references redis image"
+        );
     }
 
     #[test]
@@ -211,7 +215,8 @@ mod tests {
 
         let compose = temp_dir.path().join("docker-compose.yml");
         let mut file = fs::File::create(&compose).unwrap();
-        file.write_all(b"services:\n  redis:\n    image: redis:7-alpine\n").unwrap();
+        file.write_all(b"services:\n  redis:\n    image: redis:7-alpine\n")
+            .unwrap();
 
         let ctx = DetectionContext::new(temp_dir.path()).unwrap();
         let strategy = RedisStrategy;

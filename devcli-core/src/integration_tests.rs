@@ -139,7 +139,10 @@ mod tests {
 
         let mut metadata = HashMap::new();
         metadata.insert("project".to_string(), "test-project".to_string());
-        metadata.insert("app_config_name".to_string(), "integration-test-app".to_string());
+        metadata.insert(
+            "app_config_name".to_string(),
+            "integration-test-app".to_string(),
+        );
         metadata.insert("environment".to_string(), "local".to_string());
         metadata.insert("command_variant".to_string(), "start".to_string());
 
@@ -157,7 +160,10 @@ mod tests {
 
         let retrieved = store.load(&id).unwrap().expect("process should exist");
         assert_eq!(
-            retrieved.metadata.get("app_config_name").map(String::as_str),
+            retrieved
+                .metadata
+                .get("app_config_name")
+                .map(String::as_str),
             Some("integration-test-app")
         );
         assert_eq!(retrieved.pid, current_pid);
@@ -598,7 +604,7 @@ CMD ["node", "server.js"]
         }
 
         // Exit code distribution should be tracked
-    // (Actual verification would require collect_all() with deterministic state snapshots)
+        // (Actual verification would require collect_all() with deterministic state snapshots)
     }
 
     #[test]
@@ -713,7 +719,10 @@ CMD ["node", "server.js"]
             let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let workspace_root = manifest.parent()?;
             for profile in ["debug", "release"] {
-                let candidate = workspace_root.join("target").join(profile).join("pm-daemon");
+                let candidate = workspace_root
+                    .join("target")
+                    .join(profile)
+                    .join("pm-daemon");
                 if candidate.exists() {
                     return candidate.parent().map(Path::to_path_buf);
                 }
@@ -751,7 +760,10 @@ CMD ["node", "server.js"]
 
             let mut metadata = HashMap::new();
             metadata.insert("project".to_string(), "test-project".to_string());
-            metadata.insert("app_config_name".to_string(), "monitor-restart-app".to_string());
+            metadata.insert(
+                "app_config_name".to_string(),
+                "monitor-restart-app".to_string(),
+            );
             metadata.insert("environment".to_string(), "local".to_string());
 
             let process = ManagedProcess {
@@ -766,7 +778,10 @@ CMD ["node", "server.js"]
             store.save(&process).unwrap();
 
             let original_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var("PATH", format!("{}:{}", daemon_dir.display(), original_path));
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", daemon_dir.display(), original_path),
+            );
             store.ensure_daemon_running().expect("start pm-daemon");
 
             engine::terminate(original_pid, pgid, true)

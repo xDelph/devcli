@@ -1,8 +1,8 @@
 //! Rust workspace manifest parsing (inherited package fields).
 
 use app_detector::context::DetectionContext;
-use app_detector::strategy::DetectionStrategy;
 use app_detector::strategies::RustStrategy;
+use app_detector::strategy::DetectionStrategy;
 use app_detector::types::DetectionData;
 use std::fs;
 use tempfile::TempDir;

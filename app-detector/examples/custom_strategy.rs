@@ -6,12 +6,8 @@
 //! - Using it alongside built-in strategies
 
 use app_detector::{
-    context::DetectionContext,
-    engine::DetectionEngine,
-    registry::StrategyRegistry,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
+    context::DetectionContext, engine::DetectionEngine, registry::StrategyRegistry,
+    strategy::DetectionStrategy, types::*, Result,
 };
 use std::collections::HashMap;
 
@@ -64,14 +60,16 @@ impl DetectionStrategy for PythonStrategy {
         );
 
         // Check for virtual environment
-        let has_venv = ctx.file_exists(".venv")
-            || ctx.file_exists("venv")
-            || ctx.file_exists("env");
+        let has_venv =
+            ctx.file_exists(".venv") || ctx.file_exists("venv") || ctx.file_exists("env");
         metadata.insert("has_venv".to_string(), serde_json::json!(has_venv));
 
         // Find Python files
         let python_files = ctx.glob("**/*.py");
-        metadata.insert("python_files".to_string(), serde_json::json!(python_files.len()));
+        metadata.insert(
+            "python_files".to_string(),
+            serde_json::json!(python_files.len()),
+        );
 
         // Detect Python version (from system)
         let version = detect_python_version();

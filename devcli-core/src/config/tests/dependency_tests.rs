@@ -152,7 +152,11 @@ mod tests {
         dependencies::dedup_dependencies(&mut deps);
 
         assert_eq!(deps.len(), 2);
-        assert!(deps.iter().any(|d| d.project == "project-a" && d.app_name == "redis"));
-        assert!(deps.iter().any(|d| d.project == "project-b" && d.app_name == "redis"));
+        assert!(deps
+            .iter()
+            .any(|d| d.project == "project-a" && d.app_name == "redis"));
+        assert!(deps
+            .iter()
+            .any(|d| d.project == "project-b" && d.app_name == "redis"));
     }
 }

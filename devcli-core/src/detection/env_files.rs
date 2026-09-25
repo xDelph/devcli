@@ -27,7 +27,10 @@ pub fn detect_env_files(
     }
 
     if let Some(dockerfile_rel) = dockerfile_path {
-        let dockerfile_dir = app_path.join(dockerfile_rel).parent().map(|p| p.to_path_buf());
+        let dockerfile_dir = app_path
+            .join(dockerfile_rel)
+            .parent()
+            .map(|p| p.to_path_buf());
         if let Some(dir) = dockerfile_dir {
             if dir != app_path {
                 for file in detector::discover(&dir)? {

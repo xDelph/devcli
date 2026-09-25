@@ -8,9 +8,9 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::{
-    Error, Result,
     parser,
     types::{EnvEntry, EnvVars, ParsedEntry, ResolvedLayer},
+    Error, Result,
 };
 
 /// Load all layers (in order) into a merged `EnvVars`.

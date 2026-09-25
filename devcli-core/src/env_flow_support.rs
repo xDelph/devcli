@@ -131,23 +131,22 @@ pub fn load_local_runtime(
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
 ) -> Result<Option<EnvLoad>> {
-    let (vars, layers, summary) = if let Some(path) =
-        resolve_config_env_path(env_files_map, stage, "local")?
-    {
-        (load_file(&working_dir.join(&path))?, Vec::new(), path)
-    } else {
-        let (cascade_vars, cascade_layers) =
-            load_runtime_cascade(working_dir, stage, "local", None)?;
-        let existing = existing_layers(&cascade_layers);
-        if existing.is_empty() {
-            return Ok(None);
-        }
-        (
-            env_vars_to_map(cascade_vars),
-            layer_infos(&cascade_layers),
-            cascade_summary(&existing),
-        )
-    };
+    let (vars, layers, summary) =
+        if let Some(path) = resolve_config_env_path(env_files_map, stage, "local")? {
+            (load_file(&working_dir.join(&path))?, Vec::new(), path)
+        } else {
+            let (cascade_vars, cascade_layers) =
+                load_runtime_cascade(working_dir, stage, "local", None)?;
+            let existing = existing_layers(&cascade_layers);
+            if existing.is_empty() {
+                return Ok(None);
+            }
+            (
+                env_vars_to_map(cascade_vars),
+                layer_infos(&cascade_layers),
+                cascade_summary(&existing),
+            )
+        };
 
     if vars.is_empty() {
         return Ok(None);
@@ -172,23 +171,22 @@ pub fn load_process_runtime(
         return load_local_runtime(working_dir, env_files_map, stage);
     }
 
-    let (vars, layers, summary) = if let Some(path) =
-        resolve_config_env_path(env_files_map, stage, environment)?
-    {
-        (load_file(&working_dir.join(&path))?, Vec::new(), path)
-    } else {
-        let (cascade_vars, cascade_layers) =
-            load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
-        let existing = existing_layers(&cascade_layers);
-        if existing.is_empty() {
-            return Ok(None);
-        }
-        (
-            env_vars_to_map(cascade_vars),
-            layer_infos(&cascade_layers),
-            cascade_summary(&existing),
-        )
-    };
+    let (vars, layers, summary) =
+        if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+            (load_file(&working_dir.join(&path))?, Vec::new(), path)
+        } else {
+            let (cascade_vars, cascade_layers) =
+                load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
+            let existing = existing_layers(&cascade_layers);
+            if existing.is_empty() {
+                return Ok(None);
+            }
+            (
+                env_vars_to_map(cascade_vars),
+                layer_infos(&cascade_layers),
+                cascade_summary(&existing),
+            )
+        };
 
     if vars.is_empty() {
         return Ok(None);
@@ -216,8 +214,7 @@ pub fn prepare_container_env_file(
         }));
     }
 
-    let (vars, layers) =
-        load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
+    let (vars, layers) = load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
     let existing = existing_layers(&layers);
     if existing.is_empty() {
         return Ok(None);
@@ -284,7 +281,10 @@ pub fn resolve_runtime_env_display(
         return Ok(None);
     }
 
-    Ok(Some(format_env_display(&cascade_summary(&existing), &layer_infos(&layers))))
+    Ok(Some(format_env_display(
+        &cascade_summary(&existing),
+        &layer_infos(&layers),
+    )))
 }
 
 /// Layer plan for one runtime (includes non-existent layers).
@@ -373,7 +373,10 @@ fn resolve_highest_layer_path(
     Ok(None)
 }
 
-fn dockerfile_parent_dir(working_dir: &Path, dockerfile_path: Option<&str>) -> Result<Option<PathBuf>> {
+fn dockerfile_parent_dir(
+    working_dir: &Path,
+    dockerfile_path: Option<&str>,
+) -> Result<Option<PathBuf>> {
     let Some(dockerfile_rel) = dockerfile_path else {
         return Ok(None);
     };

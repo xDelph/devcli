@@ -16,12 +16,12 @@ use std::collections::HashMap;
 
 // Arguments for the run command
 pub struct RunCommandArgs {
-    pub app_name: String,        // Name of the app from config
-    pub command_variant: String, // Which command to run (e.g., "build:production", "test")
-    pub project: Option<String>, // Optional: specify project if ambiguous
-    pub env: Option<String>,     // Optional: environment override
-    pub skip_deps: bool,         // If true, skip dependency checks
-    pub silent: bool,            // If true, don't print to terminal (for TUI mode)
+    pub app_name: String,                 // Name of the app from config
+    pub command_variant: String,          // Which command to run (e.g., "build:production", "test")
+    pub project: Option<String>,          // Optional: specify project if ambiguous
+    pub env: Option<String>,              // Optional: environment override
+    pub skip_deps: bool,                  // If true, skip dependency checks
+    pub silent: bool,                     // If true, don't print to terminal (for TUI mode)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
@@ -265,7 +265,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         emit_line(
             silent,
             args.output_tx.as_ref(),
-            "\nRunning in background with output streaming (use Ctrl+C to stop viewing)".to_string(),
+            "\nRunning in background with output streaming (use Ctrl+C to stop viewing)"
+                .to_string(),
         );
         emit_line(
             silent,
@@ -383,4 +384,3 @@ fn to_pm_restart_policy(policy: Option<&crate::config::models::RestartPolicy>) -
         },
     }
 }
-

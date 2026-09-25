@@ -5,8 +5,8 @@
 
 use anyhow::{Context, Result};
 use app_detector::{
-    DetectionConfig, DetectionEngine, DetectionReport, StrategyRegistry,
     types::{AppTypeCategory, EnvCapabilityCategory, StrategyCategory},
+    DetectionConfig, DetectionEngine, DetectionReport, StrategyRegistry,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -154,10 +154,16 @@ impl CategoryFilter {
             Self::Docker => StrategyCategory::EnvCapability(EnvCapabilityCategory::Docker),
             Self::OrbStack => StrategyCategory::EnvCapability(EnvCapabilityCategory::OrbStack),
             Self::Kubernetes => StrategyCategory::EnvCapability(EnvCapabilityCategory::Kubernetes),
-            Self::DockerSwarm => StrategyCategory::EnvCapability(EnvCapabilityCategory::DockerSwarm),
+            Self::DockerSwarm => {
+                StrategyCategory::EnvCapability(EnvCapabilityCategory::DockerSwarm)
+            }
             Self::Nomad => StrategyCategory::EnvCapability(EnvCapabilityCategory::Nomad),
-            Self::CloudPlatform => StrategyCategory::EnvCapability(EnvCapabilityCategory::CloudPlatform),
-            Self::Infrastructure => StrategyCategory::EnvCapability(EnvCapabilityCategory::Infrastructure),
+            Self::CloudPlatform => {
+                StrategyCategory::EnvCapability(EnvCapabilityCategory::CloudPlatform)
+            }
+            Self::Infrastructure => {
+                StrategyCategory::EnvCapability(EnvCapabilityCategory::Infrastructure)
+            }
         }
     }
 }
@@ -183,13 +189,7 @@ fn main() -> Result<()> {
             env_only,
             min_confidence,
         } => {
-            let config = build_detection_config(
-                max_depth,
-                ignore,
-                category,
-                app_only,
-                env_only,
-            );
+            let config = build_detection_config(max_depth, ignore, category, app_only, env_only);
 
             let registry = StrategyRegistry::with_defaults();
             let engine = DetectionEngine::with_config(registry, config);
@@ -284,10 +284,18 @@ fn build_detection_config(
         }
 
         if env_only {
-            enabled.insert(StrategyCategory::EnvCapability(EnvCapabilityCategory::Local));
-            enabled.insert(StrategyCategory::EnvCapability(EnvCapabilityCategory::Docker));
-            enabled.insert(StrategyCategory::EnvCapability(EnvCapabilityCategory::OrbStack));
-            enabled.insert(StrategyCategory::EnvCapability(EnvCapabilityCategory::Kubernetes));
+            enabled.insert(StrategyCategory::EnvCapability(
+                EnvCapabilityCategory::Local,
+            ));
+            enabled.insert(StrategyCategory::EnvCapability(
+                EnvCapabilityCategory::Docker,
+            ));
+            enabled.insert(StrategyCategory::EnvCapability(
+                EnvCapabilityCategory::OrbStack,
+            ));
+            enabled.insert(StrategyCategory::EnvCapability(
+                EnvCapabilityCategory::Kubernetes,
+            ));
         }
 
         config.enabled_categories = Some(enabled);
@@ -296,7 +304,11 @@ fn build_detection_config(
     config
 }
 
-fn output_report(report: &DetectionReport, format: &OutputFormat, min_confidence: f32) -> Result<()> {
+fn output_report(
+    report: &DetectionReport,
+    format: &OutputFormat,
+    min_confidence: f32,
+) -> Result<()> {
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string(report)?);
@@ -320,9 +332,12 @@ fn output_report_human(report: &DetectionReport, min_confidence: f32, depth: usi
         println!("\n{}", "Detection Report".bold().cyan());
         println!("{} {}\n", "Path:".bold(), report.path.display());
     } else {
-        println!("\n{}{}",
+        println!(
+            "\n{}{}",
             indent,
-            format!("Workspace: {}", report.path.display()).bold().yellow()
+            format!("Workspace: {}", report.path.display())
+                .bold()
+                .yellow()
         );
     }
 
@@ -339,7 +354,7 @@ fn output_report_human(report: &DetectionReport, min_confidence: f32, depth: usi
         .collect();
 
     if !app_types.is_empty() {
-        println!("{}{}",indent, "App Types:".bold().green());
+        println!("{}{}", indent, "App Types:".bold().green());
         for result in app_types {
             print_result_indented(result, &indent);
         }
@@ -353,7 +368,7 @@ fn output_report_human(report: &DetectionReport, min_confidence: f32, depth: usi
         .collect();
 
     if !env_caps.is_empty() {
-        println!("{}{}",indent, "Environment Capabilities:".bold().blue());
+        println!("{}{}", indent, "Environment Capabilities:".bold().blue());
         for result in env_caps {
             print_result_indented(result, &indent);
         }
@@ -363,7 +378,11 @@ fn output_report_human(report: &DetectionReport, min_confidence: f32, depth: usi
     if depth == 0 {
         // Summary only at root level
         if let Some(app_name) = report.app_name() {
-            println!("{} {}", "Detected app name:".bold(), app_name.bright_yellow());
+            println!(
+                "{} {}",
+                "Detected app name:".bold(),
+                app_name.bright_yellow()
+            );
         }
 
         if let Some(primary) = report.primary_language() {
@@ -382,9 +401,12 @@ fn output_report_human(report: &DetectionReport, min_confidence: f32, depth: usi
 
     // Recursively print workspace children
     if !report.children.is_empty() {
-        println!("{}{}",
+        println!(
+            "{}{}",
             indent,
-            format!("Workspaces: ({} found)", report.children.len()).bold().cyan()
+            format!("Workspaces: ({} found)", report.children.len())
+                .bold()
+                .cyan()
         );
         for child in &report.children {
             output_report_human(child, min_confidence, depth + 1)?;
@@ -438,30 +460,60 @@ fn print_result_indented(result: &app_detector::DetectionResult, indent: &str) {
         app_detector::DetectionData::Monorepo(info) => {
             println!("{}    {} {}", indent, "Tool:".dimmed(), info.tool);
             if !info.workspace_info.is_empty() {
-                println!("{}    {} {}", indent, "Workspaces:".dimmed(), info.workspace_info.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Workspaces:".dimmed(),
+                    info.workspace_info.len()
+                );
             }
         }
         app_detector::DetectionData::LocalEnv(info) => {
             if !info.commands.is_empty() {
-                println!("{}    {} {}", indent, "Commands:".dimmed(), info.commands.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Commands:".dimmed(),
+                    info.commands.len()
+                );
             }
         }
         app_detector::DetectionData::DockerEnv(info) => {
             if !info.dockerfiles.is_empty() {
-                println!("{}    {} {}", indent, "Dockerfiles:".dimmed(), info.dockerfiles.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Dockerfiles:".dimmed(),
+                    info.dockerfiles.len()
+                );
             }
             if !info.commands.is_empty() {
-                println!("{}    {} {}", indent, "Commands:".dimmed(), info.commands.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Commands:".dimmed(),
+                    info.commands.len()
+                );
             }
         }
         app_detector::DetectionData::OrbStackEnv(info) => {
             if !info.commands.is_empty() {
-                println!("{}    {} {}", indent, "Commands:".dimmed(), info.commands.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Commands:".dimmed(),
+                    info.commands.len()
+                );
             }
         }
         app_detector::DetectionData::KubernetesEnv(info) => {
             if !info.commands.is_empty() {
-                println!("{}    {} {}", indent, "Commands:".dimmed(), info.commands.len());
+                println!(
+                    "{}    {} {}",
+                    indent,
+                    "Commands:".dimmed(),
+                    info.commands.len()
+                );
             }
         }
         _ => {}

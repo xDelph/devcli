@@ -282,9 +282,7 @@ fn edge_missing_base() {
 
 #[test]
 fn edge_unicode() {
-    let vars = EnvFlow::from_dir(fix("edge-cases/unicode"))
-        .load()
-        .unwrap();
+    let vars = EnvFlow::from_dir(fix("edge-cases/unicode")).load().unwrap();
     assert_eq!(vars.get("GREETING"), Some("héllo wörld"));
     assert_eq!(vars.get("JAPANESE"), Some("日本語"));
 }
@@ -305,7 +303,9 @@ fn layers_plan_transparency() {
     // .env and .env.dev exist; .env.local and .env.dev.local do not
     assert_eq!(existing.len(), 2);
     assert!(existing.iter().any(|l| l.layer_type == LayerType::Base));
-    assert!(existing.iter().any(|l| l.layer_type == LayerType::StageBase));
+    assert!(existing
+        .iter()
+        .any(|l| l.layer_type == LayerType::StageBase));
 }
 
 // ── no-cascade fixture ───────────────────────────────────────────────────────
@@ -324,11 +324,11 @@ fn no_cascade_fixture_cascade_merges_all_layers() {
         .load()
         .unwrap();
 
-    assert_eq!(vars.get("PORT"),     Some("3000"));
+    assert_eq!(vars.get("PORT"), Some("3000"));
     assert_eq!(vars.get("APP_NAME"), Some("myapp"));
-    assert_eq!(vars.get("DB"),       Some("dev-db"));
-    assert_eq!(vars.get("DEBUG"),    Some("true"));
-    assert_eq!(vars.get("SECRET"),   Some("local-secret"));
+    assert_eq!(vars.get("DB"), Some("dev-db"));
+    assert_eq!(vars.get("DEBUG"), Some("true"));
+    assert_eq!(vars.get("SECRET"), Some("local-secret"));
     assert_eq!(vars.get("DEV_NOTE"), Some("override"));
     assert_eq!(vars.len(), 6);
 }
@@ -344,11 +344,11 @@ fn no_cascade_fixture_no_cascade_picks_highest_existing() {
         .unwrap();
 
     // Only keys from .env.dev.local
-    assert_eq!(vars.get("SECRET"),   Some("local-secret"));
+    assert_eq!(vars.get("SECRET"), Some("local-secret"));
     assert_eq!(vars.get("DEV_NOTE"), Some("override"));
     // Base and .env.dev keys are NOT inherited
-    assert_eq!(vars.get("PORT"),     None);
-    assert_eq!(vars.get("DB"),       None);
+    assert_eq!(vars.get("PORT"), None);
+    assert_eq!(vars.get("DB"), None);
     assert_eq!(vars.len(), 2);
 }
 
@@ -364,9 +364,9 @@ fn no_cascade_fixture_no_cascade_docker_picks_stage_base() {
         .load()
         .unwrap();
 
-    assert_eq!(vars.get("DB"),    Some("dev-db"));
+    assert_eq!(vars.get("DB"), Some("dev-db"));
     assert_eq!(vars.get("DEBUG"), Some("true"));
-    assert_eq!(vars.get("PORT"),  None); // base not inherited
+    assert_eq!(vars.get("PORT"), None); // base not inherited
     assert_eq!(vars.len(), 2);
 }
 
@@ -378,7 +378,7 @@ fn no_cascade_fixture_no_cascade_no_stage_picks_base() {
         .load()
         .unwrap();
 
-    assert_eq!(vars.get("PORT"),     Some("3000"));
+    assert_eq!(vars.get("PORT"), Some("3000"));
     assert_eq!(vars.get("APP_NAME"), Some("myapp"));
     assert_eq!(vars.len(), 2);
 }
@@ -396,10 +396,10 @@ fn single_file_from_file_loads_only_specified_file() {
         .unwrap();
 
     // Only keys from .env.override
-    assert_eq!(vars.get("DB"),    Some("override-db"));
+    assert_eq!(vars.get("DB"), Some("override-db"));
     assert_eq!(vars.get("EXTRA"), Some("only-in-override"));
     // Keys from .env are NOT present
-    assert_eq!(vars.get("PORT"),     None);
+    assert_eq!(vars.get("PORT"), None);
     assert_eq!(vars.get("APP_NAME"), None);
     assert_eq!(vars.len(), 2);
 }
@@ -410,8 +410,8 @@ fn single_file_from_file_base_env() {
         .load()
         .unwrap();
 
-    assert_eq!(vars.get("PORT"),     Some("3000"));
-    assert_eq!(vars.get("DB"),       Some("base"));
+    assert_eq!(vars.get("PORT"), Some("3000"));
+    assert_eq!(vars.get("DB"), Some("base"));
     assert_eq!(vars.get("APP_NAME"), Some("myapp"));
     // .env.override is NOT loaded
     assert_eq!(vars.get("EXTRA"), None);
@@ -430,7 +430,7 @@ fn single_file_cascade_vs_no_cascade_vs_from_file() {
         .load()
         .unwrap();
     assert_eq!(cascade.get("APP_NAME"), Some("myapp")); // from .env
-    assert_eq!(cascade.get("DB_HOST"),  Some("dev-db")); // from .env.dev
+    assert_eq!(cascade.get("DB_HOST"), Some("dev-db")); // from .env.dev
 
     // 2. no_cascade on staged/dev → only .env.dev loaded
     let no_cascade = EnvFlow::from_dir(fix("staged"))
@@ -438,15 +438,15 @@ fn single_file_cascade_vs_no_cascade_vs_from_file() {
         .no_cascade()
         .load()
         .unwrap();
-    assert_eq!(no_cascade.get("DB_HOST"),  Some("dev-db")); // from .env.dev
-    assert_eq!(no_cascade.get("APP_NAME"), None);           // .env not loaded
+    assert_eq!(no_cascade.get("DB_HOST"), Some("dev-db")); // from .env.dev
+    assert_eq!(no_cascade.get("APP_NAME"), None); // .env not loaded
 
     // 3. from_file → exactly one file
     let from_file = EnvFlow::from_file(fix("staged").join(".env"))
         .load()
         .unwrap();
     assert_eq!(from_file.get("APP_NAME"), Some("myapp")); // from .env only
-    assert_eq!(from_file.get("DB_HOST"),  Some("localhost")); // only base value
+    assert_eq!(from_file.get("DB_HOST"), Some("localhost")); // only base value
 }
 
 #[test]

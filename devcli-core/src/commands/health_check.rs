@@ -126,10 +126,7 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
             println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
             println!();
             println!("Status: Unhealthy");
-            println!(
-                "Consecutive failures: {}",
-                process.runtime.health_failures
-            );
+            println!("Consecutive failures: {}", process.runtime.health_failures);
             if let Some(last_check) = process.runtime.last_health_check {
                 println!("Last check: {}", last_check.format("%Y-%m-%d %H:%M:%S"));
             }

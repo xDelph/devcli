@@ -1,11 +1,6 @@
 //! Kubernetes environment capability detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -13,7 +8,10 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct KubernetesEnvStrategy;
 
-fn k8s_base_path(manifests: &[PathBuf], commands: &HashMap<String, String>) -> Option<&'static str> {
+fn k8s_base_path(
+    manifests: &[PathBuf],
+    commands: &HashMap<String, String>,
+) -> Option<&'static str> {
     if manifests
         .iter()
         .any(|m| m.starts_with("k8s/") || m.starts_with("k8s\\"))
@@ -87,10 +85,7 @@ impl DetectionStrategy for KubernetesEnvStrategy {
         // Look for kustomization
         if ctx.file_exists("kustomization.yaml") || ctx.file_exists("kustomization.yml") {
             metadata.insert("has_kustomize".to_string(), serde_json::json!(true));
-            commands.insert(
-                "apply".to_string(),
-                "kubectl apply -k .".to_string(),
-            );
+            commands.insert("apply".to_string(), "kubectl apply -k .".to_string());
         }
 
         // Look for k8s/ or kubernetes/ directories
@@ -115,10 +110,7 @@ impl DetectionStrategy for KubernetesEnvStrategy {
 
                 // Add kubectl apply command for this directory
                 if !commands.contains_key("apply") {
-                    commands.insert(
-                        "apply".to_string(),
-                        format!("kubectl apply -f {}", k8s_dir),
-                    );
+                    commands.insert("apply".to_string(), format!("kubectl apply -f {}", k8s_dir));
                 }
             }
         }
@@ -143,15 +135,25 @@ impl DetectionStrategy for KubernetesEnvStrategy {
         }
 
         if !commands.is_empty() {
-            commands.entry("get".to_string()).or_insert_with(|| "kubectl get all".to_string());
-            commands.entry("logs".to_string()).or_insert_with(|| "kubectl logs".to_string());
+            commands
+                .entry("get".to_string())
+                .or_insert_with(|| "kubectl get all".to_string());
+            commands
+                .entry("logs".to_string())
+                .or_insert_with(|| "kubectl logs".to_string());
             commands
                 .entry("restart".to_string())
                 .or_insert_with(|| "kubectl rollout restart deployment".to_string());
         }
 
-        metadata.insert("manifest_count".to_string(), serde_json::json!(manifests.len()));
-        metadata.insert("helm_chart_count".to_string(), serde_json::json!(helm_charts.len()));
+        metadata.insert(
+            "manifest_count".to_string(),
+            serde_json::json!(manifests.len()),
+        );
+        metadata.insert(
+            "helm_chart_count".to_string(),
+            serde_json::json!(helm_charts.len()),
+        );
 
         // Suggest default command
         let suggested_default = if commands.contains_key("apply") {
@@ -219,10 +221,8 @@ mod tests {
 
         let deployment = temp_dir.path().join("k8s/deployment.yaml");
         let mut file = fs::File::create(&deployment).unwrap();
-        file.write_all(
-            b"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-app\n",
-        )
-        .unwrap();
+        file.write_all(b"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-app\n")
+            .unwrap();
 
         let service = temp_dir.path().join("k8s/service.yaml");
         let mut file = fs::File::create(&service).unwrap();
@@ -240,7 +240,11 @@ mod tests {
 
         match result.data {
             DetectionData::KubernetesEnv(info) => {
-                assert!(info.manifests.len() >= 2, "Expected at least 2 manifests, got {}", info.manifests.len());
+                assert!(
+                    info.manifests.len() >= 2,
+                    "Expected at least 2 manifests, got {}",
+                    info.manifests.len()
+                );
                 assert!(info.commands.contains_key("apply"));
                 assert_eq!(info.suggested_default, Some("apply".to_string()));
             }

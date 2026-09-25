@@ -1,11 +1,6 @@
 //! Docker container detection strategy
 
-use crate::{
-    context::DetectionContext,
-    strategy::DetectionStrategy,
-    types::*,
-    Result,
-};
+use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 
 /// Detects Docker via Dockerfile
@@ -165,7 +160,9 @@ impl DetectionStrategy for DockerStrategy {
                 for stage in &stages {
                     commands.insert(
                         stage.clone(),
-                        format!("docker build {dockerfile_flag}--target {stage} -t {app}:{stage} ."),
+                        format!(
+                            "docker build {dockerfile_flag}--target {stage} -t {app}:{stage} ."
+                        ),
                     );
                     if stage.to_lowercase().contains("test") {
                         commands.insert(
@@ -193,8 +190,14 @@ impl DetectionStrategy for DockerStrategy {
             suggested_default = None;
         }
 
-        metadata.insert("dockerfile_count".to_string(), serde_json::json!(dockerfiles.len()));
-        metadata.insert("compose_file_count".to_string(), serde_json::json!(compose_files.len()));
+        metadata.insert(
+            "dockerfile_count".to_string(),
+            serde_json::json!(dockerfiles.len()),
+        );
+        metadata.insert(
+            "compose_file_count".to_string(),
+            serde_json::json!(compose_files.len()),
+        );
 
         Ok(DetectionResult {
             strategy_id: self.id().to_string(),
@@ -341,7 +344,9 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
 
         assert_eq!(info.base_images.len(), 2);
         assert!(info.base_images.contains(&"rust:1.75".to_string()));
-        assert!(info.base_images.contains(&"debian:bookworm-slim".to_string()));
+        assert!(info
+            .base_images
+            .contains(&"debian:bookworm-slim".to_string()));
 
         assert_eq!(info.exposed_ports.len(), 2);
         assert!(info.exposed_ports.contains(&8080));
@@ -362,13 +367,18 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
         let strategy = DockerStrategy;
 
         // Should detect Dockerfile in subdirectory
-        assert!(strategy.can_apply(&ctx), "Should detect Dockerfile in docker/ subdirectory");
+        assert!(
+            strategy.can_apply(&ctx),
+            "Should detect Dockerfile in docker/ subdirectory"
+        );
 
         let result = strategy.detect(&ctx).unwrap();
         match result.data {
             DetectionData::DockerEnv(info) => {
                 assert_eq!(info.dockerfiles.len(), 1);
-                assert!(info.dockerfiles[0].to_string_lossy().contains("docker/Dockerfile"));
+                assert!(info.dockerfiles[0]
+                    .to_string_lossy()
+                    .contains("docker/Dockerfile"));
                 assert!(info.exposed_ports.contains(&3000));
             }
             _ => panic!("Expected DockerEnv data"),
@@ -399,11 +409,10 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
             DetectionData::DockerEnv(info) => {
                 // Should have generic build command
                 assert!(info.commands.contains_key("build"));
-                assert!(
-                    info.commands
-                        .get("build")
-                        .is_some_and(|cmd| cmd.starts_with("docker build -t ") && cmd.ends_with(" ."))
-                );
+                assert!(info
+                    .commands
+                    .get("build")
+                    .is_some_and(|cmd| cmd.starts_with("docker build -t ") && cmd.ends_with(" .")));
 
                 // Should have stage-specific build commands
                 assert!(info.commands.contains_key("builder"));
@@ -412,14 +421,21 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
                 assert!(info
                     .commands
                     .get("builder")
-                    .is_some_and(|cmd| cmd.contains("--target builder") && cmd.contains(" -t ") && cmd.ends_with(" .")));
+                    .is_some_and(|cmd| cmd.contains("--target builder")
+                        && cmd.contains(" -t ")
+                        && cmd.ends_with(" .")));
                 assert!(info
                     .commands
                     .get("production")
-                    .is_some_and(|cmd| cmd.contains("--target production") && cmd.contains(" -t ") && cmd.ends_with(" .")));
+                    .is_some_and(|cmd| cmd.contains("--target production")
+                        && cmd.contains(" -t ")
+                        && cmd.ends_with(" .")));
 
                 // Should have stage metadata
-                assert_eq!(info.metadata.get("has_stages"), Some(&serde_json::json!(true)));
+                assert_eq!(
+                    info.metadata.get("has_stages"),
+                    Some(&serde_json::json!(true))
+                );
                 assert_eq!(info.stages.len(), 2);
                 assert!(info.stages.contains(&"builder".to_string()));
                 assert!(info.stages.contains(&"production".to_string()));

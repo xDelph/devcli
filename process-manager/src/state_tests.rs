@@ -130,16 +130,28 @@ mod tests {
 
         // Create processes with different metadata
         let mut proc1 = create_test_process("app1", 111);
-        proc1.metadata.insert("environment".to_string(), "dev".to_string());
-        proc1.metadata.insert("project".to_string(), "myproject".to_string());
+        proc1
+            .metadata
+            .insert("environment".to_string(), "dev".to_string());
+        proc1
+            .metadata
+            .insert("project".to_string(), "myproject".to_string());
 
         let mut proc2 = create_test_process("app2", 222);
-        proc2.metadata.insert("environment".to_string(), "prod".to_string());
-        proc2.metadata.insert("project".to_string(), "myproject".to_string());
+        proc2
+            .metadata
+            .insert("environment".to_string(), "prod".to_string());
+        proc2
+            .metadata
+            .insert("project".to_string(), "myproject".to_string());
 
         let mut proc3 = create_test_process("app3", 333);
-        proc3.metadata.insert("environment".to_string(), "dev".to_string());
-        proc3.metadata.insert("project".to_string(), "otherproject".to_string());
+        proc3
+            .metadata
+            .insert("environment".to_string(), "dev".to_string());
+        proc3
+            .metadata
+            .insert("project".to_string(), "otherproject".to_string());
 
         store.save(&proc1).unwrap();
         store.save(&proc2).unwrap();
@@ -168,16 +180,21 @@ mod tests {
         let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let mut proc = create_test_process("unique-app", 12345);
-        proc.metadata.insert("unique_key".to_string(), "unique_value".to_string());
+        proc.metadata
+            .insert("unique_key".to_string(), "unique_value".to_string());
         store.save(&proc).unwrap();
 
         // Find the unique process
-        let found = store.find_one_by_metadata("unique_key", "unique_value").unwrap();
+        let found = store
+            .find_one_by_metadata("unique_key", "unique_value")
+            .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, "unique-app");
 
         // Find nonexistent
-        let not_found = store.find_one_by_metadata("unique_key", "wrong_value").unwrap();
+        let not_found = store
+            .find_one_by_metadata("unique_key", "wrong_value")
+            .unwrap();
         assert!(not_found.is_none());
     }
 

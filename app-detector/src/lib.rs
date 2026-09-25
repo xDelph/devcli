@@ -38,7 +38,7 @@ pub mod strategies;
 
 // Re-export main types
 pub use context::DetectionContext;
-pub use engine::{DetectionEngine, DetectionConfig};
+pub use engine::{DetectionConfig, DetectionEngine};
 pub use registry::StrategyRegistry;
 pub use strategy::DetectionStrategy;
 pub use types::*;

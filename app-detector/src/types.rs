@@ -151,7 +151,6 @@ pub enum DetectionData {
     KeyValue(HashMap<String, serde_json::Value>),
 
     // ===== App Type Data =====
-
     /// Typed language detection
     Language(LanguageInfo),
 
@@ -168,7 +167,6 @@ pub enum DetectionData {
     PackageManager(PackageManagerInfo),
 
     // ===== Environment Capability Data =====
-
     /// Local environment commands
     LocalEnv(LocalEnvInfo),
 

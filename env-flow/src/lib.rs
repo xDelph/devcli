@@ -244,13 +244,16 @@ impl EnvFlow {
             let entries = loader::load_file(file, self.strict)?;
             let mut map = indexmap::IndexMap::new();
             for entry in entries {
-                map.insert(entry.key.clone(), types::EnvEntry {
-                    value: entry.raw_value,
-                    source_file: file.clone(),
-                    source_line: entry.line_number,
-                    overridden_by: Vec::new(),
-                    interpolate: entry.interpolate,
-                });
+                map.insert(
+                    entry.key.clone(),
+                    types::EnvEntry {
+                        value: entry.raw_value,
+                        source_file: file.clone(),
+                        source_line: entry.line_number,
+                        overridden_by: Vec::new(),
+                        interpolate: entry.interpolate,
+                    },
+                );
             }
             let mut vars = EnvVars(map);
             if self.interpolate {
@@ -440,8 +443,12 @@ mod integration_tests {
 
         // Should have: base, stage, local-override, stage-local-override
         assert_eq!(plan.len(), 4);
-        assert!(plan.iter().any(|l| l.layer_type == LayerType::Base && l.exists));
-        assert!(plan.iter().any(|l| l.layer_type == LayerType::StageBase && !l.exists));
+        assert!(plan
+            .iter()
+            .any(|l| l.layer_type == LayerType::Base && l.exists));
+        assert!(plan
+            .iter()
+            .any(|l| l.layer_type == LayerType::StageBase && !l.exists));
     }
 
     #[test]
@@ -532,7 +539,9 @@ mod integration_tests {
         write(d.path(), ".env.dev", "DB=dev-db\n");
 
         // Load only .env.dev — should NOT inherit PORT from .env
-        let vars = EnvFlow::from_file(d.path().join(".env.dev")).load().unwrap();
+        let vars = EnvFlow::from_file(d.path().join(".env.dev"))
+            .load()
+            .unwrap();
         assert_eq!(vars.get("DB"), Some("dev-db"));
         assert_eq!(vars.get("PORT"), None); // no inheritance
     }
@@ -540,9 +549,15 @@ mod integration_tests {
     #[test]
     fn from_file_with_interpolation() {
         let d = dir();
-        write(d.path(), ".env.local", "BASE=hello\nGREETING=${BASE}_world\n");
+        write(
+            d.path(),
+            ".env.local",
+            "BASE=hello\nGREETING=${BASE}_world\n",
+        );
 
-        let vars = EnvFlow::from_file(d.path().join(".env.local")).load().unwrap();
+        let vars = EnvFlow::from_file(d.path().join(".env.local"))
+            .load()
+            .unwrap();
         assert_eq!(vars.get("GREETING"), Some("hello_world"));
     }
 

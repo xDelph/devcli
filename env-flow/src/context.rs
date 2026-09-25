@@ -104,7 +104,10 @@ mod tests {
         fn set(key: &str, value: &str) -> Self {
             let old = std::env::var(key).ok();
             std::env::set_var(key, value);
-            Self { key: key.to_string(), old }
+            Self {
+                key: key.to_string(),
+                old,
+            }
         }
     }
     impl Drop for EnvGuard {

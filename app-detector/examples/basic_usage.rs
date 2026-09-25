@@ -10,9 +10,7 @@ use std::env;
 
 fn main() {
     // Get the directory to analyze from command line args or use current directory
-    let dir = env::args()
-        .nth(1)
-        .unwrap_or_else(|| ".".to_string());
+    let dir = env::args().nth(1).unwrap_or_else(|| ".".to_string());
 
     println!("Analyzing directory: {}\n", dir);
 
@@ -82,7 +80,10 @@ fn main() {
                             );
                         }
                         if !info.commands.is_empty() {
-                            println!("Commands: {}", info.commands.keys().cloned().collect::<Vec<_>>().join(", "));
+                            println!(
+                                "Commands: {}",
+                                info.commands.keys().cloned().collect::<Vec<_>>().join(", ")
+                            );
                         }
                     }
                     DetectionData::LocalEnv(info) => {

@@ -179,7 +179,10 @@ async fn test_spawn_attached_process_keeps_child_handle() {
     let running = engine::spawn(&task).await.expect("spawn attached sleep");
     assert!(running.is_alive());
     assert!(running.pgid.is_none(), "attached spawn must not set PGID");
-    assert!(running.child.is_some(), "attached spawn must retain Child handle");
+    assert!(
+        running.child.is_some(),
+        "attached spawn must retain Child handle"
+    );
 
     drop(running.output_rx);
     let _ = engine::terminate(running.pid, running.pgid, true).await;
@@ -316,7 +319,10 @@ async fn test_ensure_daemon_running_singleton() {
     };
 
     let original_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{}", daemon_dir.display(), original_path));
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", daemon_dir.display(), original_path),
+    );
 
     let task = sleep_task("daemon-app", 120, None);
     let running = engine::spawn(&task).await.expect("spawn");
@@ -325,7 +331,12 @@ async fn test_ensure_daemon_running_singleton() {
     drop(running.output_rx);
 
     store
-        .save(&managed_from_running(task.clone(), pid, pgid, HashMap::new()))
+        .save(&managed_from_running(
+            task.clone(),
+            pid,
+            pgid,
+            HashMap::new(),
+        ))
         .unwrap();
 
     store.ensure_daemon_running().expect("first daemon spawn");
@@ -355,7 +366,10 @@ fn locate_pm_daemon_dir() -> Option<PathBuf> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest.parent()?;
     for profile in ["debug", "release"] {
-        let candidate = workspace_root.join("target").join(profile).join("pm-daemon");
+        let candidate = workspace_root
+            .join("target")
+            .join(profile)
+            .join("pm-daemon");
         if candidate.exists() {
             return candidate.parent().map(Path::to_path_buf);
         }

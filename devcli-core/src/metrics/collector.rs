@@ -90,17 +90,17 @@ impl MetricsCollector {
     ) -> Result<ProcessMetrics> {
         let processes = store.list()?;
 
-        let running_processes: Vec<_> = processes
-            .iter()
-            .filter(|p| store.is_running(p))
-            .collect();
+        let running_processes: Vec<_> = processes.iter().filter(|p| store.is_running(p)).collect();
 
         let total_processes = processes.len();
         let running_count = running_processes.len();
         let stopped_count = total_processes - running_count;
 
         // Calculate total restarts
-        let total_restarts: u64 = processes.iter().map(|p| p.runtime.restart_count as u64).sum();
+        let total_restarts: u64 = processes
+            .iter()
+            .map(|p| p.runtime.restart_count as u64)
+            .sum();
 
         // Calculate restarts in last hour
         let one_hour_ago = Utc::now() - chrono::Duration::hours(1);
