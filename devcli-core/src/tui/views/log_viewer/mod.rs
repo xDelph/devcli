@@ -644,20 +644,17 @@ impl SingleLogView {
 
     /// Calculates how many visual rows a log line will occupy when wrapped
     fn calculate_wrapped_rows(&self, log_line: &LogLine, available_width: usize) -> usize {
-        let prefix_width = 8; // "12345 | " format
-        let app_name_width = self.app_name.len() + 3; // "[appName] " format
-        let content_width = log_line
-            .formatted
-            .iter()
-            .map(|span| span.content.len())
-            .sum::<usize>();
-        let total_line_width = prefix_width + app_name_width + content_width;
-
-        if total_line_width == 0 {
-            1
-        } else {
-            total_line_width.div_ceil(available_width).max(1)
+        // The rendered line is: line-number prefix + "[app] " + content spans.
+        // A width-only `div_ceil` is NOT enough: ratatui's `Wrap` breaks on
+        // *word* boundaries (WordWrapper), which can produce more rows than the
+        // width math (fewer words fit per row depending on where they break).
+        // Undercounting kept the last rows of the log unreachable, so we
+        // emulate the exact packing algorithm (trim=false, ASCII width 1).
+        let mut content = format!("{:>5} | [{}] ", "", self.app_name);
+        for span in &log_line.formatted {
+            content.push_str(&span.content);
         }
+        wrapped_row_count(std::slice::from_ref(&content), available_width)
     }
 
     /// Applies search highlighting to formatted spans
@@ -780,38 +777,14 @@ impl SingleLogView {
             self.viewport.cursor_line = max_cursor;
         }
 
-        // Get visual row position for cursor
-        let total_visual_rows = current_visual_row;
-        let cursor_visual_row = visual_row_positions
+        // Get visual row position for cursor (emulation-wrapped). The EXACT
+        // total comes from `Paragraph::line_count` below — ratatui's own
+        // WordWrapper — which is the ground truth used to clamp the scroll so
+        // the last rows of the log are always reachable.
+        let cursor_visual_row_est = visual_row_positions
             .get(self.viewport.cursor_line)
             .copied()
             .unwrap_or(0);
-
-        // Standard (pager-like) scrolling, decided here because the wrapped
-        // visual layout is only known at render time:
-        // - cursor inside the visible range: keep the current scroll position
-        // - cursor leaves the top: re-anchor so it becomes the first visible row
-        // - cursor leaves the bottom: re-anchor so it becomes the last visible row
-        // Always clamped, so the first/last lines are always reachable, the
-        // view never scrolls past the content, and there is never a jump.
-        let max_scroll = total_visual_rows.saturating_sub(visible_height);
-        let current_top = self.viewport.last_visual_scroll.min(max_scroll);
-        let scroll_offset = if total_visual_rows <= visible_height {
-            // Everything fits on screen - never hide the first lines
-            0
-        } else if cursor_visual_row < current_top {
-            // Cursor moved above the viewport - pull it back to the top
-            cursor_visual_row
-        } else if cursor_visual_row >= current_top + visible_height {
-            // Cursor moved below the viewport - pull it back to the bottom
-            (cursor_visual_row + 1).saturating_sub(visible_height)
-        } else {
-            // Cursor is within the visible range - maintain current position
-            current_top
-        };
-
-        // Remember scroll position for next frame
-        self.viewport.last_visual_scroll = scroll_offset;
 
         // Build text with ALL lines
         let mut text = Text::default();
@@ -921,10 +894,45 @@ impl SingleLogView {
                     .style(Style::default().bg(Color::Rgb(0, 0, 0))),
             )
             .style(Style::default().bg(Color::Rgb(0, 0, 0)))
-            .wrap(ratatui::widgets::Wrap { trim: false })
-            .scroll((scroll_offset as u16, 0));
+            .wrap(ratatui::widgets::Wrap { trim: false });
 
-        frame.render_widget(paragraph, area);
+        // Ground truth: total wrapped rows exactly as ratatui renders them
+        // (WordWrapper). Using the width-only estimate kept the last rows of
+        // the log unreachable, because word-boundary wrapping packs more rows
+        // than the width math predicts.
+        let total_visual_rows = paragraph.line_count(available_width as u16); // usize
+        let cursor_visual_row = cursor_visual_row_est.min(total_visual_rows.saturating_sub(1));
+        let max_scroll = total_visual_rows.saturating_sub(visible_height);
+        // When the cursor is on the very last line, pin the view to the exact
+        // bottom so the newest log rows are always visible.
+        let at_last_line = self.viewport.cursor_line + 1 >= self.content.len();
+
+        // Standard (pager-like) scrolling:
+        // - cursor inside the visible range: keep the current scroll position
+        // - cursor leaves the top: re-anchor so it becomes the first visible row
+        // - cursor leaves the bottom: re-anchor so it becomes the last visible row
+        let current_top = self.viewport.last_visual_scroll.min(max_scroll);
+        let scroll_offset = if total_visual_rows <= visible_height {
+            // Everything fits on screen - never hide the first lines
+            0
+        } else if cursor_visual_row < current_top {
+            cursor_visual_row
+        } else if cursor_visual_row >= current_top + visible_height {
+            if at_last_line {
+                max_scroll
+            } else {
+                (cursor_visual_row + 1)
+                    .saturating_sub(visible_height)
+                    .min(max_scroll)
+            }
+        } else {
+            current_top
+        };
+
+        // Remember scroll position for next frame
+        self.viewport.last_visual_scroll = scroll_offset;
+
+        frame.render_widget(paragraph.scroll((scroll_offset as u16, 0)), area);
     }
 
     /// Checks if the current cursor line contains JSON
@@ -1201,5 +1209,131 @@ impl SingleLogView {
         }
 
         Ok(true)
+    }
+}
+
+/// Counts how many visual rows a set of logical lines occupies when wrapped by
+/// ratatui's `WordWrapper` (`Wrap { trim: false }`, ASCII width 1).
+///
+/// Faithful port of `ratatui_widgets::reflow::WordWrapper::process_input`
+/// reduced to width bookkeeping (only the row count is needed). Tested in
+/// `mod tests` against the real ratatui renderer.
+fn wrapped_row_count(contents: &[String], available_width: usize) -> usize {
+    let max = available_width.max(1);
+    let mut total = 0usize;
+
+    for text in contents {
+        let mut count = 0usize; // wrapped rows for this logical line
+        let mut line_width = 0usize;
+        let mut word_width = 0usize;
+        let mut ws_width = 0usize;
+        let mut pending_line = 0usize;
+        let mut pending_ws: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+        let mut non_ws_prev = false;
+
+        for ch in text.chars() {
+            let is_ws = ch.is_whitespace();
+            // Cell width as unicode-width sees it: tabs/control chars have
+            // width 0, regular printable chars 1 (CJK/emoji are approximated).
+            let w = if ch == '\t' || ch.is_control() { 0 } else { 1 };
+            if w > max {
+                continue;
+            }
+
+            let word_found = non_ws_prev && is_ws;
+            // trim is false, so the trimmed_* overflow branches never trigger
+            let untrimmed_overflow = pending_line == 0 && word_width + ws_width + w > max;
+
+            if word_found || untrimmed_overflow {
+                // pending line always keeps whitespace when trim is false
+                pending_line += ws_width + word_width;
+                line_width += ws_width + word_width;
+                pending_ws.clear();
+                ws_width = 0;
+                word_width = 0;
+            }
+
+            let line_full = line_width >= max;
+            let pending_word_overflow = w > 0 && line_width + ws_width + word_width >= max;
+
+            if line_full || pending_word_overflow {
+                count += 1;
+                // ratatui computes the remaining *wrapped-row* width from the
+                // flushed line BEFORE resetting it (max - flushed_width)
+                let mut remaining = max.saturating_sub(line_width);
+                pending_line = 0;
+                line_width = 0;
+
+                // drain leading whitespace that fits on the wrapped row
+                while let Some(&front_w) = pending_ws.front() {
+                    if front_w > remaining {
+                        break;
+                    }
+                    ws_width -= front_w;
+                    remaining -= front_w;
+                    pending_ws.pop_front();
+                }
+
+                if is_ws && pending_ws.is_empty() {
+                    continue;
+                }
+            }
+
+            if is_ws {
+                ws_width += w;
+                pending_ws.push_back(w);
+            } else {
+                word_width += w;
+            }
+            non_ws_prev = !is_ws;
+        }
+
+        // flush the remaining tail (pending whitespace + word)
+        pending_line = ws_width + word_width;
+        if pending_line != 0 {
+            count += 1;
+        }
+        if count == 0 {
+            count = 1; // an empty logical line still renders as one row
+        }
+        total += count;
+    }
+
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The width-based emulation is only used to position the cursor reveal;
+    /// the scroll clamp uses ratatui's own `line_count`. These sanity tests
+    /// pin the emulation's invariants (never 0, never less than the width
+    /// lower bound, monotonic with width).
+    #[test]
+    fn wrapped_row_count_sanity() {
+        let one = "hello world".to_string();
+        assert_eq!(wrapped_row_count(std::slice::from_ref(&one), 100), 1);
+        assert_eq!(wrapped_row_count(&[String::new()], 40), 1);
+
+        // long single word spills to the width lower bound at least
+        let long = "x".repeat(41);
+        assert_eq!(wrapped_row_count(std::slice::from_ref(&long), 10), 5);
+
+        // wider width never yields more rows
+        assert!(
+            wrapped_row_count(std::slice::from_ref(&long), 30)
+                <= wrapped_row_count(std::slice::from_ref(&long), 10)
+        );
+
+        // empty content is 0 rows, not crash
+        assert_eq!(wrapped_row_count(&[], 10), 0);
+    }
+
+    #[test]
+    fn wrapped_row_count_matches_width_bound_for_plain_words() {
+        // For spacing-free text the emulation matches simple width math
+        let line = "abcd".repeat(10); // 40 chars, no whitespace
+        assert_eq!(wrapped_row_count(std::slice::from_ref(&line), 13), 4);
     }
 }

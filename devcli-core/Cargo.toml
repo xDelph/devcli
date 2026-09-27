@@ -15,7 +15,7 @@ dirs = "5.0"
 futures = "0.3"
 colored = "2.1"
 inquire = "0.7"
-ratatui = "0.30.0-beta.0"
+ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }  # for Paragraph::line_count (exact wrapped rows)
 ratatui-widgets = "0.3.0-beta.0"
 crossterm = "0.27"
 syntect = "5.1"
