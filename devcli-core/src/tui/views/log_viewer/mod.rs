@@ -26,7 +26,7 @@ use self::{
     json_formatter::JsonFormatter,
     search::SearchState,
     syntax_highlighter::SyntaxHighlighter,
-    viewport::{ScrollAnchor, ViewportState},
+    viewport::ViewportState,
 };
 
 /// Result of handling input in LogViewerView
@@ -307,15 +307,12 @@ impl LogViewerView {
                         self.active_panel_idx = self.panels.len().saturating_sub(1);
                     }
 
-                    // Reset viewport state for remaining panels to handle layout change
-                    // When going from multi-panel to single-panel, the viewport needs adjustment
+                    // Reset viewport state for remaining panels to handle layout change.
+                    // The renderer re-normalizes the scroll from the cursor, so we
+                    // only need to keep the cursor inside the content.
                     for panel in &mut self.panels {
-                        // If the cursor was at the bottom, keep following the latest logs;
-                        // otherwise just reveal the cursor in the new layout.
                         if panel.viewport.cursor_line + 1 >= panel.total_lines {
-                            panel.viewport.follow_bottom(panel.total_lines);
-                        } else {
-                            panel.viewport.anchor = ScrollAnchor::None;
+                            panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
                         }
                     }
 
@@ -790,38 +787,27 @@ impl SingleLogView {
             .copied()
             .unwrap_or(0);
 
-        // Standard anchored scrolling, decided here because the wrapped visual
-        // layout is only known at render time:
-        // - scroll up (Top): cursor becomes the FIRST visible line
-        // - scroll down (Bottom): cursor becomes the LAST visible line
-        // - otherwise: keep the current position, only reveal the cursor if it
-        //   leaves the visible range (jumps, search, layout changes)
-        // Always clamped, so the first/last lines are always reachable and the
-        // view never scrolls past the content.
-        let anchor = std::mem::take(&mut self.viewport.anchor);
+        // Standard (pager-like) scrolling, decided here because the wrapped
+        // visual layout is only known at render time:
+        // - cursor inside the visible range: keep the current scroll position
+        // - cursor leaves the top: re-anchor so it becomes the first visible row
+        // - cursor leaves the bottom: re-anchor so it becomes the last visible row
+        // Always clamped, so the first/last lines are always reachable, the
+        // view never scrolls past the content, and there is never a jump.
         let max_scroll = total_visual_rows.saturating_sub(visible_height);
+        let current_top = self.viewport.last_visual_scroll.min(max_scroll);
         let scroll_offset = if total_visual_rows <= visible_height {
             // Everything fits on screen - never hide the first lines
             0
+        } else if cursor_visual_row < current_top {
+            // Cursor moved above the viewport - pull it back to the top
+            cursor_visual_row
+        } else if cursor_visual_row >= current_top + visible_height {
+            // Cursor moved below the viewport - pull it back to the bottom
+            (cursor_visual_row + 1).saturating_sub(visible_height)
         } else {
-            match anchor {
-                ScrollAnchor::Top => cursor_visual_row.min(max_scroll),
-                ScrollAnchor::Bottom => (cursor_visual_row + 1)
-                    .saturating_sub(visible_height)
-                    .min(max_scroll),
-                ScrollAnchor::None => {
-                    let current = self.viewport.last_visual_scroll.min(max_scroll);
-                    if cursor_visual_row < current {
-                        cursor_visual_row
-                    } else if cursor_visual_row >= current + visible_height {
-                        (cursor_visual_row + 1)
-                            .saturating_sub(visible_height)
-                            .min(max_scroll)
-                    } else {
-                        current
-                    }
-                }
-            }
+            // Cursor is within the visible range - maintain current position
+            current_top
         };
 
         // Remember scroll position for next frame
@@ -1206,15 +1192,12 @@ impl SingleLogView {
         self.last_file_size = current_size;
 
         // Shrunk/rotated file: clamp a cursor that fell past the new content
-        // and re-reveal the closest line so the selection stays visible.
-        if self.viewport.cursor_line >= new_total_lines {
-            self.viewport.cursor_line = new_total_lines.saturating_sub(1);
-            self.viewport.anchor = ScrollAnchor::None;
-        }
+        // so the selection stays visible.
+        self.viewport.clamp_cursor(new_total_lines);
 
         // If we were at the bottom, stay at the bottom (auto-scroll)
         if was_at_bottom && new_total_lines > 0 {
-            self.viewport.follow_bottom(new_total_lines);
+            self.viewport.jump_bottom(new_total_lines);
         }
 
         Ok(true)

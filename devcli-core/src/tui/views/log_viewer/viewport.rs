@@ -1,21 +1,3 @@
-/// What the vertical scroll should do on the next render.
-///
-/// The actual pixel decision is made in `render_content` where the
-/// text-wrapping layout (visual rows) is known; this enum only carries the
-/// *intent* set by input handlers.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScrollAnchor {
-    /// Pin the cursor to the FIRST visible line (standard scroll-up).
-    Top,
-    /// Pin the cursor to the LAST visible line (standard scroll-down /
-    /// following the newest logs).
-    Bottom,
-    /// No explicit anchor: keep the current view and only reveal the cursor
-    /// if it leaves the visible range (jumps, search, layout changes).
-    #[default]
-    None,
-}
-
 #[derive(Default)]
 pub struct ViewportState {
     /// Current cursor position (which line is highlighted)
@@ -24,12 +6,10 @@ pub struct ViewportState {
     pub horizontal_offset: usize,
     /// First visible *visual* row (text-wrapping aware).
     ///
-    /// This is the single source of truth for vertical scrolling — it is
-    /// re-derived from `cursor_line` + `ScrollAnchor` on every render, so it
-    /// can never go stale (window resize, panel close, wrapped lines…).
+    /// This is the persistent scroll position: the renderer keeps it while the
+    /// cursor stays inside the visible range, and re-anchors it when the cursor
+    /// leaves or the layout changes. Always clamped, so it never goes stale.
     pub last_visual_scroll: usize,
-    /// Scroll intent for the next render.
-    pub anchor: ScrollAnchor,
 }
 
 impl ViewportState {
@@ -39,43 +19,36 @@ impl ViewportState {
             cursor_line: total_lines.saturating_sub(1),
             horizontal_offset: 0,
             last_visual_scroll: 0,
-            anchor: ScrollAnchor::Bottom,
         }
     }
 
-    /// Moves the cursor down (toward newer logs) and asks the renderer to pin
-    /// it to the last visible line — standard scroll-down.
+    /// Moves the cursor down (toward newer logs), clamped to the last line.
     pub fn scroll_down(&mut self, lines: usize, total_lines: usize) {
         self.cursor_line = self
             .cursor_line
             .saturating_add(lines)
             .min(total_lines.saturating_sub(1));
-        self.anchor = ScrollAnchor::Bottom;
     }
 
-    /// Moves the cursor up (toward older logs) and asks the renderer to pin
-    /// it to the first visible line — standard scroll-up.
+    /// Moves the cursor up (toward older logs), clamped to the first line.
     pub fn scroll_up(&mut self, lines: usize) {
         self.cursor_line = self.cursor_line.saturating_sub(lines);
-        self.anchor = ScrollAnchor::Top;
     }
 
-    /// Jumps to the first line; the renderer reveals it (no explicit anchor).
+    /// Jumps to the first line.
     pub fn jump_top(&mut self) {
         self.cursor_line = 0;
-        self.anchor = ScrollAnchor::None;
     }
 
-    /// Jumps to the last line and pins the view to the bottom (follow logs).
+    /// Jumps to the last line.
     pub fn jump_bottom(&mut self, total_lines: usize) {
         self.cursor_line = total_lines.saturating_sub(1);
-        self.anchor = ScrollAnchor::Bottom;
     }
 
-    /// Keeps following the newest lines (called after the log is refreshed).
-    pub fn follow_bottom(&mut self, total_lines: usize) {
-        self.cursor_line = total_lines.saturating_sub(1);
-        self.anchor = ScrollAnchor::Bottom;
+    /// Clamps the cursor back into `[0, total_lines)` after the content shrank
+    /// or was replaced (log rotation).
+    pub fn clamp_cursor(&mut self, total_lines: usize) {
+        self.cursor_line = self.cursor_line.min(total_lines.saturating_sub(1));
     }
 }
 
@@ -84,51 +57,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_starts_at_bottom_and_follows() {
-        let mut vp = ViewportState::new(10);
+    fn new_starts_at_bottom() {
+        let vp = ViewportState::new(10);
         assert_eq!(vp.cursor_line, 9);
-        assert_eq!(vp.anchor, ScrollAnchor::Bottom);
-
-        vp.follow_bottom(15);
-        assert_eq!(vp.cursor_line, 14);
-        assert_eq!(vp.anchor, ScrollAnchor::Bottom);
     }
 
     #[test]
-    fn scroll_up_clamps_at_zero_and_anchors_top() {
+    fn scroll_up_clamps_at_zero() {
         let mut vp = ViewportState::new(10); // cursor 9
         vp.scroll_up(3);
         assert_eq!(vp.cursor_line, 6);
-        assert_eq!(vp.anchor, ScrollAnchor::Top);
 
         vp.scroll_up(100);
         assert_eq!(vp.cursor_line, 0);
-        assert_eq!(vp.anchor, ScrollAnchor::Top);
     }
 
     #[test]
-    fn scroll_down_clamps_at_last_line_and_anchors_bottom() {
+    fn scroll_down_clamps_at_last_line() {
         let mut vp = ViewportState::new(10); // cursor 9
         vp.scroll_up(9); // cursor 0
         vp.scroll_down(4, 10);
         assert_eq!(vp.cursor_line, 4);
-        assert_eq!(vp.anchor, ScrollAnchor::Bottom);
 
         vp.scroll_down(100, 10);
         assert_eq!(vp.cursor_line, 9);
-        assert_eq!(vp.anchor, ScrollAnchor::Bottom);
     }
 
     #[test]
-    fn jumps_set_cursor_and_anchor() {
+    fn jumps_and_clamp_cursor() {
         let mut vp = ViewportState::new(10);
         vp.jump_top();
         assert_eq!(vp.cursor_line, 0);
-        assert_eq!(vp.anchor, ScrollAnchor::None);
 
         vp.jump_bottom(10);
         assert_eq!(vp.cursor_line, 9);
-        assert_eq!(vp.anchor, ScrollAnchor::Bottom);
+
+        // simulate a file that shrunk to 3 lines
+        vp.jump_bottom(10);
+        vp.clamp_cursor(3);
+        assert_eq!(vp.cursor_line, 2);
     }
 
     #[test]

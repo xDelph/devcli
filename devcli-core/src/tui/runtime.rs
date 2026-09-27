@@ -25,7 +25,7 @@ impl Runtime {
     /// uncontrollable fast scroll. Returns true when the scroll step may be
     /// applied; rejects everything within `WHEEL_MIN_INTERVAL` of the last one.
     fn wheel_scroll_allowed(&mut self, now: Instant) -> bool {
-        const WHEEL_MIN_INTERVAL_MS: u64 = 60;
+        const WHEEL_MIN_INTERVAL_MS: u64 = 30;
         match self.last_wheel_scroll {
             Some(prev)
                 if now.duration_since(prev) < Duration::from_millis(WHEEL_MIN_INTERVAL_MS) =>
