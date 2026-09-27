@@ -223,7 +223,7 @@ impl TuiApp {
         let polling_handle = self.start_status_polling();
 
         // Run the main loop via Runtime
-        let runtime = crate::tui::runtime::Runtime::new();
+        let mut runtime = crate::tui::runtime::Runtime::new();
         let result = runtime.run(self, &mut terminal);
 
         // Stop the background polling task

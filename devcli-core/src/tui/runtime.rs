@@ -7,15 +7,40 @@ use super::app::TuiApp;
 
 /// The TUI Runtime
 /// Manages the main event loop, terminal updates, and input handling
-pub struct Runtime;
+pub struct Runtime {
+    /// Timestamp of the last applied mouse-wheel scroll, used to debounce the
+    /// burst of scroll events that smooth trackpads / mice emit per notch.
+    last_wheel_scroll: Option<Instant>,
+}
 
 impl Runtime {
     pub fn new() -> Self {
-        Self
+        Self {
+            last_wheel_scroll: None,
+        }
+    }
+
+    /// Rate-limits wheel scrolling so bursts of events (smooth trackpads and
+    /// some mice send several scroll events per notch) don't turn into an
+    /// uncontrollable fast scroll. Returns true when the scroll step may be
+    /// applied; rejects everything within `WHEEL_MIN_INTERVAL` of the last one.
+    fn wheel_scroll_allowed(&mut self, now: Instant) -> bool {
+        const WHEEL_MIN_INTERVAL_MS: u64 = 60;
+        match self.last_wheel_scroll {
+            Some(prev)
+                if now.duration_since(prev) < Duration::from_millis(WHEEL_MIN_INTERVAL_MS) =>
+            {
+                false
+            }
+            _ => {
+                self.last_wheel_scroll = Some(now);
+                true
+            }
+        }
     }
 
     /// Runs the main event loop
-    pub fn run<B: Backend>(&self, app: &mut TuiApp, terminal: &mut Terminal<B>) -> Result<()>
+    pub fn run<B: Backend>(&mut self, app: &mut TuiApp, terminal: &mut Terminal<B>) -> Result<()>
     where
         <B as Backend>::Error: Send + Sync + 'static,
     {
@@ -38,6 +63,7 @@ impl Runtime {
 
             // Wait for an event with a timeout
             if event::poll(Duration::from_millis(100))? {
+                let now = Instant::now();
                 match event::read()? {
                     Event::Key(key) => {
                         app.handle_key_event(key)?;
@@ -46,9 +72,14 @@ impl Runtime {
                     Event::Mouse(mouse) => {
                         // Translate wheel scrolling into arrow keys so every view
                         // that already handles Up/Down scrolls with the mouse too.
+                        // Debounced: smooth trackpads emit a *burst* of scroll
+                        // events per notch — without a rate limit that becomes
+                        // an uncontrollable fast scroll.
                         if let Some(key) = mouse_scroll_key(&mouse) {
-                            app.handle_key_event(key)?;
-                            app.set_needs_redraw(true);
+                            if self.wheel_scroll_allowed(now) {
+                                app.handle_key_event(key)?;
+                                app.set_needs_redraw(true);
+                            }
                         }
                     }
                     Event::Resize(_, _) => {

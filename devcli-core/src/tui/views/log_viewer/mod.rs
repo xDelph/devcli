@@ -832,10 +832,13 @@ impl SingleLogView {
 
         for (i, log_line) in self.content.iter().enumerate() {
             let bg_color = if i == self.viewport.cursor_line {
+                // Deliberately bright: a too-dark band (previous Rgb(40, 40, 60))
+                // was invisible on the black background, so the selected line
+                // seemed to have no highlight at all.
                 if is_active {
-                    Color::Rgb(40, 40, 60)
+                    Color::Rgb(90, 90, 135)
                 } else {
-                    Color::Rgb(20, 20, 30)
+                    Color::Rgb(55, 55, 85)
                 }
             } else {
                 Color::Rgb(0, 0, 0)
