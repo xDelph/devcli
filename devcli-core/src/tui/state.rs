@@ -448,20 +448,6 @@ impl AppStatus {
 pub enum ViewType {
     /// Main view showing projects and apps
     Main,
-    /// Command list view for a specific app
-    CommandList {
-        /// Project name
-        project: String,
-        /// App name
-        app: String,
-    },
-    /// Log browser view for a specific app
-    LogBrowser {
-        /// Project name
-        project: String,
-        /// App name
-        app: String,
-    },
     /// Log viewer showing contents of specific log files
     LogViewer {
         /// Paths to the log files being viewed
@@ -511,15 +497,5 @@ mod tests {
         let main1 = ViewType::Main;
         let main2 = ViewType::Main;
         assert_eq!(main1, main2);
-
-        let cmd1 = ViewType::CommandList {
-            project: "test".to_string(),
-            app: "app1".to_string(),
-        };
-        let cmd2 = ViewType::CommandList {
-            project: "test".to_string(),
-            app: "app1".to_string(),
-        };
-        assert_eq!(cmd1, cmd2);
     }
 }

@@ -46,22 +46,6 @@ fn test_view_type_equality() {
     let main1 = ViewType::Main;
     let main2 = ViewType::Main;
     assert_eq!(main1, main2);
-    let cmd1 = ViewType::CommandList {
-        project: "test".to_string(),
-        app: "app1".to_string(),
-    };
-    let cmd2 = ViewType::CommandList {
-        project: "test".to_string(),
-        app: "app1".to_string(),
-    };
-    assert_eq!(cmd1, cmd2);
-
-    // Different apps should not be equal
-    let cmd3 = ViewType::CommandList {
-        project: "test".to_string(),
-        app: "app2".to_string(),
-    };
-    assert_ne!(cmd1, cmd3);
 }
 
 #[test]

@@ -62,8 +62,6 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     // View-specific handling - let views handle keys first
     let handled = match &current_view {
         ViewType::Main => app.handle_main_view_input(key)?,
-        ViewType::CommandList { .. } => app.handle_command_list_input(key)?,
-        ViewType::LogBrowser { .. } => app.handle_log_browser_input(key)?,
         ViewType::LogViewer { .. } => app.handle_log_viewer_input(key)?,
     };
 

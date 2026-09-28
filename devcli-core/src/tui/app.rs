@@ -300,14 +300,6 @@ impl TuiApp {
         self.main_view.handle_input(key, &self.state)
     }
 
-    /// Handles input for the command list view
-    ///
-    /// Not yet wired (nothing sets `current_view` to CommandList today):
-    /// returning false lets global shortcuts apply.
-    pub(crate) fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<bool> {
-        Ok(false)
-    }
-
     #[cfg(test)]
     pub(crate) fn new_test() -> Self {
         let state = Arc::new(Mutex::new(AppState {
@@ -361,14 +353,6 @@ impl TuiApp {
     #[cfg(test)]
     pub(crate) fn is_help_visible(&self) -> bool {
         self.help_overlay.is_visible()
-    }
-
-    /// Handles input for the log browser view
-    ///
-    /// Not yet wired (nothing sets `current_view` to LogBrowser today):
-    /// returning false lets global shortcuts apply.
-    pub(crate) fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<bool> {
-        Ok(false)
     }
 
     /// Handles input for the log viewer view
@@ -732,14 +716,6 @@ impl TuiApp {
                 crate::debug!("[Render] Rendering Main view");
                 self.render_main_view(frame, &state)
             }
-            ViewType::CommandList { .. } => {
-                crate::debug!("[Render] Rendering CommandList view");
-                self.render_command_list_view(frame)
-            }
-            ViewType::LogBrowser { .. } => {
-                crate::debug!("[Render] Rendering LogBrowser view");
-                self.render_log_browser_view(frame)
-            }
             ViewType::LogViewer { .. } => {
                 crate::debug!("[Render] Rendering LogViewer view");
                 drop(state); // Release the lock before calling mutable render
@@ -806,24 +782,6 @@ impl TuiApp {
             );
 
         frame.render_widget(error_widget, status_area);
-    }
-
-    /// Placeholder for command list view
-    fn render_command_list_view(&self, frame: &mut Frame) {
-        let size = frame.area();
-        let placeholder = Paragraph::new("Command List View - Coming Soon")
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Commands"));
-        frame.render_widget(placeholder, size);
-    }
-
-    /// Placeholder for log browser view
-    fn render_log_browser_view(&self, frame: &mut Frame) {
-        let size = frame.area();
-        let placeholder = Paragraph::new("Log Browser View - Coming Soon")
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Logs"));
-        frame.render_widget(placeholder, size);
     }
 
     /// Renders the log viewer view
