@@ -15,7 +15,10 @@ dirs = "5.0"
 futures = "0.3"
 colored = "2.1"
 inquire = "0.7"
-ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }  # for Paragraph::line_count (exact wrapped rows)
+# unstable-rendered-line-info enables Paragraph::line_count (exact wrapped-row
+# count, used by the log viewer scroll clamp). Pinned by Cargo.lock; ratatui has
+# more options in 0.30-beta where line_count is still unstable.
+ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }
 ratatui-widgets = "0.3.0-beta.0"
 crossterm = "0.27"
 syntect = "5.1"

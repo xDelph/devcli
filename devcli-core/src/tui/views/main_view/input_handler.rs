@@ -281,6 +281,8 @@ impl NavigationHandler for MainView {
                             self.log_manager.list_logs_for_app(&app.project, &app.name)
                         {
                             if let Some(log_file) = log_files.first() {
+                                let prev = state.current_view.clone();
+                                state.view_history.push(prev);
                                 state.current_view = crate::tui::state::ViewType::LogViewer {
                                     log_paths: vec![log_file.path.clone()],
                                     active_index: 0,
@@ -521,6 +523,8 @@ impl NavigationHandler for MainView {
                         {
                             logs.sort_by(|a, b| b.modified.cmp(&a.modified));
                             if let Some(log) = logs.get(self.selected_log_idx) {
+                                let prev = state.current_view.clone();
+                                state.view_history.push(prev);
                                 state.current_view = crate::tui::state::ViewType::LogViewer {
                                     log_paths: vec![log.path.clone()],
                                     active_index: 0,

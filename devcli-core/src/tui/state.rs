@@ -21,6 +21,9 @@ pub struct AppState {
     pub selected_app_idx: usize,
     /// The current view being displayed
     pub current_view: ViewType,
+    /// Navigation stack: pushed when entering a sub-view so the back (Esc)
+    /// action can return to the exact previous view instead of always Main.
+    pub view_history: Vec<ViewType>,
     /// Optional error message to display to the user
     pub error_message: Option<String>,
     /// Optional status message to display to the user
@@ -141,6 +144,7 @@ impl AppState {
             selected_project_idx: 0,
             selected_app_idx: 0,
             current_view: ViewType::Main,
+            view_history: Vec::new(),
             error_message: None,
             status_message: None,
             command_execution_requested: None,

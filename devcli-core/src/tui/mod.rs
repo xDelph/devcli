@@ -5,7 +5,6 @@
 pub mod app;
 pub mod command_executor;
 pub mod debug;
-pub mod event_loop;
 pub mod input;
 pub mod log_manager;
 pub mod popups;

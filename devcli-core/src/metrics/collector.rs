@@ -10,7 +10,7 @@ use super::types::*;
 use crate::config::load_config;
 use crate::process_manager_support::state_store;
 use crate::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -184,12 +184,19 @@ impl MetricsCollector {
         // Count total apps configured
         let total_apps_configured: usize = config.projects.values().map(|p| p.apps.len()).sum();
 
+        // Real config file modification time (covers --config-dir/config edits)
+        let config_last_modified = crate::config::loader::get_config_path()
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .map(DateTime::<Utc>::from);
+
         Ok(SystemMetrics {
             monitor_uptime_seconds,
             monitor_loop_iterations: loop_iterations,
             devcli_version: env!("CARGO_PKG_VERSION").to_string(),
             total_apps_configured,
-            config_last_modified: None, // TODO: Get actual config file mtime
+            config_last_modified,
         })
     }
 

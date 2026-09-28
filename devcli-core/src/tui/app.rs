@@ -301,8 +301,10 @@ impl TuiApp {
     }
 
     /// Handles input for the command list view
+    ///
+    /// Not yet wired (nothing sets `current_view` to CommandList today):
+    /// returning false lets global shortcuts apply.
     pub(crate) fn handle_command_list_input(&mut self, _key: KeyEvent) -> Result<bool> {
-        // TODO: Implement command list navigation and execution
         Ok(false)
     }
 
@@ -313,6 +315,7 @@ impl TuiApp {
             selected_project_idx: 0,
             selected_app_idx: 0,
             current_view: ViewType::Main,
+            view_history: vec![],
             error_message: None,
             status_message: None,
             command_execution_requested: None,
@@ -361,8 +364,10 @@ impl TuiApp {
     }
 
     /// Handles input for the log browser view
+    ///
+    /// Not yet wired (nothing sets `current_view` to LogBrowser today):
+    /// returning false lets global shortcuts apply.
     pub(crate) fn handle_log_browser_input(&mut self, _key: KeyEvent) -> Result<bool> {
-        // TODO: Implement log browser navigation
         Ok(false)
     }
 
@@ -409,10 +414,9 @@ impl TuiApp {
             }
         }
 
-        // For now, always return to main view
-        // TODO: Implement view stack for proper back navigation
+        // Pop the navigation stack; fall back to Main
         if let Ok(mut state) = self.state.lock() {
-            state.current_view = ViewType::Main;
+            state.current_view = state.view_history.pop().unwrap_or(ViewType::Main);
         }
     }
 
