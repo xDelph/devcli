@@ -85,6 +85,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         project: project.clone(),
         all: false,
         force: false,
+        dry_run: false,
         silent,
         output_tx: args.output_tx.clone(),
     };
@@ -122,6 +123,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             skip_deps: args.skip_deps,
             silent,
             stage: process.metadata.get("stage").cloned(),
+            detached: false,
             output_tx: args.output_tx.clone(),
         };
 

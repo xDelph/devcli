@@ -16,6 +16,7 @@ pub struct StopCommandArgs {
     pub project: Option<String>,          // Optional: stop all apps in a project
     pub all: bool,                        // If true, stop all running processes
     pub force: bool,                      // If true, use SIGKILL instead of SIGTERM
+    pub dry_run: bool,                    // If true, only report what would be stopped
     pub silent: bool,                     // If true, don't print to terminal (for TUI mode)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
@@ -54,7 +55,15 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     let processes_to_stop = filter_processes(&args, &actual_app_name, running_processes, &store)?;
 
     if processes_to_stop.is_empty() {
-        if args.all {
+        if crate::output::json_enabled() && !silent {
+            crate::output::print_json(&serde_json::json!({
+                "dry_run": args.dry_run,
+                "stopped": 0,
+                "failed": 0,
+                "errors": [],
+                "message": "No processes to stop",
+            }))?;
+        } else if args.all {
             emit_line(
                 silent,
                 args.output_tx.as_ref(),
@@ -85,8 +94,33 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    if !silent {
+    if !silent && !crate::output::json_enabled() {
         display_stop_summary(&processes_to_stop)?;
+    }
+
+    // Dry run: report the target set and exit without sending signals.
+    if args.dry_run {
+        if crate::output::json_enabled() {
+            let entries: Vec<_> = processes_to_stop
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "app": p.metadata.get("app_config_name").map(String::as_str).unwrap_or(&p.id),
+                        "project": p.metadata.get("project"),
+                        "pid": p.pid,
+                        "command": p.task.command,
+                    })
+                })
+                .collect();
+            crate::output::print_json(&serde_json::json!({
+                "dry_run": true,
+                "count": entries.len(),
+                "processes": entries,
+            }))?;
+        } else if !silent {
+            println!("\nDry run: no processes were stopped.");
+        }
+        return Ok(());
     }
 
     // Stop each process
@@ -98,7 +132,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
             .await
         {
             Ok(_) => {
-                if !silent {
+                if !silent && !crate::output::json_enabled() {
                     let app_name = process
                         .metadata
                         .get("app_config_name")
@@ -116,12 +150,14 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
                     .unwrap_or(&process.id);
                 let error_msg = format!("Failed to stop {}: {}", app_name, e);
                 errors.push(error_msg.clone());
-                emit_line(silent, args.output_tx.as_ref(), format!("✗ {}", error_msg));
+                if !crate::output::json_enabled() {
+                    emit_line(silent, args.output_tx.as_ref(), format!("✗ {}", error_msg));
+                }
             }
         }
     }
 
-    if !silent {
+    if !silent && !crate::output::json_enabled() {
         println!("\nStop Summary:");
         println!("  ✓ Successfully stopped: {}", stopped_count);
         if !errors.is_empty() {
@@ -130,6 +166,15 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         if stopped_count > 0 {
             println!("✓ All specified processes have been stopped");
         }
+    }
+
+    if crate::output::json_enabled() && !silent {
+        crate::output::print_json(&serde_json::json!({
+            "dry_run": false,
+            "stopped": stopped_count,
+            "failed": errors.len(),
+            "errors": errors,
+        }))?;
     }
 
     if !errors.is_empty() {

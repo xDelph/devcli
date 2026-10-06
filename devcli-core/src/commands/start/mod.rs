@@ -104,7 +104,25 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     .await?;
 
     // Step 4: Handle different modes and keep process alive for log viewing
-    setup_log_monitoring(&started_apps, silent).await?;
+    //
+    // `--json` implies detached mode: an agent wants a result, not a live log
+    // stream it cannot consume.
+    let detached = args.detached || crate::output::json_enabled();
+    if detached || silent {
+        if !silent {
+            if crate::output::json_enabled() {
+                crate::output::print_json(&serde_json::json!({
+                    "started": started_apps,
+                    "environment": environment,
+                    "detached": true,
+                }))?;
+            } else {
+                println!("\nRunning in background (detached mode, no terminal output)");
+            }
+        }
+    } else {
+        setup_log_monitoring(&started_apps, silent).await?;
+    }
 
     Ok(())
 }

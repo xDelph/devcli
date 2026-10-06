@@ -7,6 +7,14 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+
+    /// Emit machine-readable JSON output (for scripts and AI agents)
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Disable colored output (also honours the NO_COLOR env var)
+    #[arg(long = "no-color", global = true)]
+    pub no_color: bool,
 }
 
 #[derive(Subcommand, Debug, PartialEq, Eq)]
@@ -35,6 +43,12 @@ pub enum Commands {
             help = "Deployment stage: 'dev', 'qa', 'preprod', or 'prod' (overrides config)"
         )]
         stage: Option<String>,
+
+        #[arg(
+            long,
+            help = "Run in the background and return immediately (overrides the detached-mode preference)"
+        )]
+        detached: bool,
     },
 
     #[command(about = "Restart a running process using same config")]
@@ -69,6 +83,9 @@ pub enum Commands {
 
         #[arg(long, help = "Force kill processes (use SIGKILL instead of SIGTERM)")]
         force: bool,
+
+        #[arg(long, help = "Show what would be stopped without stopping anything")]
+        dry_run: bool,
     },
 
     #[command(about = "Run a specific command variant for an app")]
@@ -105,10 +122,53 @@ pub enum Commands {
         deps: bool,
     },
 
+    #[command(about = "Show logs for an app")]
+    Logs {
+        #[arg(help = "Name of the application")]
+        app_name: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+
+        #[arg(
+            short,
+            long,
+            help = "Environment filter: 'local', 'docker', 'orbstack', or 'k8s'"
+        )]
+        env: Option<String>,
+
+        #[arg(
+            short = 'n',
+            long,
+            default_value_t = 200,
+            help = "Number of trailing lines to show"
+        )]
+        lines: usize,
+
+        #[arg(short, long, help = "Follow the log file and stream new lines")]
+        follow: bool,
+    },
+
     #[command(about = "Auto-detect and add app to config")]
     AutoAdd {
         #[arg(long, help = "Path to detect (defaults to current directory)")]
         path: Option<String>,
+
+        #[arg(
+            short = 'y',
+            long,
+            help = "Non-interactive: accept detected defaults without prompting"
+        )]
+        yes: bool,
+
+        #[arg(short, long, help = "Target project name (non-interactive)")]
+        project: Option<String>,
+
+        #[arg(short, long, help = "App name to register (non-interactive)")]
+        name: Option<String>,
+
+        #[arg(long = "type", help = "App type override (e.g., nodejs, docker, rust)")]
+        app_type: Option<String>,
     },
 
     #[command(about = "Manually check the health of a running app")]
@@ -374,6 +434,7 @@ mod tests {
                 env: Some("docker".into()),
                 skip_deps: true,
                 stage: Some("qa".into()),
+                detached: false,
             }
         );
     }
@@ -438,6 +499,7 @@ mod tests {
                 project: None,
                 all: true,
                 force: true,
+                dry_run: false,
             }
         );
 
@@ -460,6 +522,10 @@ mod tests {
             auto_add,
             Commands::AutoAdd {
                 path: Some("/tmp/app".into()),
+                yes: false,
+                project: None,
+                name: None,
+                app_type: None,
             }
         );
     }
@@ -585,6 +651,7 @@ mod tests {
             env: None,
             skip_deps: false,
             stage: None,
+            detached: false,
         }));
     }
 }

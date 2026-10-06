@@ -21,6 +21,7 @@ mod tests {
             skip_deps: true,
             silent: false,
             stage: Some("dev".to_string()),
+            detached: false,
             output_tx: None,
         };
 

@@ -33,6 +33,7 @@ async fn execute_start_command(
         skip_deps: false,
         silent: true,
         stage: None,
+        detached: false,
         output_tx: Some(core_output),
     };
     crate::commands::start::start_command(args).await?;
@@ -80,6 +81,7 @@ async fn execute_stop_command(
         project: Some(request.project),
         all: false,
         force: false,
+        dry_run: false,
         silent: true,
         output_tx: Some(core_output),
     };

@@ -7,7 +7,7 @@
 // - validation.rs: App name validation and configuration validation
 
 // Re-export the main command entry point
-pub use single_app::auto_add_command;
+pub use single_app::{auto_add_command, AutoAddArgs};
 
 // Re-export functions used by tests
 pub use single_app::discover_all_apps;

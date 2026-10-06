@@ -8,6 +8,7 @@ use crate::process_manager_support::{find_process, state_store};
 use crate::Result;
 use chrono::Utc;
 use process_manager::state::ManagedProcess;
+use serde_json::json;
 use std::collections::HashMap;
 
 // Arguments for the status command
@@ -54,6 +55,10 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         });
     }
 
+    if crate::output::json_enabled() {
+        return status_json(&args, &store, processes).await;
+    }
+
     if args.show_deps {
         if let Some(app_name) = args.app_name {
             return show_with_dependencies(app_name, &store).await;
@@ -62,8 +67,11 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
     if processes.is_empty() {
         println!("No processes are currently tracked");
+        crate::output::set_exit_code(1);
         return Ok(());
     }
+
+    let any_running = processes.iter().any(|p| store.is_running(p));
 
     let mut grouped: HashMap<String, Vec<ManagedProcess>> = HashMap::new();
     let mut ungrouped = Vec::new();
@@ -134,6 +142,85 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     }
 
     println!();
+    crate::output::set_exit_code(if any_running { 0 } else { 1 });
+    Ok(())
+}
+
+/// Machine-readable status for agents (`devcli --json status`).
+///
+/// Exit code is 0 when at least one tracked process is running, 1 otherwise.
+async fn status_json(
+    args: &StatusCommandArgs,
+    store: &process_manager::StateStore,
+    processes: Vec<ManagedProcess>,
+) -> Result<()> {
+    if args.show_deps {
+        if let Some(app_name) = &args.app_name {
+            let config = load_config()?;
+            let resolved = resolve_app(&config, app_name, None)?;
+            let dependencies = resolve_dependency_chain(&config, &resolved)?;
+
+            let deps: Vec<_> = dependencies
+                .iter()
+                .map(|dep| {
+                    let running = find_process(store, &dep.project, &dep.app_name, None)
+                        .ok()
+                        .flatten()
+                        .map(|p| store.is_running(&p))
+                        .unwrap_or(false);
+                    json!({
+                        "project": dep.project,
+                        "app": dep.app_name,
+                        "running": running,
+                    })
+                })
+                .collect();
+
+            let own = find_process(store, &resolved.project, &resolved.app_name, None)?;
+            let running = own.as_ref().map(|p| store.is_running(p)).unwrap_or(false);
+            let uptime_seconds = own
+                .as_ref()
+                .filter(|_| running)
+                .map(|p| (Utc::now() - p.start_time).num_seconds());
+
+            crate::output::print_json(&json!({
+                "project": resolved.project,
+                "app": resolved.app_name,
+                "running": running,
+                "pid": own.as_ref().map(|p| p.pid),
+                "uptime_seconds": uptime_seconds,
+                "dependencies": deps,
+            }))?;
+            crate::output::set_exit_code(if running { 0 } else { 1 });
+            return Ok(());
+        }
+    }
+
+    let entries: Vec<_> = processes
+        .iter()
+        .map(|p| {
+            let running = store.is_running(p);
+            json!({
+                "id": p.id,
+                "app": p.metadata.get("app_config_name"),
+                "project": p.metadata.get("project"),
+                "environment": p.metadata.get("environment"),
+                "command_variant": p.metadata.get("command_variant"),
+                "pid": p.pid,
+                "running": running,
+                "uptime_seconds": if running {
+                    Some((Utc::now() - p.start_time).num_seconds())
+                } else {
+                    None
+                },
+                "command": p.task.command,
+            })
+        })
+        .collect();
+
+    let any_running = processes.iter().any(|p| store.is_running(p));
+    crate::output::print_json(&json!({ "processes": entries }))?;
+    crate::output::set_exit_code(if any_running { 0 } else { 1 });
     Ok(())
 }
 

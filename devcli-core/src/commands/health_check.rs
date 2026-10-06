@@ -6,6 +6,7 @@ use crate::Result;
 use anyhow::Context;
 use chrono::Utc;
 use process_manager::HealthCheckEngine;
+use serde_json::json;
 
 /// Arguments for the health-check command
 #[derive(Debug)]
@@ -27,10 +28,13 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         app = %resolved.app_name,
         "Checking health of application"
     );
-    println!(
-        "Checking health of: {}/{}",
-        resolved.project, resolved.app_name
-    );
+    let json = crate::output::json_enabled();
+    if !json {
+        println!(
+            "Checking health of: {}/{}",
+            resolved.project, resolved.app_name
+        );
+    }
 
     let project_config = config
         .projects
@@ -81,10 +85,12 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         "Starting health check execution"
     );
 
-    println!("Process ID: {}", process.pid);
-    println!("Health check type: {:?}", pm_check);
-    println!();
-    println!("Executing health check...");
+    if !json {
+        println!("Process ID: {}", process.pid);
+        println!("Health check type: {:?}", pm_check);
+        println!();
+        println!("Executing health check...");
+    }
 
     let engine = HealthCheckEngine::new();
     let start = std::time::Instant::now();
@@ -105,9 +111,20 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
                 "Health check passed"
             );
 
-            println!("✅ Health check PASSED ({:.2}s)", duration.as_secs_f64());
-            println!();
-            println!("Status: Healthy");
+            if json {
+                crate::output::print_json(&json!({
+                    "project": resolved.project,
+                    "app": resolved.app_name,
+                    "pid": process.pid,
+                    "healthy": true,
+                    "duration_seconds": duration.as_secs_f64(),
+                }))?;
+            } else {
+                println!("✅ Health check PASSED ({:.2}s)", duration.as_secs_f64());
+                println!();
+                println!("Status: Healthy");
+            }
+            crate::output::set_exit_code(0);
             Ok(())
         }
         Ok(false) => {
@@ -123,14 +140,27 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
                 "Health check failed"
             );
 
-            println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
-            println!();
-            println!("Status: Unhealthy");
-            println!("Consecutive failures: {}", process.runtime.health_failures);
-            if let Some(last_check) = process.runtime.last_health_check {
-                println!("Last check: {}", last_check.format("%Y-%m-%d %H:%M:%S"));
+            if json {
+                crate::output::print_json(&json!({
+                    "project": resolved.project,
+                    "app": resolved.app_name,
+                    "pid": process.pid,
+                    "healthy": false,
+                    "duration_seconds": duration.as_secs_f64(),
+                    "failures": process.runtime.health_failures,
+                }))?;
+            } else {
+                println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
+                println!();
+                println!("Status: Unhealthy");
+                println!("Consecutive failures: {}", process.runtime.health_failures);
+                if let Some(last_check) = process.runtime.last_health_check {
+                    println!("Last check: {}", last_check.format("%Y-%m-%d %H:%M:%S"));
+                }
             }
-            anyhow::bail!("Health check failed");
+            // Exit code 2 = unhealthy (distinct from 1 = error).
+            crate::output::set_exit_code(2);
+            Ok(())
         }
         Err(e) => {
             process.runtime.health_failures += 1;
@@ -145,10 +175,22 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
                 "Health check encountered error"
             );
 
-            println!("⚠️  Health check ERROR ({:.2}s)", duration.as_secs_f64());
-            println!();
-            println!("Error: {}", e);
-            anyhow::bail!("Health check encountered an error: {}", e);
+            if json {
+                crate::output::print_json(&json!({
+                    "project": resolved.project,
+                    "app": resolved.app_name,
+                    "pid": process.pid,
+                    "healthy": false,
+                    "error": e.to_string(),
+                }))?;
+            } else {
+                println!("⚠️  Health check ERROR ({:.2}s)", duration.as_secs_f64());
+                println!();
+                println!("Error: {}", e);
+            }
+            // Exit code 1 = execution error.
+            crate::output::set_exit_code(1);
+            Ok(())
         }
     }
 }

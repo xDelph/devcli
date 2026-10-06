@@ -12,8 +12,15 @@ use devcli_core::commands::{
     ui_command,
 };
 use devcli_core::Result;
+use std::io::IsTerminal;
 
 pub async fn run(cli: Cli) -> Result<()> {
+    // Configure output mode once, before dispatching. Colors are disabled for
+    // `--no-color`, when `NO_COLOR` is set, or when stdout is not a TTY.
+    let color =
+        !cli.no_color && std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal();
+    devcli_core::output::init(cli.json, color);
+
     match cli.command {
         Commands::Start {
             app_names,
@@ -21,6 +28,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             env,
             skip_deps,
             stage,
+            detached,
         } => {
             let args = devcli_core::commands::start::StartCommandArgs {
                 app_names,
@@ -29,6 +37,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 skip_deps,
                 silent: false,
                 stage,
+                detached,
                 output_tx: None,
             };
             start_command(args).await?;
@@ -56,12 +65,14 @@ pub async fn run(cli: Cli) -> Result<()> {
             project,
             all,
             force,
+            dry_run,
         } => {
             let args = devcli_core::commands::stop::StopCommandArgs {
                 app_name,
                 project,
                 all,
                 force,
+                dry_run,
                 silent: false,
                 output_tx: None,
             };
@@ -100,8 +111,38 @@ pub async fn run(cli: Cli) -> Result<()> {
             status_command(args).await?;
         }
 
-        Commands::AutoAdd { path } => {
-            auto_add_command(path).await?;
+        Commands::AutoAdd {
+            path,
+            yes,
+            project,
+            name,
+            app_type,
+        } => {
+            let args = devcli_core::commands::auto_add::AutoAddArgs {
+                path,
+                yes,
+                project,
+                name,
+                app_type,
+            };
+            auto_add_command(args).await?;
+        }
+
+        Commands::Logs {
+            app_name,
+            project,
+            env,
+            lines,
+            follow,
+        } => {
+            let args = devcli_core::commands::logs::LogsArgs {
+                app_name,
+                project,
+                environment: env,
+                lines,
+                follow,
+            };
+            devcli_core::commands::logs_command(args).await?;
         }
 
         Commands::HealthCheck { app_name, env } => {

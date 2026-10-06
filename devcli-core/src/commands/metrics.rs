@@ -32,6 +32,12 @@ pub async fn metrics_command() -> Result<()> {
                 "Metrics fetched successfully"
             );
 
+            // Agents get the raw metrics document; humans get the formatted view.
+            if crate::output::json_enabled() {
+                crate::output::print_json(&metrics)?;
+                return Ok(());
+            }
+
             // Display metrics in a formatted way
             display_metrics(&metrics);
 

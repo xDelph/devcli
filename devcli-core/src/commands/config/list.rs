@@ -7,6 +7,7 @@
 use crate::config::{list_all_apps, load_config, resolve_app};
 use crate::utils::path::expand_tilde;
 use crate::Result;
+use serde_json::json;
 use std::collections::HashMap;
 
 /// List all projects and apps
@@ -25,6 +26,10 @@ use std::collections::HashMap;
 /// * `apps_only` - If true, only show app names without details
 pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Result<()> {
     let config = load_config()?;
+
+    if crate::output::json_enabled() {
+        return config_list_json(&config, project_filter, apps_only);
+    }
 
     if apps_only {
         // Apps-only mode: Just print app names, one per line
@@ -145,6 +150,62 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
     Ok(())
 }
 
+/// Machine-readable `config list` for agents (`devcli --json config list`).
+fn config_list_json(
+    config: &crate::config::Config,
+    project_filter: Option<String>,
+    apps_only: bool,
+) -> Result<()> {
+    if apps_only {
+        let apps: Vec<String> = list_all_apps(config)
+            .into_iter()
+            .filter(|(project, _, _)| project_filter.as_ref().is_none_or(|f| project == f))
+            .map(|(_, app, _)| app)
+            .collect();
+        return crate::output::print_json(&json!({ "apps": apps }));
+    }
+
+    let mut projects = Vec::new();
+    for (project_name, project) in &config.projects {
+        if let Some(ref filter) = project_filter {
+            if project_name != filter {
+                continue;
+            }
+        }
+
+        let apps: Vec<_> = project
+            .apps
+            .iter()
+            .map(|(app_name, app)| {
+                json!({
+                    "name": app_name,
+                    "alternative_name": app.alternative_name,
+                    "type": app.app_type,
+                    "path": app.path,
+                    "default_stages": app.default_stages,
+                    "defaults": {
+                        "local": app.defaults.local,
+                        "docker": app.defaults.docker,
+                        "k8s": app.defaults.k8s,
+                    },
+                    "dependencies": app.dependencies.iter().map(|d| json!({
+                        "project": d.project,
+                        "app": d.app,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+
+        projects.push(json!({
+            "name": project_name,
+            "alternative_name": project.alternative_name,
+            "apps": apps,
+        }));
+    }
+
+    crate::output::print_json(&json!({ "projects": projects }))
+}
+
 /// Show details of a specific app
 ///
 /// Example: `devcli config show api-private`
@@ -170,6 +231,10 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
 
     // Get the project config for alternative name
     let project_config = config.projects.get(&resolved.project).unwrap();
+
+    if crate::output::json_enabled() {
+        return config_show_json(&resolved, project_config);
+    }
 
     // Display basic info (with alternative name if present)
     let display_name = if let Some(ref alt_name) = resolved.app.alternative_name {
@@ -277,6 +342,38 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     }
 
     Ok(())
+}
+
+/// Machine-readable `config show` for agents (`devcli --json config show <app>`).
+fn config_show_json(
+    resolved: &crate::config::resolver::ResolvedApp,
+    project_config: &crate::config::Project,
+) -> Result<()> {
+    crate::output::print_json(&json!({
+        "project": resolved.project,
+        "project_alternative_name": project_config.alternative_name,
+        "app": resolved.app_name,
+        "alternative_name": resolved.app.alternative_name,
+        "type": resolved.app.app_type,
+        "path": resolved.app.path,
+        "default_stages": resolved.app.default_stages,
+        "defaults": {
+            "local": resolved.app.defaults.local,
+            "docker": resolved.app.defaults.docker,
+            "k8s": resolved.app.defaults.k8s,
+        },
+        "dependencies": resolved.app.dependencies.iter().map(|d| json!({
+            "project": d.project,
+            "app": d.app,
+        })).collect::<Vec<_>>(),
+        "commands": {
+            "local": resolved.app.commands.local,
+            "docker": resolved.app.commands.docker,
+            "k8s": resolved.app.commands.k8s,
+        },
+        "env_files": resolved.app.env_files,
+        "dockerfile_path": resolved.app.dockerfile_path,
+    }))
 }
 
 /// List all commands for an app

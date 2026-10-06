@@ -7,6 +7,7 @@ use crate::config::{list_all_apps, load_config};
 use crate::config_manager_support::DevCliConfigValidator;
 use crate::Result;
 use config_manager::validation::Validator;
+use serde_json::json;
 
 /// Validate the config file
 ///
@@ -17,10 +18,35 @@ use config_manager::validation::Validator;
 pub async fn config_validate() -> Result<()> {
     let config = load_config()?;
 
-    println!("Validating configuration...\n");
-
     let result = DevCliConfigValidator::new().validate(&config);
     let all_apps = list_all_apps(&config);
+
+    // Machine-readable validation report for agents.
+    if crate::output::json_enabled() {
+        let errors: Vec<_> = result
+            .errors()
+            .iter()
+            .map(|e| json!({ "field": e.field(), "message": e.message() }))
+            .collect();
+        let warnings: Vec<_> = result
+            .warnings()
+            .iter()
+            .map(|w| json!({ "field": w.field(), "message": w.message() }))
+            .collect();
+        crate::output::print_json(&json!({
+            "valid": result.is_valid(),
+            "errors": errors,
+            "warnings": warnings,
+            "projects": config.projects.len(),
+            "apps": all_apps.len(),
+        }))?;
+        if !result.is_valid() {
+            crate::output::set_exit_code(1);
+        }
+        return Ok(());
+    }
+
+    println!("Validating configuration...\n");
 
     if !result.warnings().is_empty() {
         println!("⚠ Warnings:");

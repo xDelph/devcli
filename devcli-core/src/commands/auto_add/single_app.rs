@@ -7,19 +7,45 @@ use crate::detection::detect_app;
 use crate::Result;
 use std::collections::HashMap;
 use std::env;
+use std::io::IsTerminal;
 
 use super::interactive::{
     confirm_default_yes, interactive_app_selection, prompt_app_name, prompt_project_selection,
     show_preview,
 };
+use super::validation::validate_app_name;
+use serde_json::json;
+
+/// Arguments for the auto-add command.
+#[derive(Debug, Clone, Default)]
+pub struct AutoAddArgs {
+    /// Optional path to scan (defaults to the current directory)
+    pub path: Option<String>,
+    /// Non-interactive: accept detected defaults without prompting
+    pub yes: bool,
+    /// Target project name (non-interactive)
+    pub project: Option<String>,
+    /// App name to register (non-interactive)
+    pub name: Option<String>,
+    /// App type override (non-interactive)
+    pub app_type: Option<String>,
+}
+
+impl AutoAddArgs {
+    /// True when any non-interactive flag was supplied.
+    pub fn is_non_interactive(&self) -> bool {
+        self.yes || self.project.is_some() || self.name.is_some() || self.app_type.is_some()
+    }
+}
 
 // Entry point for the auto-add command
 // Detects if we're in an Nx monorepo or a single app, then handles accordingly
 // Args:
-//   - path: Optional custom path to scan (defaults to current directory)
-pub async fn auto_add_command(path: Option<String>) -> Result<()> {
+//   - args.path: Optional custom path to scan (defaults to current directory)
+//   - args.yes/--project/--name/--type: non-interactive mode for agents
+pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
     // Use provided path or default to current directory
-    let target_path = if let Some(p) = path {
+    let target_path = if let Some(p) = &args.path {
         std::path::PathBuf::from(p)
     } else {
         env::current_dir()?
@@ -32,30 +58,54 @@ pub async fn auto_add_command(path: Option<String>) -> Result<()> {
         anyhow::bail!("Path does not exist: {}", target_path.display());
     }
 
-    println!("Detecting app in {}...\n", target_path.display());
+    // Refuse to hang on a prompt when there is no terminal to answer it.
+    if !args.is_non_interactive() && !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "auto-add is interactive but no terminal is attached.\n\
+             Pass --yes (optionally with --project/--name/--type) for non-interactive use."
+        );
+    }
+
+    if !crate::output::json_enabled() {
+        println!("Detecting app in {}...\n", target_path.display());
+    }
 
     // Check if we're in an Nx monorepo by looking for nx.json
     // Nx monorepos need special handling to detect multiple apps
     if target_path.join("nx.json").exists() {
+        if args.is_non_interactive() {
+            anyhow::bail!(
+                "Nx monorepo detected at {}.\n\
+                 Non-interactive auto-add does not support monorepos yet; run it interactively.",
+                target_path.display()
+            );
+        }
         super::nx_monorepo::handle_nx_monorepo(&target_path).await
     } else {
-        handle_single_app(&target_path).await
+        handle_single_app(&target_path, &args).await
     }
 }
 
 // Handle detection and addition of a single app (not in an Nx monorepo)
 // Detects the app type, prompts for confirmation, and adds to config
-pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
+pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs) -> Result<()> {
     // Check if there are multiple potential apps in subdirectories
     let discovered_apps = discover_all_apps(target_path)?;
 
     if discovered_apps.len() > 1 {
+        if args.is_non_interactive() {
+            anyhow::bail!(
+                "Multiple apps detected under {}; non-interactive auto-add needs a single app.\n\
+                 Point --path at a specific app directory.",
+                target_path.display()
+            );
+        }
         // Multiple apps found, let user choose
         return handle_multiple_apps(discovered_apps).await;
     }
 
     // Single app case - use the first (and only) discovered app
-    let detected = if discovered_apps.is_empty() {
+    let mut detected = if discovered_apps.is_empty() {
         // Fallback to direct detection if discovery found nothing
         detect_app(target_path)?
     } else {
@@ -65,20 +115,27 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
             .expect("BUG: discovered_apps should not be empty after is_empty check")
     };
 
-    // Display what was detected
-    println!("✓ Detected: {} app", detected.app_type);
+    // Apply an explicit type override before previewing/persisting.
+    if let Some(app_type) = &args.app_type {
+        detected.app_type = app_type.clone();
+    }
 
-    if let Some(local_cmds) = &detected.local_commands {
-        println!("  - Local: {} commands available", local_cmds.len());
-    }
-    if let Some(docker_cmds) = &detected.docker_commands {
-        println!("  - Docker: {} commands available", docker_cmds.len());
-    }
-    if let Some(orbstack_cmds) = &detected.orbstack_commands {
-        println!("  - OrbStack: {} commands available", orbstack_cmds.len());
-    }
-    if let Some(k8s_cmds) = &detected.k8s_commands {
-        println!("  - Kubernetes: {} commands available", k8s_cmds.len());
+    // Display what was detected
+    if !crate::output::json_enabled() {
+        println!("✓ Detected: {} app", detected.app_type);
+
+        if let Some(local_cmds) = &detected.local_commands {
+            println!("  - Local: {} commands available", local_cmds.len());
+        }
+        if let Some(docker_cmds) = &detected.docker_commands {
+            println!("  - Docker: {} commands available", docker_cmds.len());
+        }
+        if let Some(orbstack_cmds) = &detected.orbstack_commands {
+            println!("  - OrbStack: {} commands available", orbstack_cmds.len());
+        }
+        if let Some(k8s_cmds) = &detected.k8s_commands {
+            println!("  - Kubernetes: {} commands available", k8s_cmds.len());
+        }
     }
 
     // Apps need at least one environment to be useful
@@ -90,32 +147,64 @@ pub async fn handle_single_app(target_path: &std::path::Path) -> Result<()> {
         anyhow::bail!("No commands detected for this app. Cannot add to config.");
     }
 
-    println!();
+    if !crate::output::json_enabled() {
+        println!();
+    }
 
     // Load existing config or create empty one
     let config = load_config().unwrap_or_else(|_| crate::config::Config {
         projects: HashMap::new(),
     });
 
-    // Prompt for project selection
-    let project_name = prompt_project_selection(&config)?;
+    let (project_name, app_name) = if args.is_non_interactive() {
+        let project_name = args.project.clone().unwrap_or_else(|| "global".to_string());
+        let app_name = args
+            .name
+            .clone()
+            .unwrap_or_else(|| detected.app_name.clone());
+        validate_app_name(&app_name)?;
+        (project_name, app_name)
+    } else {
+        // Prompt for project selection
+        let project_name = prompt_project_selection(&config)?;
+        // Prompt to confirm or edit the detected app name
+        let app_name = prompt_app_name(&detected.app_name)?;
+        (project_name, app_name)
+    };
 
-    // Prompt to confirm or edit the detected app name
-    let app_name = prompt_app_name(&detected.app_name)?;
+    if !args.is_non_interactive() {
+        // Show preview of what will be added
+        show_preview(&project_name, &app_name, &detected);
 
-    // Show preview of what will be added
-    show_preview(&project_name, &app_name, &detected);
-
-    // Final confirmation before adding (default to yes)
-    if !confirm_default_yes("Add to config?")? {
-        println!("Cancelled.");
-        return Ok(());
+        // Final confirmation before adding (default to yes)
+        if !confirm_default_yes("Add to config?")? {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     // Add to config and save
-    add_to_config(config, project_name, app_name, detected)?;
+    let json = crate::output::json_enabled();
+    let result = json!({
+        "project": project_name,
+        "app": app_name,
+        "type": detected.app_type,
+        "path": detected.path,
+    });
+    let non_interactive = args.is_non_interactive();
+    add_to_config(
+        config,
+        project_name.clone(),
+        app_name.clone(),
+        detected,
+        non_interactive,
+    )?;
 
-    println!("✓ Added successfully!");
+    if json {
+        crate::output::print_json(&result)?;
+    } else {
+        println!("✓ Added successfully!");
+    }
 
     Ok(())
 }
@@ -541,6 +630,7 @@ fn add_to_config(
     project_name: String,
     app_name: String,
     detected: crate::detection::DetectedApp,
+    non_interactive: bool,
 ) -> Result<()> {
     // Re-detect env files with interactive prompts for unspecified contexts
     // Determine which environments are available for this app
@@ -560,48 +650,68 @@ fn add_to_config(
     let env_files = if !available_envs.is_empty() {
         let expanded_path = crate::utils::path::expand_path(&detected.path);
         let app_path = std::path::Path::new(&expanded_path);
-        println!("\n🔍 DEBUG: Detecting env files in: {}", app_path.display());
-        println!("   Available envs: {:?}", available_envs);
+        if !non_interactive {
+            println!("\n🔍 Detecting env files in: {}", app_path.display());
+            println!("   Available envs: {:?}", available_envs);
+        }
 
         if let Ok(detected_env_files) =
             crate::detection::detect_env_files(app_path, detected.dockerfile_path.as_deref())
         {
-            println!("   Found {} env files", detected_env_files.len());
-            for file in &detected_env_files {
-                println!(
-                    "     - {} (stage: {:?}, context: {})",
-                    file.path, file.stage, file.context
-                );
+            if !non_interactive {
+                println!("   Found {} env files", detected_env_files.len());
+                for file in &detected_env_files {
+                    println!(
+                        "     - {} (stage: {:?}, context: {})",
+                        file.path, file.stage, file.context
+                    );
+                }
             }
 
             if !detected_env_files.is_empty() {
-                match crate::detection::build_env_files_map_interactive(
-                    &detected_env_files,
-                    &available_envs,
-                ) {
-                    Ok(map) if !map.is_empty() => {
-                        println!("   ✓ Built env_files map with {} stages", map.len());
+                if non_interactive {
+                    // Non-interactive: only map files whose context is unambiguous.
+                    let map = crate::detection::build_env_files_map(&detected_env_files);
+                    if map.is_empty() {
+                        None
+                    } else {
                         Some(map)
                     }
-                    Ok(_) => {
-                        println!("   ⚠ Map is empty");
-                        None
-                    }
-                    Err(e) => {
-                        println!("   ✗ Error building map: {}", e);
-                        None
+                } else {
+                    match crate::detection::build_env_files_map_interactive(
+                        &detected_env_files,
+                        &available_envs,
+                    ) {
+                        Ok(map) if !map.is_empty() => {
+                            println!("   ✓ Built env_files map with {} stages", map.len());
+                            Some(map)
+                        }
+                        Ok(_) => {
+                            println!("   ⚠ Map is empty");
+                            None
+                        }
+                        Err(e) => {
+                            println!("   ✗ Error building map: {}", e);
+                            None
+                        }
                     }
                 }
             } else {
-                println!("   No env files detected");
+                if !non_interactive {
+                    println!("   No env files detected");
+                }
                 None
             }
         } else {
-            println!("   Error detecting env files");
+            if !non_interactive {
+                println!("   Error detecting env files");
+            }
             None
         }
     } else {
-        println!("\n⚠ No available environments");
+        if !non_interactive {
+            println!("\n⚠ No available environments");
+        }
         None
     };
 

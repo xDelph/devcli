@@ -146,6 +146,7 @@ async fn start_missing_dependencies(
                     skip_deps: false,
                     silent,
                     stage: None, // Dependencies use their own configured stage, not parent's override
+                    detached: false,
                     output_tx: None,
                 };
 

@@ -9,6 +9,7 @@ pub mod detection;
 pub mod env_flow_support;
 pub mod logging;
 pub mod metrics;
+pub mod output;
 pub mod process_manager_support;
 pub mod tui;
 pub mod utils;

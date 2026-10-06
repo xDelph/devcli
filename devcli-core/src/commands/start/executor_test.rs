@@ -34,6 +34,7 @@ mod tests {
             skip_deps: false,
             silent: false,
             stage: None,
+            detached: false,
             output_tx: None,
         };
 
@@ -50,6 +51,7 @@ mod tests {
             skip_deps: true,
             silent: false,
             stage: Some("dev".to_string()),
+            detached: false,
             output_tx: None,
         };
 
@@ -70,6 +72,7 @@ mod tests {
             skip_deps: false,
             silent: false,
             stage: None,
+            detached: false,
             output_tx: None,
         };
 

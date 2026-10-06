@@ -20,6 +20,7 @@ pub struct StartCommandArgs {
     pub skip_deps: bool,        // If true, don't check/start dependencies
     pub silent: bool,           // If true, don't show output to terminal (for TUI mode)
     pub stage: Option<String>,  // Optional: deployment stage override (dev, qa, preprod, prod)
+    pub detached: bool,         // If true, force detached mode (return immediately)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
 
