@@ -1,7 +1,10 @@
 [package]
 name = "process-manager"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
+description = "Process lifecycle manager: spawning, state tracking, health checks, and the pm-daemon supervisor"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
