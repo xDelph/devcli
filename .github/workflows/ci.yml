@@ -89,6 +89,8 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # Surface a stuck test with its log instead of burning the 6h default budget.
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,7 +125,7 @@ jobs:
             ci-cargo-build-target-
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --no-fail-fast
 
       - name: Run doc tests
         run: cargo test --workspace --doc
