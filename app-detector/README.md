@@ -71,11 +71,6 @@ if let Some(local) = report.get("local") {
 
 ### App Type Detection (Phase 1: Priority 0-399)
 
-**Environment Files** (Priority 50):
-- **EnvFilesStrategy**: Detects .env files with stage/context parsing
-  - Patterns: `.env`, `.env.dev`, `.env.local`, `.env.dev.local`
-  - Context-aware: `docker/.env.qa`, `k8s/.env.prod`
-
 **Monorepo Tools** (Priority 50):
 - **NxStrategy**: Detects Nx workspaces, extracts apps/libs
 
@@ -228,33 +223,6 @@ for result in report.by_env_capability(&EnvCapabilityCategory::Docker) {
 }
 ```
 
-### Parse Environment Files
-
-```rust
-let report = engine.detect("./my-app")?;
-
-if let Some(result) = report.get("env-files") {
-    if let DetectionData::Custom(data) = &result.data {
-        let env_files = data["env_files"].as_array().unwrap();
-
-        for file in env_files {
-            println!(
-                "File: {} | Stage: {:?} | Context: {}",
-                file["path"].as_str().unwrap(),
-                file["stage"],
-                file["context"].as_str().unwrap()
-            );
-        }
-
-        // Metadata
-        let metadata = &data["metadata"];
-        println!("Total files: {}", metadata["file_count"]);
-        println!("Stages: {:?}", metadata["stages"]);
-        println!("Contexts: {:?}", metadata["contexts"]);
-    }
-}
-```
-
 ### Get App Name
 
 ```rust
@@ -333,7 +301,7 @@ App-detector is designed for speed:
 cargo test -p app-detector
 
 # Run specific test
-cargo test -p app-detector test_env_files_detection
+cargo test -p app-detector test_rust_detection
 
 # Run with output
 cargo test -p app-detector -- --nocapture

@@ -26,8 +26,7 @@ impl StrategyRegistry {
 
         // ===== App Type Strategies (Priority 0-300) =====
 
-        // Priority 50: Environment files and monorepo (run first)
-        registry.register(Box::new(crate::strategies::EnvFilesStrategy));
+        // Priority 50: Monorepo (run first)
         registry.register(Box::new(crate::strategies::NxStrategy));
 
         // Priority 100: Languages
