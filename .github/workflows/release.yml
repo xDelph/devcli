@@ -1,0 +1,219 @@
+name: Release
+
+# Single-repo release pipeline.
+#
+# release-please creates the tag and a DRAFT GitHub release when its release PR
+# is merged. This workflow then builds every platform, uploads the archives to
+# that same release, publishes it, and finally updates the Homebrew tap.
+#
+# Ordering matters: the draft is only published once all assets exist, and the
+# tap is only updated once the release is live (so the asset URLs are reachable).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            use_cross: false
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_cross: false
+          # Linux x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.0"
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binaries
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Strip binaries
+        if: ${{ !matrix.use_cross }}
+        run: strip target/${{ matrix.target }}/release/devcli target/${{ matrix.target }}/release/pm-daemon || true
+
+      - name: Create archive
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../devcli-${{ matrix.target }}.tar.gz devcli pm-daemon
+          cd -
+
+      - name: Generate checksum
+        run: shasum -a 256 devcli-${{ matrix.target }}.tar.gz > devcli-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} \
+            devcli-${{ matrix.target }}.tar.gz \
+            devcli-${{ matrix.target }}.tar.gz.sha256 \
+            --clobber
+
+      - name: Verify upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ${{ github.ref_name }} --json assets --jq '.assets[].name' | grep "${{ matrix.target }}"
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release now that every asset is uploaded
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit ${{ github.ref_name }} --draft=false
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read version
+        id: meta
+        run: |
+          echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "version_number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute checksums from the published assets
+        id: checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for platform in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-gnu; do
+            gh release download "${{ github.ref_name }}" \
+              --pattern "devcli-${platform}.tar.gz" \
+              --dir /tmp \
+              --clobber
+            sha=$(sha256sum "/tmp/devcli-${platform}.tar.gz" | awk '{print $1}')
+            echo "${platform//-/_}_sha=${sha}" >> "$GITHUB_OUTPUT"
+            echo "  ${platform}: ${sha}"
+          done
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: xDelph/homebrew-devcli
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cd homebrew-tap
+          mkdir -p Formula
+
+          cat > Formula/devcli.rb <<'EOF'
+          class Devcli < Formula
+            desc "Process manager and dashboard for spawned processes"
+            homepage "https://github.com/xDelph/devcli"
+            version "${{ steps.meta.outputs.version_number }}"
+            license "PolyForm-Noncommercial-1.0.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.meta.outputs.version }}/devcli-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.checksums.outputs.aarch64_apple_darwin_sha }}"
+              else
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.meta.outputs.version }}/devcli-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.checksums.outputs.x86_64_apple_darwin_sha }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.meta.outputs.version }}/devcli-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.checksums.outputs.aarch64_unknown_linux_gnu_sha }}"
+              else
+                url "https://github.com/xDelph/devcli/releases/download/${{ steps.meta.outputs.version }}/devcli-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.checksums.outputs.x86_64_unknown_linux_gnu_sha }}"
+              end
+            end
+
+            def install
+              bin.install "devcli", "pm-daemon"
+            end
+
+            test do
+              system "#{bin}/devcli", "--version"
+              system "#{bin}/pm-daemon", "--version"
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        run: |
+          cd homebrew-tap
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/devcli.rb
+
+          if git diff --staged --quiet; then
+            echo "No formula changes to commit"
+          else
+            git commit -m "chore: update devcli formula to ${{ steps.meta.outputs.version }}"
+            git push
+            echo "✅ Formula updated to ${{ steps.meta.outputs.version }}"
+          fi

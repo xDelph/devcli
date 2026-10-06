@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FileLogger` - Use tracing infrastructure instead
 - `MonitorLogger` - Use tracing spans and events instead
 
-## [0.1.0] - 2024-XX-XX
+## [0.1.0] - 2024-02-09
 
 ### Added
 - Initial release
@@ -51,5 +51,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment file management
 - User preferences system
 
-[Unreleased]: https://github.com/YOUR_USERNAME/devcli/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_USERNAME/devcli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/xDelph/devcli/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/xDelph/devcli/releases/tag/v0.1.0

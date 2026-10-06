@@ -7,7 +7,7 @@
       "release-type": "rust",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
-      "draft": false,
+      "draft": true,
       "prerelease": false,
       "include-component-in-tag": false,
       "include-v-in-tag": true,
@@ -16,16 +16,6 @@
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "devcli/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "devcli-core/Cargo.toml",
-          "jsonpath": "$.package.version"
         }
       ]
     }

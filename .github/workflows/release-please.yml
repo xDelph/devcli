@@ -1,6 +1,8 @@
 name: Release Please
 
 on:
+  push:
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +16,9 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          # Token with permission to trigger downstream workflows (default GITHUB_TOKEN cannot)
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
           # Release type for Rust projects
           release-type: rust
 
