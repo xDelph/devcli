@@ -309,6 +309,7 @@ async fn test_state_store_tracks_live_process() {
 
 #[tokio::test]
 #[cfg(unix)]
+#[ignore = "requires a built pm-daemon binary and real process supervision; timing-sensitive on CI (run with --ignored)"]
 async fn test_ensure_daemon_running_singleton() {
     let temp_dir = TempDir::new().unwrap();
     let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();

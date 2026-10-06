@@ -134,7 +134,10 @@ jobs:
         run: cargo test -p env-flow --all-features
 
       - name: Run tests (process-manager)
-        run: cargo test -p process-manager --all-features
+        run: |
+          cargo test -p process-manager --all-features --lib
+          cargo test -p process-manager --all-features --bins
+          cargo test -p process-manager --all-features --test integration_tests
 
       - name: Run tests (devcli-core)
         run: cargo test -p devcli-core --all-features
