@@ -56,6 +56,28 @@ mod tests {
         )
     }
 
+    /// Reap an exited child so the kernel stops listing it as a zombie.
+    ///
+    /// The engine drops the `Child` handle for detached processes and lets tokio
+    /// reap it in the background. Until that happens the PID still answers
+    /// `kill -0`, so `StateStore::is_running` reports a killed process as alive
+    /// and the monitor never sees a crash. A no-op if the child was already
+    /// reaped (ECHILD).
+    fn reap_child(pid: u32) {
+        let mut status = 0;
+        // SAFETY: waitpid only inspects/reaps our own child; WNOHANG never blocks.
+        unsafe {
+            libc::waitpid(pid as i32, &mut status, libc::WNOHANG);
+        }
+    }
+
+    /// Kill the managed process and reap it, so the monitor observes a crash
+    /// deterministically instead of racing the background reaper.
+    async fn kill_and_reap(managed: &ManagedProcess) {
+        let _ = crate::engine::terminate(managed.pid, managed.pgid, true).await;
+        reap_child(managed.pid);
+    }
+
     async fn spawn_and_track(store: &StateStore, task: Task) -> ManagedProcess {
         let running = crate::engine::spawn(&task).await.expect("spawn");
         let managed = ManagedProcess {
@@ -106,6 +128,7 @@ mod tests {
         assert_eq!(after_two.runtime.restart_count, 0);
 
         let _ = crate::engine::terminate(after_two.pid, after_two.pgid, true).await;
+        reap_child(after_two.pid);
         store.delete("health-counter").unwrap();
     }
 
@@ -132,7 +155,7 @@ mod tests {
                     .map(|p| p.runtime.restart_count >= 1 && p.pid != original_pid)
                     .unwrap_or(false)
             },
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         )
         .await;
 
@@ -180,6 +203,7 @@ mod tests {
         assert_eq!(recovered.runtime.restart_count, 0);
 
         let _ = crate::engine::terminate(recovered.pid, recovered.pgid, true).await;
+        reap_child(recovered.pid);
         store.delete("health-recover").unwrap();
     }
 
@@ -192,9 +216,9 @@ mod tests {
         let task = sleep_task("crash-restart", 120);
         let running = spawn_and_track(&store, task).await;
         let dead_pid = running.pid;
-        let _ = crate::engine::terminate(dead_pid, running.pgid, true).await;
+        kill_and_reap(&running).await;
 
-        wait_until(|| !store.is_running(&running), Duration::from_secs(2)).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
 
         monitor.tick().await.unwrap();
 
@@ -209,7 +233,7 @@ mod tests {
                     })
                     .unwrap_or(false)
             },
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         )
         .await;
 
@@ -221,6 +245,7 @@ mod tests {
             .any(|e| e.reason.contains("crash")));
 
         let _ = crate::engine::terminate(restarted.pid, restarted.pgid, true).await;
+        reap_child(restarted.pid);
         store.delete("crash-restart").unwrap();
     }
 
@@ -233,15 +258,15 @@ mod tests {
         let mut task = sleep_task("no-restart", 120);
         task.restart_policy.enabled = false;
         let running = spawn_and_track(&store, task).await;
-        let _ = crate::engine::terminate(running.pid, running.pgid, true).await;
+        kill_and_reap(&running).await;
 
-        wait_until(|| !store.is_running(&running), Duration::from_secs(2)).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
 
         monitor.tick().await.unwrap();
 
         wait_until(
             || store.load("no-restart").unwrap().is_none(),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
         )
         .await;
     }

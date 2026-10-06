@@ -1,8 +1,14 @@
 name: Release Please
 
 on:
-  push:
+  # Release Please must never open a release PR from a red build. This repository
+  # is private and has no branch protection (GitHub Pro feature), so we cannot
+  # require a status check the usual way: instead we wait for the CI workflow to
+  # finish and only run when it succeeded.
+  workflow_run:
+    workflows: ["CI"]
     branches: [develop]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +17,8 @@ permissions:
 
 jobs:
   release-please:
+    # `workflow_dispatch` has no workflow_run payload, hence the disjunction.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
@@ -18,6 +26,9 @@ jobs:
         with:
           # Token with permission to trigger downstream workflows (default GITHUB_TOKEN cannot)
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+          # workflow_run payloads do not carry the triggering ref
+          target-branch: develop
 
           # Release type for Rust projects
           release-type: rust
