@@ -96,30 +96,32 @@ impl StateStore {
         {
             use std::process::Command;
 
-            // 1. Check the specific PID first
-            let pid_running = Command::new("kill")
+            // Liveness is decided by the tracked PID, never by the process group.
+            // A group can linger after its last member exited, so `kill -0 -PGID`
+            // keeps succeeding for processes that no longer exist.
+            let alive = Command::new("kill")
                 .arg("-0")
                 .arg(process.pid.to_string())
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false);
 
-            if pid_running {
-                return true;
+            if !alive {
+                return false;
             }
 
-            // 2. If PID is dead, but we have a PGID, check the whole group
-            // This handles cases where a wrapper script exits but children stay alive
-            if let Some(pgid) = process.pgid {
-                return Command::new("kill")
-                    .arg("-0")
-                    .arg(format!("-{}", pgid)) // Negative PID means PGID in kill command
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
+            // `kill -0` also succeeds for a zombie — an exited child nobody has
+            // reaped yet. When we are the parent we can settle it non-blockingly:
+            // a successful waitpid means the process is already gone, and
+            // reporting it as alive would stop the monitor from ever restarting a
+            // crashed process. ECHILD means it is not our child, so trust kill -0.
+            let mut status = 0;
+            // SAFETY: waitpid(WNOHANG) only inspects/reaps a child of this process.
+            match unsafe { libc::waitpid(process.pid as i32, &mut status, libc::WNOHANG) } {
+                0 => true,
+                pid if pid == process.pid as i32 => false,
+                _ => true,
             }
-
-            false
         }
         #[cfg(not(unix))]
         {

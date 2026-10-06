@@ -109,42 +109,80 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
     #[cfg(unix)]
     {
         use std::process::Command;
+        use std::time::Duration;
 
-        let target = if let Some(id) = pgid {
-            format!("-{}", id)
-        } else {
-            pid.to_string()
-        };
-
-        let check = Command::new("kill")
+        let alive = Command::new("kill")
             .arg("-0")
-            .arg(&target)
+            .arg(pid.to_string())
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
 
-        if !check {
+        if !alive {
             return Ok(false);
         }
 
         let signal = if force { "-9" } else { "-15" };
 
-        let status = Command::new("kill")
+        // Signal the whole group first so children of a wrapper die with it, but
+        // never rely on it: `kill -9 -PGID` can exit 0 without terminating
+        // anything (observed on CI runners), which would make us report success
+        // on a process that is still running.
+        if let Some(g) = pgid {
+            let _ = Command::new("kill")
+                .arg(signal)
+                .arg(format!("-{}", g))
+                .status();
+        }
+
+        // The PID itself is the reliable target. A non-zero status here is not an
+        // error: the group signal above may already have killed it.
+        let pid_status = Command::new("kill")
             .arg(signal)
-            .arg(&target)
+            .arg(pid.to_string())
             .status()
             .context("Failed to execute kill command")?;
 
-        if !status.success() && force {
-            anyhow::bail!("Failed to kill process {}", target);
+        // Reap our own child so the zombie stops answering `kill -0`.
+        reap_child(pid);
+
+        // Confirm the process is actually gone instead of assuming it.
+        for _ in 0..40 {
+            if !process_exists(pid) {
+                return Ok(true);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
-        Ok(true)
+        if !pid_status.success() && force {
+            anyhow::bail!("Failed to kill process {}", pid);
+        }
+
+        Ok(false)
     }
     #[cfg(not(unix))]
     {
         anyhow::bail!("Termination not yet implemented for this platform");
     }
+}
+
+/// Non-blocking reap of our own child; a no-op if it was already reaped.
+fn reap_child(pid: u32) {
+    let mut status = 0;
+    // SAFETY: waitpid only inspects/reaps our own child; WNOHANG never blocks.
+    unsafe {
+        libc::waitpid(pid as i32, &mut status, libc::WNOHANG);
+    }
+}
+
+/// Whether the OS still knows about this PID.
+fn process_exists(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Restart a managed process.

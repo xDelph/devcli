@@ -122,9 +122,6 @@ jobs:
           restore-keys: |
             ci-cargo-build-target-
 
-      - name: PROBE (temporary diagnostic)
-        run: cargo test -p process-manager --test zz_ci_probe -- --nocapture
-
       - name: Run tests
         run: cargo test --workspace --all-features
 
