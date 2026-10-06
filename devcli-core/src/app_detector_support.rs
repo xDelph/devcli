@@ -176,7 +176,7 @@ pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -
         .ok_or_else(|| anyhow::anyhow!("Could not extract app name from path"))
 }
 
-/// Best-effort directory name for app naming (`devcli-private` for `.` or relative paths).
+/// Best-effort directory name for app naming (the repo directory name for `.` or relative paths).
 pub fn directory_basename(path: &Path) -> Option<String> {
     path.canonicalize()
         .ok()

@@ -10,6 +10,18 @@ mod tests {
         TempDir::new().unwrap()
     }
 
+    /// The workspace-root app is named after the repository directory. Derive it
+    /// at runtime so these tests survive a repo/directory rename.
+    fn expected_root_app_name(repo_root: &std::path::Path) -> String {
+        repo_root
+            .canonicalize()
+            .unwrap_or_else(|_| repo_root.to_path_buf())
+            .file_name()
+            .expect("repo root has a file name")
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn detect_repo_root_workspace() {
         let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -87,10 +99,11 @@ mod tests {
         let apps = discover_all_apps(std::path::Path::new(".")).unwrap();
         std::env::set_current_dir(original).unwrap();
 
+        let root_name = expected_root_app_name(repo_root);
         let names: Vec<_> = apps.iter().map(|a| a.app_name.as_str()).collect();
         assert!(
-            names.contains(&"devcli-private"),
-            "expected workspace root when scanning '.', got {names:?}"
+            names.contains(&root_name.as_str()),
+            "expected workspace root '{root_name}' when scanning '.', got {names:?}"
         );
     }
 
@@ -104,11 +117,12 @@ mod tests {
         }
 
         let apps = discover_all_apps(repo_root).unwrap();
+        let root_name = expected_root_app_name(repo_root);
         let names: Vec<_> = apps.iter().map(|a| a.app_name.as_str()).collect();
         let types: Vec<_> = apps.iter().map(|a| a.app_type.as_str()).collect();
         assert!(
-            names.contains(&"devcli-private"),
-            "expected workspace root app, got {names:?}"
+            names.contains(&root_name.as_str()),
+            "expected workspace root app '{root_name}', got {names:?}"
         );
         assert!(
             types.iter().filter(|t| **t == "rust").count() >= 1,
