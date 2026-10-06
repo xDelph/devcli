@@ -78,7 +78,3 @@ With:
 ```html
 <img src="/image-name.png" alt="Description" class="rounded-xl" />
 ```
-
-## Required Images
-
-See `IMAGES_NEEDED.md` for the complete list of required images and specifications.

@@ -8,3 +8,13 @@ tui-debug.log
 .obsidian
 graphify-out
 .pixel/
+
+# AI tooling / internal specs (local only)
+.kiro/
+.cursor/
+
+# Internal development notes (local only)
+dev-docs/
+
+# Generated website documentation (source of truth is ./docs)
+website/src/pages/docs/
