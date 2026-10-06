@@ -124,8 +124,23 @@ jobs:
           restore-keys: |
             ci-cargo-build-target-
 
-      - name: Run tests
-        run: cargo test --workspace --all-features --no-fail-fast
+      - name: Run tests (app-detector)
+        run: cargo test -p app-detector --all-features
+
+      - name: Run tests (config-manager)
+        run: cargo test -p config-manager --all-features
+
+      - name: Run tests (env-flow)
+        run: cargo test -p env-flow --all-features
+
+      - name: Run tests (process-manager)
+        run: cargo test -p process-manager --all-features
+
+      - name: Run tests (devcli-core)
+        run: cargo test -p devcli-core --all-features
+
+      - name: Run tests (devcli)
+        run: cargo test -p devcli --all-features
 
       - name: Run doc tests
         run: cargo test --workspace --doc
