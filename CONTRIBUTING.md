@@ -35,7 +35,7 @@ perf(startup): lazy-load configuration files
 # Breaking change (bumps major version)
 feat!: redesign configuration format
 
-BREAKING CHANGE: Config now uses YAML. See migration guide in docs/
+BREAKING CHANGE: Config schema changed. See migration guide in docs/
 
 # Documentation (no version bump)
 docs: update installation instructions
@@ -78,14 +78,14 @@ Use scopes to organize changes:
 For breaking changes, use `!` after type or add `BREAKING CHANGE:` in footer:
 
 ```bash
-feat(config)!: migrate to YAML configuration
+feat(config)!: migrate configuration format
 
 # or
 
-feat(config): migrate to YAML configuration
+feat(config): add support for per-project overrides
 
-BREAKING CHANGE: Configuration files now use YAML format (.devcli/config.yml)
-instead of JSON (.devcli/config.json). Migration tool available.
+BREAKING CHANGE: The configuration file schema changed; run `devcli config migrate`
+to upgrade an existing `~/.devcli/config.json`.
 ```
 
 ## Pull Request Process
@@ -108,9 +108,9 @@ Releases are automated via Release Please:
    - Generated CHANGELOG.md entries
 4. Maintainer reviews and merges Release PR
 5. Tag created automatically
-6. Binaries built and released to public repo
-
-See [reports/automated-release-guide.md](reports/automated-release-guide.md) for details.
+6. A `Release` workflow builds every platform (macOS Intel/ARM, Linux x64/ARM),
+   attaches the `devcli` and `pm-daemon` archives to the GitHub release, publishes
+   it, then updates the Homebrew tap
 
 ## Code Style
 

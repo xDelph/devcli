@@ -18,6 +18,30 @@ Watch logs from multiple apps simultaneously.
 Get quick insights into your process health.
 ![CLI Status](./assets/terminal-status.png)
 
+## Installation
+
+### Quick Install (recommended, macOS & Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/develop/install.sh | sh
+```
+
+This installs both `devcli` and its background daemon `pm-daemon` into `~/.devcli/bin`.
+
+### Homebrew
+
+```bash
+brew tap xDelph/devcli
+brew install devcli
+```
+
+### Build from source
+
+```bash
+cargo build --release --workspace
+# binaries: target/release/devcli and target/release/pm-daemon
+```
+
 ## Getting Started
 
 ### 1. Initialize Configuration
@@ -298,7 +322,28 @@ Each process file includes:
 - Project, app, and environment metadata
 - Health check and restart policy from config
 
-Health monitoring and auto-restart run in `pm-daemon`, which must be installed alongside `devcli` (release tarballs include both binaries).
+Health monitoring and auto-restart run in `pm-daemon`, which must be installed alongside `devcli` (release tarballs include both binaries, which install to `~/.devcli/bin`).
+
+## AI Agents
+
+`devcli` is designed to be driven by autonomous agents:
+
+```bash
+devcli --json status              # machine-readable process state
+devcli --json config list         # full config as JSON
+devcli --json logs api -n 100     # recent app logs
+devcli --json start api --detached
+devcli --json auto-add --path ./apps/api --yes --project proj --name api
+```
+
+- **`--json`** on every state-reporting command (also disables console logging).
+- **`--no-color`** and automatic color-off when stdout is not a TTY.
+- **Meaningful exit codes**: `status` (0 running / 1 not), `health-check`
+  (0 healthy / 2 unhealthy / 1 error), `config validate` (1 invalid).
+- **Non-interactive mode** for `auto-add` (`--yes`, `--project`, `--name`,
+  `--type`); commands fail fast instead of hanging when there is no terminal.
+See **[AGENTS.md](./AGENTS.md)** for the full agent contract (flags, exit
+codes, JSON shapes, non-interactive usage).
 
 ## Documentation
 
@@ -306,10 +351,10 @@ Comprehensive documentation is available in the `docs/` directory:
 
 ### 📚 Documentation
 
+- **[AGENTS.md](./AGENTS.md)** - Contract for AI agents (JSON, exit codes)
 - **[Getting Started](./docs/getting-started.md)** - Quick start guide with examples (5-minute setup)
 - **[Configuration Reference](./docs/configuration-reference.md)** - Complete config file documentation
 - **[Commands Reference](./docs/commands-reference.md)** - All CLI commands with examples
-- **[devcli-core Lifecycle Deep Dive](./docs/devcli-core-command-lifecycle.md)** - Internal flow for start/run/stop/restart and log handling (CLI + TUI)
 - **[Advanced Features](./docs/advanced-features.md)** - Health checks, metrics, logging, dependencies
 - **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
 
@@ -318,7 +363,12 @@ Comprehensive documentation is available in the `docs/` directory:
 - **Installation**: See [Getting Started](./docs/getting-started.md#installation)
 - **Config Format**: See [Configuration Reference](./docs/configuration-reference.md#file-structure)
 - **All Commands**: See [Commands Reference](./docs/commands-reference.md)
-- **Command Internals**: See [devcli-core Lifecycle Deep Dive](./docs/devcli-core-command-lifecycle.md)
 - **Health Checks**: See [Advanced Features](./docs/advanced-features.md#health-checks)
 - **Metrics**: See [Advanced Features](./docs/advanced-features.md#metrics--monitoring)
 - **Help**: See [Troubleshooting](./docs/troubleshooting.md)
+
+## License
+
+`devcli` is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
+Commercial use requires a paid license — see [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md)
+or contact devcli@delalonde.dev.

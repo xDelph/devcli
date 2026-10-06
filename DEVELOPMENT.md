@@ -268,7 +268,7 @@ let options = ProcessOptions {
 ## Future Development
 
 Planned enhancements:
-1. Configuration file support (YAML/TOML)
+1. Configuration file support (JSON)
 2. Process control commands (stop, restart)
 3. Enhanced monitoring with resource usage
 4. Interactive dashboard with TUI

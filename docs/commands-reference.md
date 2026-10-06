@@ -10,6 +10,7 @@ Complete reference for all devcli CLI commands.
   - [restart](#restart) - Restart apps
   - [run](#run) - Run command variants
   - [status](#status) - Show process status
+  - [logs](#logs) - Show app logs
 - [Monitoring](#monitoring)
   - [monitor](#monitor) - Health monitoring daemon
   - [health-check](#health-check) - Manual health check
@@ -59,6 +60,7 @@ devcli start <app-names>... [OPTIONS]
 - `-e, --env <ENV>` - Environment: `local`, `docker`, `k8s` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
 - `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `prod`, etc.
+- `--detached` - Run in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
 ```bash
@@ -113,6 +115,7 @@ devcli stop [app-name] [OPTIONS]
 - `-p, --project <NAME>` - Stop all apps in project
 - `--all` - Stop all running processes
 - `--force` - Force kill (SIGKILL instead of SIGTERM)
+- `--dry-run` - Report what would be stopped without sending any signal
 
 **Examples**:
 ```bash
@@ -209,15 +212,18 @@ devcli run api build:staging
 ```
 
 **Command Variants**:
-```yaml
-# In config:
-commands:
-  local:
-    test: npm test
-    test:unit: npm run test:unit
-    test:e2e: npm run test:e2e
-    build: npm run build
-    build:production: npm run build:prod
+```json
+{
+  "commands": {
+    "local": {
+      "test": "npm test",
+      "test:unit": "npm run test:unit",
+      "test:e2e": "npm run test:e2e",
+      "build": "npm run build",
+      "build:production": "npm run build:prod"
+    }
+  }
+}
 ```
 
 ---
@@ -274,6 +280,44 @@ devcli status --deps
 │   Restarts: 2                              │
 └─────────────────────────────────────────────┘
 ```
+
+---
+
+### `logs`
+
+Show the captured stdout/stderr for an app.
+
+**Usage**:
+```bash
+devcli logs <app-name> [OPTIONS]
+```
+
+**Options**:
+- `-p, --project <NAME>` - Project name (if app name is ambiguous)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `k8s`)
+- `-n, --lines <N>` - Number of trailing lines to show (default `200`)
+- `-f, --follow` - Follow the file and stream new lines (blocks)
+
+**Examples**:
+```bash
+# Last 200 lines
+devcli logs api
+
+# Last 50 lines for a specific environment
+devcli logs api --project awesome-project --env local -n 50
+
+# Stream new lines (Ctrl+C to stop)
+devcli logs api --follow
+
+# Machine-readable (array of lines + file path)
+devcli --json logs api -n 100
+```
+
+**Behavior**:
+- Reads the most recent file matching
+  `~/.devcli/logs/<project>_<app>_<env>_<date>.log`
+- `--json` returns `{ project, app, environment, file, lines: [...] }`
+- Use `--json` for agents; `--follow` is meant for humans
 
 ---
 
@@ -442,11 +486,11 @@ devcli config init
 # Create default config
 devcli config init
 
-# Output: Created config at ~/.devcli/config.yaml
+# Output: Created config at ~/.devcli/config.json
 ```
 
 **Behavior**:
-- Creates `~/.devcli/config.yaml`
+- Creates `~/.devcli/config.json`
 - Starts with empty projects
 - Won't overwrite existing file
 
@@ -467,7 +511,7 @@ devcli config validate
 ```
 
 **Checks**:
-- YAML syntax
+- JSON syntax
 - Required fields
 - Dependency existence
 - Circular dependencies
@@ -548,30 +592,32 @@ devcli config show api --project awesome-project
 ```
 
 **Output**:
-```yaml
+```text
 App: api
 Project: awesome-project
 Type: nodejs
 Path: ~/code/awesome-project/apps/api
 
-Commands:
-  local:
-    start: npm run dev
-    test: npm test
-    build: npm run build
+Defaults:
+  Local: start
+  Docker: start
 
 Dependencies:
-  - database
-  - redis
+  - awesome-project/database
+  - awesome-project/redis
 
-Health Check:
-  http:
-    url: http://localhost:3000/health
-    expected_status: 200
+Local Commands:
+  build: npm run build
+  start: npm run dev
+  test: npm test
 
-Restart Policy:
-  max_restarts: 5
-  restart_window_secs: 300
+Docker Commands:
+  build: docker compose build api
+  start: docker compose up api
+
+Environment Files:
+  local: .env.dev
+  docker: .env.docker.dev
 ```
 
 ---
@@ -591,7 +637,7 @@ devcli config edit
 ```
 
 **Behavior**:
-- Opens `~/.devcli/config.yaml` in `$EDITOR`
+- Opens `~/.devcli/config.json` in `$EDITOR`
 - Falls back to `vim` if `$EDITOR` not set
 
 ---
@@ -827,6 +873,10 @@ devcli auto-add [OPTIONS]
 
 **Options**:
 - `--path <PATH>` - Path to detect (defaults to current directory)
+- `-y, --yes` - Non-interactive: accept detected defaults without prompting
+- `-p, --project <NAME>` - Target project (non-interactive)
+- `-n, --name <NAME>` - App name to register (non-interactive)
+- `--type <TYPE>` - App type override (non-interactive)
 
 **Examples**:
 ```bash
@@ -836,7 +886,14 @@ devcli auto-add
 
 # Detect specific path
 devcli auto-add --path ~/code/another-app
+
+# Fully non-interactive (for scripts and AI agents)
+devcli --json auto-add --path ./apps/api --yes --project awesome-project --name api
 ```
+
+> Without a terminal and without `--yes`, `auto-add` fails fast instead of
+> hanging on a prompt. Monorepos and directories containing several apps
+> require the interactive mode.
 
 **Supported Detection**:
 - Node.js (`package.json`)
@@ -855,10 +912,18 @@ Available for all commands:
 
 - `-h, --help` - Show help
 - `-V, --version` - Show version
+- `--json` - Emit machine-readable JSON on stdout (also disables console logging)
+- `--no-color` - Disable ANSI colors (also honours the `NO_COLOR` env var)
+
+Colors are automatically disabled when stdout is not a terminal. `--json` is
+the recommended mode for scripts and AI agents; see [AGENTS.md](../AGENTS.md).
 
 **Examples**:
 ```bash
 devcli --help
+devcli --json status
+devcli --json config list --apps-only
+devcli --no-color status
 devcli start --help
 devcli --version
 ```
@@ -882,12 +947,12 @@ RUST_LOG=trace devcli start api
 RUST_LOG=devcli_core::commands::start=debug devcli start api
 ```
 
-### `DEVCLI_CONFIG`
+### `devcli_CONFIG_DIR`
 
-Override config file location:
+Override config directory location:
 
 ```bash
-export DEVCLI_CONFIG=~/my-config.yaml
+export devcli_CONFIG_DIR=~/.devcli
 devcli start api
 ```
 
@@ -896,13 +961,18 @@ devcli start api
 ## Exit Codes
 
 - `0` - Success
-- `1` - General error
-- Other codes preserved from child processes
+- `1` - General error, or a negative result:
+  - `status`: no tracked process is running
+  - `config validate`: the config is invalid
+- `2` - `health-check`: the app is running but unhealthy
+
+When `--json` is set, errors are reported as `{"error": "..."}` on stderr.
 
 ---
 
 ## See Also
 
+- [AGENTS.md](../AGENTS.md) - Machine-oriented contract for AI agents
 - [Getting Started](./getting-started.md) - Quick start guide
 - [Configuration Reference](./configuration-reference.md) - Config file format
 - [Advanced Features](./advanced-features.md) - Health checks, metrics, logging

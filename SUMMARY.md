@@ -276,7 +276,7 @@ All dependencies are well-maintained and widely used:
 - Signal handling (SIGTERM, SIGKILL)
 
 ### Phase 3: Configuration
-- Config file support (TOML/YAML)
+- Config file support (JSON)
 - Predefined app configurations
 - Environment file support
 - Project-based configuration

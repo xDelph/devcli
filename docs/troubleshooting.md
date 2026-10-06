@@ -78,43 +78,43 @@ xattr -d com.apple.quarantine /usr/local/bin/devcli
 devcli config init
 
 # Verify location
-ls -l ~/.devcli/config.yaml
+ls -l ~/.devcli/config.json
 
-# Check DEVCLI_CONFIG override
-echo $DEVCLI_CONFIG
+# Check devcli_CONFIG_DIR override
+echo $devcli_CONFIG_DIR
 ```
 
-### Invalid YAML Syntax
+### Invalid JSON Syntax
 
-**Problem**: `Failed to parse config: invalid YAML`
+**Problem**: `Failed to parse config: invalid JSON`
 
 **Solution**:
 ```bash
-# Validate YAML syntax
+# Validate JSON syntax
 devcli config validate
 
-# Use online YAML validator
-cat ~/.devcli/config.yaml | pbcopy
-# Paste into https://www.yamllint.com/
+# Use an online JSON validator
+cat ~/.devcli/config.json | pbcopy
+# Paste into https://jsonlint.com/
 
 # Common issues:
-# - Incorrect indentation (use spaces, not tabs)
-# - Missing colons
-# - Unquoted special characters
+# - Unmatched braces or brackets
+# - Trailing commas (not allowed in JSON)
+# - Unquoted object keys or single quotes
 ```
 
 **Example Fix**:
-```yaml
-# WRONG (tabs used)
-commands:
-	local:
-		start: npm start
-
-# CORRECT (spaces used)
-commands:
-  local:
-    start: npm start
+```json
+{
+  "commands": {
+    "local": {
+      "start": "npm start"
+    }
+  }
+}
 ```
+
+> **Note**: JSON does not allow trailing commas or comments. Whitespace is flexible, but validate with an editor to catch mistakes early.
 
 ### App Not Found
 
@@ -140,19 +140,20 @@ devcli config show api
 **Problem**: `Circular dependency detected: api → worker → api`
 
 **Solution**:
-```yaml
-# Remove circular dependency
-# WRONG:
-api:
-  dependencies: [worker]
-worker:
-  dependencies: [api]
+**WRONG**:
+```json
+{
+  "api": { "dependencies": ["worker"] },
+  "worker": { "dependencies": ["api"] }
+}
+```
 
-# CORRECT:
-api:
-  dependencies: [database]
-worker:
-  dependencies: [api]
+**CORRECT**:
+```json
+{
+  "api": { "dependencies": ["database"] },
+  "worker": { "dependencies": ["api"] }
+}
 ```
 
 ---
@@ -289,18 +290,26 @@ curl -v http://localhost:3000/health
 **Solutions**:
 
 **1. Increase timeout**:
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-    timeout_secs: 10  # Increase from 5
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health",
+      "timeout_secs": 10
+    }
+  }
+}
 ```
 
 **2. Check expected status**:
-```yaml
-health_check:
-  http:
-    expected_status: 200  # Must match actual response
+```json
+{
+  "health_check": {
+    "http": {
+      "expected_status": 200
+    }
+  }
+}
 ```
 
 **3. Verify endpoint**:
@@ -326,17 +335,22 @@ devcli config show database
 ```
 
 **Solutions**:
-```yaml
-# Correct host (use localhost, not 0.0.0.0)
-health_check:
-  tcp:
-    host: localhost
-    port: 5432
+**Correct host (use `localhost`, not `0.0.0.0`)**:
+```json
+{
+  "health_check": {
+    "tcp": { "host": "localhost", "port": 5432 }
+  }
+}
+```
 
-# Increase timeout for slow services
-health_check:
-  tcp:
-    timeout_secs: 30
+**Increase timeout for slow services**:
+```json
+{
+  "health_check": {
+    "tcp": { "timeout_secs": 30 }
+  }
+}
 ```
 
 ### Health Checks Causing Too Many Restarts
@@ -391,13 +405,14 @@ devcli start frontend --skip-deps
 **Problem**: `App 'database' not found (dependency of 'api')`
 
 **Solution**:
-```yaml
-# Fix app name in dependencies
-api:
-  dependencies:
-    - database  # Must match exact app name
+```json
+{
+  "api": { "dependencies": ["database"] }
+}
+```
 
-# Check app exists
+```bash
+# Check the app exists
 devcli config list
 ```
 
@@ -412,22 +427,26 @@ devcli config show --deps frontend
 ```
 
 **Solution**:
-```yaml
-# Define explicit order via dependencies
-database:
-  dependencies: []
-
-redis:
-  dependencies: []
-
-api:
-  dependencies:
-    - database
-    - redis
-
-frontend:
-  dependencies:
-    - api
+```json
+{
+  "database": {
+    "dependencies": []
+  },
+  "redis": {
+    "dependencies": []
+  },
+  "api": {
+    "dependencies": [
+      "database",
+      "redis"
+    ]
+  },
+  "frontend": {
+    "dependencies": [
+      "api"
+    ]
+  }
+}
 ```
 
 ---
@@ -569,16 +588,22 @@ RUST_LOG=debug devcli start api --env docker
 ```
 
 **Solution**:
-```yaml
-# Correct path (relative to app path)
-env_files:
-  dev:
-    docker: .env.dev  # Relative to app path
+**Correct path (relative to the app `path`)**:
+```json
+{
+  "env_files": {
+    "dev": { "docker": ".env.dev" }
+  }
+}
+```
 
-# Or absolute path
-env_files:
-  dev:
-    docker: /absolute/path/to/.env.dev
+**Or an absolute path**:
+```json
+{
+  "env_files": {
+    "dev": { "docker": "/absolute/path/to/.env.dev" }
+  }
+}
 ```
 
 ### Kubernetes Commands Failing
@@ -769,7 +794,7 @@ grep -r "error message" ~/.devcli/logs/
 
 If you're still stuck:
 
-1. **Check GitHub Issues**: https://github.com/YOUR_USERNAME/devcli/issues
+1. **Check GitHub Issues**: https://github.com/xDelph/devcli/issues
 2. **Create New Issue**: Include:
    - devcli version (`devcli --version`)
    - OS and version

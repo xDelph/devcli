@@ -31,7 +31,7 @@ Be respectful, constructive, and professional in all interactions.
 ```bash
 # Fork the repository on GitHub
 # Then clone your fork
-git clone https://github.com/YOUR_USERNAME/devcli.git
+git clone https://github.com/xDelph/devcli.git
 cd devcli/config-manager
 ```
 

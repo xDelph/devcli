@@ -3,8 +3,12 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
+    "sync:docs": "node ../scripts/sync-website-docs.mjs",
+    "sync:version": "node ../scripts/sync-version.mjs",
+    "predev": "node ../scripts/sync-version.mjs && node ../scripts/sync-website-docs.mjs",
     "dev": "astro dev",
     "start": "astro dev",
+    "prebuild": "node ../scripts/sync-version.mjs && node ../scripts/sync-website-docs.mjs",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"

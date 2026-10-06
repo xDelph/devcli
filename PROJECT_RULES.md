@@ -153,7 +153,7 @@ anyhow::bail!("Process '{}' is already running with PID {}", name, pid);
 
 When implementing future features:
 
-1. **Config Files**: Use TOML or YAML, store in `~/.devcli/config.toml`
+1. **Config Files**: Use JSON, stored in `~/.devcli/config.json`
 2. **Stop/Restart**: Use `kill` syscall, graceful shutdown with timeout
 3. **Monitoring**: Consider `sysinfo` crate for resource usage
 4. **Dashboard**: Use `ratatui` for terminal UI

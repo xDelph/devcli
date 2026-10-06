@@ -25,12 +25,16 @@ Automatically monitor app health and trigger restarts when unhealthy.
 
 Sends HTTP requests to check if service is responding.
 
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-    expected_status: 200
-    timeout_secs: 5
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health",
+      "expected_status": 200,
+      "timeout_secs": 5
+    }
+  }
+}
 ```
 
 **Features**:
@@ -45,12 +49,16 @@ health_check:
 
 Checks if TCP port is accepting connections.
 
-```yaml
-health_check:
-  tcp:
-    host: localhost
-    port: 5432
-    timeout_secs: 10
+```json
+{
+  "health_check": {
+    "tcp": {
+      "host": "localhost",
+      "port": 5432,
+      "timeout_secs": 10
+    }
+  }
+}
 ```
 
 **Best For**: Databases, message queues, any TCP service
@@ -59,11 +67,15 @@ health_check:
 
 Runs custom command to determine health.
 
-```yaml
-health_check:
-  command:
-    cmd: curl -f http://localhost:3000/health
-    timeout_secs: 5
+```json
+{
+  "health_check": {
+    "command": {
+      "cmd": "curl -f http://localhost:3000/health",
+      "timeout_secs": 5
+    }
+  }
+}
 ```
 
 **Exit code 0** = healthy, **non-zero** = unhealthy
@@ -90,12 +102,16 @@ health_check:
 
 Currently hardcoded to 3 failures. To customize (future feature):
 
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-  failure_threshold: 5  # Allow 5 failures before restart
-  check_interval_secs: 10  # Check every 10 seconds
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health"
+    },
+    "failure_threshold": 5,
+    "check_interval_secs": 10
+  }
+}
 ```
 
 ### Health Check Best Practices
@@ -121,27 +137,42 @@ app.get('/health', (req, res) => {
 
 #### 2. Use Appropriate Timeouts
 
-```yaml
-# Fast service
-health_check:
-  http:
-    timeout_secs: 2
+**Fast service**:
+```json
+{
+  "health_check": {
+    "http": {
+      "timeout_secs": 2
+    }
+  }
+}
+```
 
-# Slow service (database warmup)
-health_check:
-  tcp:
-    timeout_secs: 30
+**Slow service (database warmup)**:
+```json
+{
+  "health_check": {
+    "tcp": {
+      "timeout_secs": 30
+    }
+  }
+}
 ```
 
 #### 3. Combine with Restart Policies
 
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-restart_policy:
-  max_restarts: 5
-  restart_window_secs: 300
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health"
+    }
+  },
+  "restart_policy": {
+    "max_restarts": 5,
+    "restart_window_secs": 300
+  }
+}
 ```
 
 ---
@@ -152,11 +183,14 @@ Automatically restart crashed or unhealthy processes.
 
 ### Basic Configuration
 
-```yaml
-restart_policy:
-  max_restarts: 5           # Maximum restart attempts
-  restart_window_secs: 300  # Within this time window (5 minutes)
-  backoff_secs: 5           # Initial backoff delay
+```json
+{
+  "restart_policy": {
+    "max_restarts": 5,
+    "restart_window_secs": 300,
+    "backoff_secs": 5
+  }
+}
 ```
 
 ### Restart Triggers
@@ -191,10 +225,13 @@ Attempt 5: Wait 80 seconds
 
 Restart counter resets after the window expires:
 
-```yaml
-restart_policy:
-  max_restarts: 3
-  restart_window_secs: 60  # 1 minute window
+```json
+{
+  "restart_policy": {
+    "max_restarts": 3,
+    "restart_window_secs": 60
+  }
+}
 ```
 
 **Scenario**:
@@ -218,35 +255,47 @@ Process remains stopped until manually restarted.
 ### Strategies by Service Type
 
 **Web Service** (needs to be available):
-```yaml
-restart_policy:
-  max_restarts: 10
-  restart_window_secs: 600  # 10 minutes
-  backoff_secs: 3
+```json
+{
+  "restart_policy": {
+    "max_restarts": 10,
+    "restart_window_secs": 600,
+    "backoff_secs": 3
+  }
+}
 ```
 
 **Background Worker** (can tolerate downtime):
-```yaml
-restart_policy:
-  max_restarts: 5
-  restart_window_secs: 300
-  backoff_secs: 10
+```json
+{
+  "restart_policy": {
+    "max_restarts": 5,
+    "restart_window_secs": 300,
+    "backoff_secs": 10
+  }
+}
 ```
 
 **Database** (critical, but restart is expensive):
-```yaml
-restart_policy:
-  max_restarts: 3
-  restart_window_secs: 600
-  backoff_secs: 30
+```json
+{
+  "restart_policy": {
+    "max_restarts": 3,
+    "restart_window_secs": 600,
+    "backoff_secs": 30
+  }
+}
 ```
 
 **Development Service** (aggressive restart):
-```yaml
-restart_policy:
-  max_restarts: 20
-  restart_window_secs: 600
-  backoff_secs: 1
+```json
+{
+  "restart_policy": {
+    "max_restarts": 20,
+    "restart_window_secs": 600,
+    "backoff_secs": 1
+  }
+}
 ```
 
 ---
@@ -495,15 +544,20 @@ Automatic dependency resolution and ordered startup.
 
 ### Defining Dependencies
 
-```yaml
-frontend:
-  dependencies:
-    - api
-
-api:
-  dependencies:
-    - database
-    - redis
+```json
+{
+  "frontend": {
+    "dependencies": [
+      "api"
+    ]
+  },
+  "api": {
+    "dependencies": [
+      "database",
+      "redis"
+    ]
+  }
+}
 ```
 
 ### Dependency Resolution
@@ -533,13 +587,19 @@ frontend → api → redis
 
 ### Circular Dependency Detection
 
-```yaml
-# INVALID: circular dependency
-api:
-  dependencies: [worker]
-
-worker:
-  dependencies: [api]
+```json
+{
+  "api": {
+    "dependencies": [
+      "worker"
+    ]
+  },
+  "worker": {
+    "dependencies": [
+      "api"
+    ]
+  }
+}
 ```
 
 ```bash
@@ -561,15 +621,26 @@ devcli start api --skip-deps
 
 ### Partial Dependency Graphs
 
-```yaml
-service-a:
-  dependencies: [database]
-
-service-b:
-  dependencies: [database, redis]
-
-service-c:
-  dependencies: [service-a, service-b]
+```json
+{
+  "service-a": {
+    "dependencies": [
+      "database"
+    ]
+  },
+  "service-b": {
+    "dependencies": [
+      "database",
+      "redis"
+    ]
+  },
+  "service-c": {
+    "dependencies": [
+      "service-a",
+      "service-b"
+    ]
+  }
+}
 ```
 
 **Starting `service-c`**:
@@ -594,16 +665,22 @@ A **stage** represents a deployment environment:
 
 ### Env File Mapping
 
-```yaml
-env_files:
-  dev:
-    local: .env.dev
-    docker: .env.docker.dev
-  qa:
-    docker: .env.qa
-    k8s: k8s/qa/env.yaml
-  prod:
-    k8s: k8s/prod/env.yaml
+```json
+{
+  "env_files": {
+    "dev": {
+      "local": ".env.dev",
+      "docker": ".env.docker.dev"
+    },
+    "qa": {
+      "docker": ".env.qa",
+      "k8s": "k8s/qa/env.yaml"
+    },
+    "prod": {
+      "k8s": "k8s/prod/env.yaml"
+    }
+  }
+}
 ```
 
 ### Usage
@@ -623,14 +700,19 @@ devcli start api --stage prod --env k8s
 
 Env files automatically injected:
 
-```yaml
-commands:
-  docker:
-    start: docker compose up api
-
-env_files:
-  dev:
-    docker: .env.dev
+```json
+{
+  "commands": {
+    "docker": {
+      "start": "docker compose up api"
+    }
+  },
+  "env_files": {
+    "dev": {
+      "docker": ".env.dev"
+    }
+  }
+}
 ```
 
 **Becomes**:

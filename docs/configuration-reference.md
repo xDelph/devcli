@@ -35,122 +35,164 @@ Similarly, preferences are loaded from:
 
 ## File Structure
 
-```yaml
-projects:
-  project-name:
-    apps:
-      app-name:
-        # App configuration...
+```json
+{
+  "projects": {
+    "project-name": {
+      "apps": {
+        "app-name": {
+          "type": "nodejs",
+          "path": "~/code/app-name",
+          "commands": {}
+        }
+      }
+    }
+  }
+}
 ```
 
 ## Full Example
 
-```yaml
-projects:
-  awesome-monorepo:
-    alternative_name: ProjectA  # Optional: Privacy-friendly name for screenshots
-    apps:
-      database:
-        app_type: docker
-        path: ~/code/awesome-monorepo/docker
-        commands:
-          local:
-            start: docker compose up postgres
-            stop: docker compose stop postgres
-          docker:
-            start: docker compose up postgres
-            stop: docker compose stop postgres
-        health_check:
-          tcp:
-            host: localhost
-            port: 5432
-            timeout_secs: 10
-
-      api:
-        app_type: nodejs
-        alternative_name: Backend  # Optional: Privacy-friendly name for screenshots
-        path: ~/code/awesome-monorepo/apps/api
-        commands:
-          local:
-            default: start
-            start: npm run dev
-            test: npm test
-            build: npm run build
-            build:production: npm run build:prod
-          docker:
-            default: start
-            start: docker compose up api
-            build: docker compose build api
-          k8s:
-            default: apply
-            apply: kubectl apply -f k8s/
-            delete: kubectl delete -f k8s/
-            restart: kubectl rollout restart deployment/api
-        dependencies:
-          - database
-          - redis
-        health_check:
-          http:
-            url: http://localhost:3000/health
-            expected_status: 200
-            timeout_secs: 5
-        restart_policy:
-          max_restarts: 5
-          restart_window_secs: 300
-          backoff_secs: 5
-        env_files:
-          dev:
-            local: .env.dev
-            docker: .env.docker.dev
-          qa:
-            docker: .env.qa
-            k8s: k8s/env/qa.yaml
-          prod:
-            k8s: k8s/env/prod.yaml
-
-      worker:
-        app_type: nodejs
-        path: ~/code/awesome-monorepo/apps/worker
-        commands:
-          local:
-            default: start
-            start: npm run worker
-          docker:
-            default: start
-            start: docker compose up worker
-        dependencies:
-          - database
-          - redis
-          - api
-        restart_policy:
-          max_restarts: 10
-          restart_window_secs: 600
-
-      frontend:
-        app_type: nodejs
-        path: ~/code/awesome-monorepo/apps/frontend
-        commands:
-          local:
-            default: start
-            start: npm run dev
-            build: npm run build
-            preview: npm run preview
-          docker:
-            default: start
-            start: docker compose up frontend
-        dependencies:
-          - api
-        health_check:
-          http:
-            url: http://localhost:5173
-            expected_status: 200
+```json
+{
+  "projects": {
+    "awesome-monorepo": {
+      "alternative_name": "ProjectA",
+      "apps": {
+        "database": {
+          "type": "docker",
+          "path": "~/code/awesome-monorepo/docker",
+          "commands": {
+            "local": {
+              "start": "docker compose up postgres",
+              "stop": "docker compose stop postgres"
+            },
+            "docker": {
+              "start": "docker compose up postgres",
+              "stop": "docker compose stop postgres"
+            }
+          },
+          "health_check": {
+            "tcp": {
+              "host": "localhost",
+              "port": 5432,
+              "timeout_secs": 10
+            }
+          }
+        },
+        "api": {
+          "type": "nodejs",
+          "alternative_name": "Backend",
+          "path": "~/code/awesome-monorepo/apps/api",
+          "commands": {
+            "local": {
+              "default": "start",
+              "start": "npm run dev",
+              "test": "npm test",
+              "build": "npm run build",
+              "build:production": "npm run build:prod"
+            },
+            "docker": {
+              "default": "start",
+              "start": "docker compose up api",
+              "build": "docker compose build api"
+            },
+            "k8s": {
+              "default": "apply",
+              "apply": "kubectl apply -f k8s/",
+              "delete": "kubectl delete -f k8s/",
+              "restart": "kubectl rollout restart deployment/api"
+            }
+          },
+          "dependencies": [
+            "database",
+            "redis"
+          ],
+          "health_check": {
+            "http": {
+              "url": "http://localhost:3000/health",
+              "expected_status": 200,
+              "timeout_secs": 5
+            }
+          },
+          "restart_policy": {
+            "max_restarts": 5,
+            "restart_window_secs": 300,
+            "backoff_secs": 5
+          },
+          "env_files": {
+            "dev": {
+              "local": ".env.dev",
+              "docker": ".env.docker.dev"
+            },
+            "qa": {
+              "docker": ".env.qa",
+              "k8s": "k8s/env/qa.yaml"
+            },
+            "prod": {
+              "k8s": "k8s/env/prod.yaml"
+            }
+          }
+        },
+        "worker": {
+          "type": "nodejs",
+          "path": "~/code/awesome-monorepo/apps/worker",
+          "commands": {
+            "local": {
+              "default": "start",
+              "start": "npm run worker"
+            },
+            "docker": {
+              "default": "start",
+              "start": "docker compose up worker"
+            }
+          },
+          "dependencies": [
+            "database",
+            "redis",
+            "api"
+          ],
+          "restart_policy": {
+            "max_restarts": 10,
+            "restart_window_secs": 600
+          }
+        },
+        "frontend": {
+          "type": "nodejs",
+          "path": "~/code/awesome-monorepo/apps/frontend",
+          "commands": {
+            "local": {
+              "default": "start",
+              "start": "npm run dev",
+              "build": "npm run build",
+              "preview": "npm run preview"
+            },
+            "docker": {
+              "default": "start",
+              "start": "docker compose up frontend"
+            }
+          },
+          "dependencies": [
+            "api"
+          ],
+          "health_check": {
+            "http": {
+              "url": "http://localhost:5173",
+              "expected_status": 200
+            }
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 ## App Fields
 
 ### Required Fields
 
-#### `app_type`
+#### `type`
 **Type**: String
 **Required**: Yes
 **Description**: Type of application
@@ -165,8 +207,10 @@ projects:
 - `generic` - Any other type
 
 **Example**:
-```yaml
-app_type: nodejs
+```json
+{
+  "type": "nodejs"
+}
 ```
 
 #### `path`
@@ -175,9 +219,10 @@ app_type: nodejs
 **Description**: Working directory for the app
 
 **Example**:
-```yaml
-path: ~/code/my-project/apps/api
-path: /home/user/projects/api
+```json
+{
+  "path": "~/code/my-project/apps/api"
+}
 ```
 
 #### `commands`
@@ -186,28 +231,37 @@ path: /home/user/projects/api
 **Description**: Commands to run in different environments
 
 **Structure**:
-```yaml
-commands:
-  <environment>:
-    <command-name>: <command-string>
-    default: <default-command-name>
+```json
+{
+  "commands": {
+    "<environment>": {
+      "<command-name>": "<command-string>",
+      "default": "<default-command-name>"
+    }
+  }
+}
 ```
 
 **Environments**: `local`, `docker`, `orbstack`, `k8s`
 
 **Example**:
-```yaml
-commands:
-  local:
-    default: start
-    start: npm run dev
-    test: npm test
-    build: npm run build
-    build:production: npm run build --mode production
-  docker:
-    default: start
-    start: docker compose up api
-    build: docker compose build api
+```json
+{
+  "commands": {
+    "local": {
+      "default": "start",
+      "start": "npm run dev",
+      "test": "npm test",
+      "build": "npm run build",
+      "build:production": "npm run build --mode production"
+    },
+    "docker": {
+      "default": "start",
+      "start": "docker compose up api",
+      "build": "docker compose build api"
+    }
+  }
+}
 ```
 
 ### Optional Fields
@@ -225,24 +279,32 @@ commands:
 - Hides real names in screenshots and demonstrations
 
 **Example (Project)**:
-```yaml
-projects:
-  my-company-internal-project:
-    alternative_name: ProjectX
-    apps:
-      internal-api:
-        alternative_name: API
-        # ... rest of config
+```json
+{
+  "projects": {
+    "my-company-internal-project": {
+      "alternative_name": "ProjectX",
+      "apps": {
+        "internal-api": {
+          "alternative_name": "API"
+        }
+      }
+    }
+  }
+}
 ```
 
 **Example (App)**:
-```yaml
-apps:
-  sensitive-app-name:
-    alternative_name: MyApp
-    app_type: nodejs
-    path: ~/code/sensitive-app-name
-    # ... rest of config
+```json
+{
+  "apps": {
+    "sensitive-app-name": {
+      "alternative_name": "MyApp",
+      "type": "nodejs",
+      "path": "~/code/sensitive-app-name"
+    }
+  }
+}
 ```
 
 **Usage**:
@@ -277,11 +339,14 @@ devcli config show sensitive-app-name
 - Can be disabled with `--skip-deps`
 
 **Example**:
-```yaml
-dependencies:
-  - database
-  - redis
-  - auth-service
+```json
+{
+  "dependencies": [
+    "database",
+    "redis",
+    "auth-service"
+  ]
+}
 ```
 
 **Behavior**:
@@ -299,29 +364,41 @@ devcli start frontend
 **Types**: `http`, `tcp`, `command`
 
 **HTTP Health Check**:
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-    expected_status: 200
-    timeout_secs: 5
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health",
+      "expected_status": 200,
+      "timeout_secs": 5
+    }
+  }
+}
 ```
 
 **TCP Health Check**:
-```yaml
-health_check:
-  tcp:
-    host: localhost
-    port: 5432
-    timeout_secs: 10
+```json
+{
+  "health_check": {
+    "tcp": {
+      "host": "localhost",
+      "port": 5432,
+      "timeout_secs": 10
+    }
+  }
+}
 ```
 
 **Command Health Check**:
-```yaml
-health_check:
-  command:
-    cmd: curl -f http://localhost:3000/health
-    timeout_secs: 5
+```json
+{
+  "health_check": {
+    "command": {
+      "cmd": "curl -f http://localhost:3000/health",
+      "timeout_secs": 5
+    }
+  }
+}
 ```
 
 **Features**:
@@ -336,11 +413,14 @@ health_check:
 **Description**: Automatic restart configuration
 
 **Fields**:
-```yaml
-restart_policy:
-  max_restarts: 5           # Maximum restart attempts
-  restart_window_secs: 300  # Time window (5 minutes)
-  backoff_secs: 5           # Initial backoff delay
+```json
+{
+  "restart_policy": {
+    "max_restarts": 5,
+    "restart_window_secs": 300,
+    "backoff_secs": 5
+  }
+}
 ```
 
 **Behavior**:
@@ -350,12 +430,14 @@ restart_policy:
 - Stops restarting after max_restarts reached
 
 **Example**:
-```yaml
-# Restart up to 10 times within 10 minutes
-restart_policy:
-  max_restarts: 10
-  restart_window_secs: 600
-  backoff_secs: 3
+```json
+{
+  "restart_policy": {
+    "max_restarts": 10,
+    "restart_window_secs": 600,
+    "backoff_secs": 3
+  }
+}
 ```
 
 #### `env_files`
@@ -364,27 +446,37 @@ restart_policy:
 **Description**: Environment files for different stages
 
 **Structure**:
-```yaml
-env_files:
-  <stage>:
-    <context>: <file-path>
+```json
+{
+  "env_files": {
+    "<stage>": {
+      "<context>": "<file-path>"
+    }
+  }
+}
 ```
 
 **Stages**: Any string (e.g., `dev`, `qa`, `staging`, `prod`)
 **Contexts**: `local`, `docker`, `orbstack`, `k8s`
 
 **Example**:
-```yaml
-env_files:
-  dev:
-    local: .env.dev
-    docker: .env.docker.dev
-  qa:
-    docker: .env.qa
-    k8s: k8s/qa/env.yaml
-  prod:
-    k8s: k8s/prod/env.yaml
-    default_context: k8s  # Default context for this stage
+```json
+{
+  "env_files": {
+    "dev": {
+      "local": ".env.dev",
+      "docker": ".env.docker.dev"
+    },
+    "qa": {
+      "docker": ".env.qa",
+      "k8s": "k8s/qa/env.yaml"
+    },
+    "prod": {
+      "k8s": "k8s/prod/env.yaml",
+      "default_context": "k8s"
+    }
+  }
+}
 ```
 
 **Usage**:
@@ -407,42 +499,58 @@ Commands can have **variants** for different build targets, test suites, etc.
 
 ### Syntax
 
-```yaml
-commands:
-  local:
-    <command>: <simple-command>
-    <command>:<variant>: <variant-command>
+```json
+{
+  "commands": {
+    "local": {
+      "<command>": "<simple-command>",
+      "<command>:<variant>": "<variant-command>"
+    }
+  }
+}
 ```
 
 ### Examples
 
 **Build Variants**:
-```yaml
-commands:
-  local:
-    build: npm run build
-    build:development: npm run build --mode development
-    build:production: npm run build --mode production
-    build:staging: npm run build --mode staging
+```json
+{
+  "commands": {
+    "local": {
+      "build": "npm run build",
+      "build:development": "npm run build --mode development",
+      "build:production": "npm run build --mode production",
+      "build:staging": "npm run build --mode staging"
+    }
+  }
+}
 ```
 
 **Test Variants**:
-```yaml
-commands:
-  local:
-    test: npm test
-    test:unit: npm run test:unit
-    test:integration: npm run test:integration
-    test:e2e: npm run test:e2e
+```json
+{
+  "commands": {
+    "local": {
+      "test": "npm test",
+      "test:unit": "npm run test:unit",
+      "test:integration": "npm run test:integration",
+      "test:e2e": "npm run test:e2e"
+    }
+  }
+}
 ```
 
 **Docker Variants**:
-```yaml
-commands:
-  docker:
-    build: docker compose build
-    build:no-cache: docker compose build --no-cache
-    build:dev: docker compose -f docker-compose.dev.yml build
+```json
+{
+  "commands": {
+    "docker": {
+      "build": "docker compose build",
+      "build:no-cache": "docker compose build --no-cache",
+      "build:dev": "docker compose -f docker-compose.dev.yml build"
+    }
+  }
+}
 ```
 
 ### Usage
@@ -460,12 +568,16 @@ devcli run api build
 
 Each environment should have a `default` command:
 
-```yaml
-commands:
-  local:
-    default: start
-    start: npm run dev
-    test: npm test
+```json
+{
+  "commands": {
+    "local": {
+      "default": "start",
+      "start": "npm run dev",
+      "test": "npm test"
+    }
+  }
+}
 ```
 
 **Used When**:
@@ -505,25 +617,34 @@ devcli auto-add
 
 ### In Commands
 
-```yaml
-commands:
-  local:
-    start: PORT=3000 npm run dev
-    test: NODE_ENV=test npm test
+```json
+{
+  "commands": {
+    "local": {
+      "start": "PORT=3000 npm run dev",
+      "test": "NODE_ENV=test npm test"
+    }
+  }
+}
 ```
 
 ### Env Files (Docker)
 
 Docker commands automatically inject `--env-file`:
 
-```yaml
-commands:
-  docker:
-    start: docker compose up api
-
-env_files:
-  dev:
-    docker: .env.dev
+```json
+{
+  "commands": {
+    "docker": {
+      "start": "docker compose up api"
+    }
+  },
+  "env_files": {
+    "dev": {
+      "docker": ".env.dev"
+    }
+  }
+}
 ```
 
 **Becomes**:
@@ -553,7 +674,7 @@ devcli config validate
 
 **Missing required fields**:
 ```
-Error: App 'api' missing required field 'app_type'
+Error: App 'api' missing required field 'type'
 ```
 
 **Invalid dependencies**:
@@ -570,60 +691,83 @@ Error: Circular dependency detected: api → worker → api
 
 ### 1. Use Projects to Group Related Apps
 
-```yaml
-projects:
-  main-app:
-    apps:
-      api: ...
-      worker: ...
-      frontend: ...
-
-  monitoring:
-    apps:
-      prometheus: ...
-      grafana: ...
+```json
+{
+  "projects": {
+    "main-app": {
+      "apps": {
+        "api": "...",
+        "worker": "...",
+        "frontend": "..."
+      }
+    },
+    "monitoring": {
+      "apps": {
+        "prometheus": "...",
+        "grafana": "..."
+      }
+    }
+  }
+}
 ```
 
 ### 2. Define Dependencies Explicitly
 
-```yaml
-# Frontend depends on API, API depends on DB
-frontend:
-  dependencies: [api]
-
-api:
-  dependencies: [database, redis]
+```json
+{
+  "frontend": {
+    "dependencies": [
+      "api"
+    ]
+  },
+  "api": {
+    "dependencies": [
+      "database",
+      "redis"
+    ]
+  }
+}
 ```
 
 ### 3. Add Health Checks for Critical Services
 
-```yaml
-database:
-  health_check:
-    tcp:
-      host: localhost
-      port: 5432
-
-api:
-  health_check:
-    http:
-      url: http://localhost:3000/health
+```json
+{
+  "database": {
+    "health_check": {
+      "tcp": {
+        "host": "localhost",
+        "port": 5432
+      }
+    }
+  },
+  "api": {
+    "health_check": {
+      "http": {
+        "url": "http://localhost:3000/health"
+      }
+    }
+  }
+}
 ```
 
 ### 4. Use Restart Policies for Long-Running Services
 
-```yaml
-# Background worker - aggressive restarts
-worker:
-  restart_policy:
-    max_restarts: 10
-    restart_window_secs: 600
-
-# Database - conservative restarts
-database:
-  restart_policy:
-    max_restarts: 3
-    restart_window_secs: 300
+```json
+{
+  "worker": {
+    "restart_policy": {
+      "max_restarts": 10,
+      "restart_window_secs": 600
+    }
+  },
+  "database": {
+    "restart_policy": {
+      "max_restarts": 3,
+      "restart_window_secs": 300
+    }
+  }
+}
 ```
 
 ### 5. Organize Env Files by Stage
@@ -638,12 +782,16 @@ apps/api/
 
 ### 6. Use Command Variants for Build Targets
 
-```yaml
-commands:
-  local:
-    build:dev: npm run build:dev
-    build:prod: npm run build:prod
-    build:analyze: npm run build:analyze
+```json
+{
+  "commands": {
+    "local": {
+      "build:dev": "npm run build:dev",
+      "build:prod": "npm run build:prod",
+      "build:analyze": "npm run build:analyze"
+    }
+  }
+}
 ```
 
 ## Configuration Management
@@ -699,38 +847,53 @@ cp ~/.devcli/config.json.backup ~/.devcli/config.json
 
 ### Custom Dockerfile Paths
 
-```yaml
-commands:
-  docker:
-    build: docker build -f docker/Dockerfile.dev .
-    start: docker run -p 3000:3000 my-image
+```json
+{
+  "commands": {
+    "docker": {
+      "build": "docker build -f docker/Dockerfile.dev .",
+      "start": "docker run -p 3000:3000 my-image"
+    }
+  }
+}
 ```
 
 ### Multiple Compose Files
 
-```yaml
-commands:
-  docker:
-    start:dev: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-    start:prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+```json
+{
+  "commands": {
+    "docker": {
+      "start:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
+      "start:prod": "docker compose -f docker-compose.yml -f docker-compose.prod.yml up"
+    }
+  }
+}
 ```
 
 ### Kubernetes Namespaces
 
-```yaml
-commands:
-  k8s:
-    apply: kubectl apply -f k8s/ -n my-namespace
-    delete: kubectl delete -f k8s/ -n my-namespace
+```json
+{
+  "commands": {
+    "k8s": {
+      "apply": "kubectl apply -f k8s/ -n my-namespace",
+      "delete": "kubectl delete -f k8s/ -n my-namespace"
+    }
+  }
+}
 ```
 
 ### OrbStack Optimization
 
-```yaml
-commands:
-  orbstack:
-    start: docker compose up api
-    # OrbStack auto-injects DOCKER_HOST
+```json
+{
+  "commands": {
+    "orbstack": {
+      "start": "docker compose up api"
+    }
+  }
+}
 ```
 
 ## See Also

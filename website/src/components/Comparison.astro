@@ -26,7 +26,7 @@ const comparisons = [
     tool: 'CUSTOM_SCRIPTS',
     devCLIAdvantages: [
       'ZERO_MAINTENANCE',
-      'DECLARATIVE_YAML',
+      'DECLARATIVE_JSON',
       'CENTRALIZED_LOGS',
       'X_PLATFORM_CORE'
     ]
@@ -37,7 +37,7 @@ const comparisons = [
 <Section background="dark">
   <SectionHeader
     title="Competitive Edge"
-    subtitle="Audit report comparing DevCLI against industry standards"
+    subtitle="How DevCLI compares to common alternatives"
     gradient="cyan-blue"
   />
 
@@ -61,8 +61,8 @@ const comparisons = [
         </ul>
         
         <div class="mt-12 pt-6 border-t border-[var(--border)] flex justify-between items-center opacity-30 group-hover:opacity-100 transition-opacity">
-          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">Confidence: 99.9%</span>
-          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">ID: {Math.random().toString(36).substr(2, 6).toUpperCase()}</span>
+          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">STATUS: FEATURE_MATRIX</span>
+          <span class="text-[8px] font-mono text-[var(--text-muted)] uppercase tracking-widest">DEVCLI_VS_{comparison.tool.toLowerCase()}</span>
         </div>
       </div>
     ))}

@@ -1,4 +1,4 @@
-# Getting Started with devcli
+# Getting Started with DevCLI
 
 A comprehensive guide to get you up and running with devcli in minutes.
 
@@ -6,7 +6,7 @@ A comprehensive guide to get you up and running with devcli in minutes.
 
 devcli is a powerful process management tool that helps you:
 
-- **Manage processes** through a centralized YAML configuration
+- **Manage processes** through a centralized JSON configuration
 - **Auto-start dependencies** in the correct order
 - **Run in multiple environments** (local, Docker, Kubernetes)
 - **Monitor health** and automatically restart crashed processes
@@ -22,25 +22,40 @@ Perfect for microservices development, monorepo projects, and complex local deve
 - **macOS** (10.15+) or **Linux** (Ubuntu 20.04+, or equivalent)
 - No other dependencies required!
 
-### Quick Install
+### Quick Install (Recommended)
+
+Installs the latest `devcli` and its `pm-daemon` background daemon into `~/.devcli/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xDelph/devcli/develop/install.sh | sh
+```
+
+### Homebrew
+
+```bash
+brew tap xDelph/devcli
+brew install devcli
+```
+
+### Manual Installation
 
 **macOS (Apple Silicon M1/M2/M3):**
 ```bash
-curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-aarch64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
 
 **macOS (Intel):**
 ```bash
-curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-x86_64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-x86_64-apple-darwin.tar.gz | tar xz
 sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
 
 **Linux (x64):**
 ```bash
-curl -L https://github.com/YOUR_USERNAME/devcli/releases/latest/download/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/xDelph/devcli/releases/latest/download/devcli-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv devcli pm-daemon /usr/local/bin/
 devcli --version
 ```
@@ -48,7 +63,7 @@ devcli --version
 ### Build from Source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/devcli.git
+git clone https://github.com/xDelph/devcli.git
 cd devcli
 cargo build --release
 sudo cp target/release/devcli target/release/pm-daemon /usr/local/bin/
@@ -59,11 +74,11 @@ sudo cp target/release/devcli target/release/pm-daemon /usr/local/bin/
 ### 1. Initialize Configuration
 
 ```bash
-# Create default config file at ~/.devcli/config.yaml
+# Create default config file at ~/.devcli/config.json
 devcli config init
 
 # Verify it was created
-cat ~/.devcli/config.yaml
+cat ~/.devcli/config.json
 ```
 
 ### 2. Auto-Detect Your First App
@@ -132,30 +147,43 @@ devcli stop --all
 
 ### Configuration File
 
-Located at `~/.devcli/config.yaml`, this file defines:
+Located at `~/.devcli/config.json`, this file defines:
 
-```yaml
-projects:
-  awesome-project:
-    apps:
-      api:
-        app_type: nodejs
-        path: ~/code/awesome-project/api
-        commands:
-          local:
-            start: npm run dev
-            test: npm test
-          docker:
-            start: docker compose up api
-        dependencies:
-          - database
-        health_check:
-          http:
-            url: http://localhost:3000/health
-            expected_status: 200
-        restart_policy:
-          max_restarts: 5
-          restart_window_secs: 300
+```json
+{
+  "projects": {
+    "awesome-project": {
+      "apps": {
+        "api": {
+          "type": "nodejs",
+          "path": "~/code/awesome-project/api",
+          "commands": {
+            "local": {
+              "start": "npm run dev",
+              "test": "npm test"
+            },
+            "docker": {
+              "start": "docker compose up api"
+            }
+          },
+          "dependencies": [
+            "database"
+          ],
+          "health_check": {
+            "http": {
+              "url": "http://localhost:3000/health",
+              "expected_status": 200
+            }
+          },
+          "restart_policy": {
+            "max_restarts": 5,
+            "restart_window_secs": 300
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 ### Projects
@@ -254,23 +282,30 @@ devcli health-check api
 
 Add health checks to detect when apps need restart:
 
-```yaml
-health_check:
-  http:
-    url: http://localhost:3000/health
-    timeout_secs: 5
-    expected_status: 200
+```json
+{
+  "health_check": {
+    "http": {
+      "url": "http://localhost:3000/health",
+      "timeout_secs": 5,
+      "expected_status": 200
+    }
+  }
+}
 ```
 
 ### Set Up Restart Policies
 
 Automatically restart crashed processes:
 
-```yaml
-restart_policy:
-  max_restarts: 5          # Max 5 restarts
-  restart_window_secs: 300 # Within 5 minutes
-  backoff_secs: 5          # Wait 5s between restarts
+```json
+{
+  "restart_policy": {
+    "max_restarts": 5,
+    "restart_window_secs": 300,
+    "backoff_secs": 5
+  }
+}
 ```
 
 ### Add Environment Files
