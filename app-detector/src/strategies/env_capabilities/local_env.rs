@@ -473,10 +473,8 @@ fn suggest_default_command(
                 return Some("build".to_string());
             }
         }
-        Some("redis") | Some("traefik") => {
-            if commands.contains_key("start") {
-                return Some("start".to_string());
-            }
+        Some("redis") | Some("traefik") if commands.contains_key("start") => {
+            return Some("start".to_string());
         }
         _ => {}
     }

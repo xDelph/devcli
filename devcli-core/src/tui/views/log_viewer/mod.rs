@@ -299,27 +299,25 @@ impl LogViewerView {
                 }
                 return Ok(LogInputResult::Handled);
             }
-            KeyCode::Char('w') => {
+            KeyCode::Char('w') if self.panels.len() > 1 => {
                 // Close active panel if there's more than one
-                if self.panels.len() > 1 {
-                    self.panels.remove(self.active_panel_idx);
-                    if self.active_panel_idx >= self.panels.len() {
-                        self.active_panel_idx = self.panels.len().saturating_sub(1);
-                    }
-
-                    // Reset viewport state for remaining panels to handle layout change.
-                    // The renderer re-normalizes the scroll from the cursor, so we
-                    // only need to keep the cursor inside the content.
-                    for panel in &mut self.panels {
-                        if panel.viewport.cursor_line + 1 >= panel.total_lines {
-                            panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
-                        }
-                    }
-
-                    return Ok(LogInputResult::Handled);
+                self.panels.remove(self.active_panel_idx);
+                if self.active_panel_idx >= self.panels.len() {
+                    self.active_panel_idx = self.panels.len().saturating_sub(1);
                 }
-                // If only 1 panel, let standard Esc handle exit
+
+                // Reset viewport state for remaining panels to handle layout change.
+                // The renderer re-normalizes the scroll from the cursor, so we
+                // only need to keep the cursor inside the content.
+                for panel in &mut self.panels {
+                    if panel.viewport.cursor_line + 1 >= panel.total_lines {
+                        panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
+                    }
+                }
+
+                return Ok(LogInputResult::Handled);
             }
+            // If only 1 panel, let standard Esc handle exit
             _ => {}
         }
 

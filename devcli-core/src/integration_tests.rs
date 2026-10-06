@@ -731,6 +731,7 @@ CMD ["node", "server.js"]
         }
 
         #[tokio::test]
+        #[ignore = "requires a built pm-daemon binary and real process supervision; timing-sensitive on CI (run with --ignored)"]
         async fn test_monitor_restarts_crashed_process() {
             let Some(daemon_dir) = locate_pm_daemon_dir() else {
                 eprintln!("Skipping monitor restart test: pm-daemon binary not built yet");

@@ -300,10 +300,8 @@ pub fn suggest_local_default(
                 return Some("dev".to_string());
             }
         }
-        "python" | "redis" | "traefik" => {
-            if cmds.contains_key("start") {
-                return Some("start".to_string());
-            }
+        "python" | "redis" | "traefik" if cmds.contains_key("start") => {
+            return Some("start".to_string());
         }
         _ => {}
     }

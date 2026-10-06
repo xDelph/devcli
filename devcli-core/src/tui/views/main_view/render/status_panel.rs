@@ -66,7 +66,7 @@ impl MainView {
         if let Some(app) = state.selected_app() {
             if let Ok(mut logs) = self.log_manager.list_logs_for_app(&app.project, &app.name) {
                 // Sort by modified time descending (newest first)
-                logs.sort_by(|a, b| b.modified.cmp(&a.modified));
+                logs.sort_by_key(|a| std::cmp::Reverse(a.modified));
 
                 if logs.is_empty() {
                     let placeholder = Paragraph::new("No logs available")

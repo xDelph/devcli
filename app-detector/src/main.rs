@@ -506,15 +506,13 @@ fn print_result_indented(result: &app_detector::DetectionResult, indent: &str) {
                 );
             }
         }
-        app_detector::DetectionData::KubernetesEnv(info) => {
-            if !info.commands.is_empty() {
-                println!(
-                    "{}    {} {}",
-                    indent,
-                    "Commands:".dimmed(),
-                    info.commands.len()
-                );
-            }
+        app_detector::DetectionData::KubernetesEnv(info) if !info.commands.is_empty() => {
+            println!(
+                "{}    {} {}",
+                indent,
+                "Commands:".dimmed(),
+                info.commands.len()
+            );
         }
         _ => {}
     }

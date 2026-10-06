@@ -107,7 +107,7 @@ impl LogManager {
 
         // Sort by modification date, newest first
         // This ensures the most recent logs appear at the top
-        log_files.sort_by(|a, b| b.modified.cmp(&a.modified));
+        log_files.sort_by_key(|a| std::cmp::Reverse(a.modified));
 
         Ok(log_files)
     }

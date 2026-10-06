@@ -383,7 +383,7 @@ impl EditModeHandler for MainView {
                                         >= total_commands.saturating_sub(1)
                                     {
                                         self.selected_config_command_idx =
-                                            total_commands.saturating_sub(2).max(0);
+                                            total_commands.saturating_sub(2);
                                     }
                                     // Reload state after deletion
                                     if let Err(e) = self.reload_state_from_config(state) {
@@ -446,7 +446,7 @@ impl EditModeHandler for MainView {
                                             >= total_entries.saturating_sub(1)
                                         {
                                             self.popup_scroll_manager.selected_env_file_idx =
-                                                total_entries.saturating_sub(2).max(0);
+                                                total_entries.saturating_sub(2);
                                         }
                                         // Reload state after deletion
                                         if let Err(e) = self.reload_state_from_config(state) {

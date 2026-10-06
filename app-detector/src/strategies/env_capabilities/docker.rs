@@ -124,10 +124,9 @@ impl DetectionStrategy for DockerStrategy {
 
         let mut metadata = HashMap::new();
         let mut commands = HashMap::new();
-        let suggested_default;
 
         // Generate commands based on what's available
-        if !compose_files.is_empty() {
+        let suggested_default = if !compose_files.is_empty() {
             // Docker Compose commands
             commands.insert("up".to_string(), "docker compose up".to_string());
             commands.insert("down".to_string(), "docker compose down".to_string());
@@ -136,7 +135,7 @@ impl DetectionStrategy for DockerStrategy {
             commands.insert("ps".to_string(), "docker compose ps".to_string());
             commands.insert("restart".to_string(), "docker compose restart".to_string());
             metadata.insert("has_compose".to_string(), serde_json::json!(true));
-            suggested_default = Some("up".to_string());
+            Some("up".to_string())
         } else if !dockerfiles.is_empty() {
             // Plain Docker commands (devcli-style: stable keys + app-name tags)
             let dockerfile_path = dockerfiles.first().unwrap().to_string_lossy();
@@ -185,10 +184,10 @@ impl DetectionStrategy for DockerStrategy {
             commands.insert("stop".to_string(), format!("docker stop {app}"));
 
             metadata.insert("has_dockerfile".to_string(), serde_json::json!(true));
-            suggested_default = Some("build".to_string());
+            Some("build".to_string())
         } else {
-            suggested_default = None;
-        }
+            None
+        };
 
         metadata.insert(
             "dockerfile_count".to_string(),

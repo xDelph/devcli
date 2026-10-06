@@ -521,7 +521,7 @@ impl NavigationHandler for MainView {
                         if let Ok(mut logs) =
                             self.log_manager.list_logs_for_app(&app.project, &app.name)
                         {
-                            logs.sort_by(|a, b| b.modified.cmp(&a.modified));
+                            logs.sort_by_key(|a| std::cmp::Reverse(a.modified));
                             if let Some(log) = logs.get(self.selected_log_idx) {
                                 let prev = state.current_view.clone();
                                 state.view_history.push(prev);
