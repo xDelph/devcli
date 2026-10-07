@@ -2,27 +2,36 @@ name: Release
 
 # Single-repo release pipeline.
 #
-# release-please creates the tag and a DRAFT GitHub release when its release PR
-# is merged. This workflow then builds every platform, uploads the archives to
-# that same release, publishes it, and finally updates the Homebrew tap.
+# release-please opens a DRAFT GitHub release when its release PR is merged.
+# This workflow then builds every platform, uploads the archives to that same
+# draft, publishes it, and finally updates the Homebrew tap.
+#
+# Trigger: the release being created, NOT a tag push. A draft release has no git
+# tag until it is published, so `push: tags` can never fire — release-please
+# would wait for this workflow and this workflow would wait for the tag.
+# Publishing the draft is what finally creates the tag, and it does not re-trigger
+# this workflow (that fires `released`, not `created`).
 #
 # Ordering matters: the draft is only published once all assets exist, and the
 # tap is only updated once the release is live (so the asset URLs are reachable).
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  release:
+    types: [created]
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.release.tag_name }}
 
 jobs:
   build:
     name: Build ${{ matrix.target }}
+    # Only handle the draft release-please just created. A `created` event also
+    # fires for releases published straight away, which already have assets.
+    if: github.event.release.draft == true
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -102,7 +111,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.ref_name }} \
+          gh release upload "$TAG" \
             devcli-${{ matrix.target }}.tar.gz \
             devcli-${{ matrix.target }}.tar.gz.sha256 \
             --clobber
@@ -111,7 +120,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view ${{ github.ref_name }} --json assets --jq '.assets[].name' | grep "${{ matrix.target }}"
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep "${{ matrix.target }}"
 
   publish:
     name: Publish release
@@ -121,7 +130,7 @@ jobs:
       - name: Publish the draft release now that every asset is uploaded
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit ${{ github.ref_name }} --draft=false
+        run: gh release edit "$TAG" --draft=false
 
   homebrew:
     name: Update Homebrew tap
@@ -131,8 +140,8 @@ jobs:
       - name: Read version
         id: meta
         run: |
-          echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          echo "version_number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_number=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Compute checksums from the published assets
         id: checksums
@@ -144,7 +153,7 @@ jobs:
             x86_64-apple-darwin \
             aarch64-unknown-linux-gnu \
             x86_64-unknown-linux-gnu; do
-            gh release download "${{ github.ref_name }}" \
+            gh release download "$TAG" \
               --pattern "devcli-${platform}.tar.gz" \
               --dir /tmp \
               --clobber
