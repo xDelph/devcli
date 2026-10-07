@@ -29,6 +29,14 @@ on:
   workflow_run:
     workflows: ["Release Please"]
     types: [completed]
+  # Manual escape hatch: lets the release be built/published without going
+  # through Release Please, and makes the whole flow testable on demand.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag of an existing DRAFT release to build (blank = newest draft)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -39,7 +47,9 @@ env:
 jobs:
   prepare:
     name: Resolve pending draft release
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.pending.outputs.tag }}
@@ -54,8 +64,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh release list --limit 10 --json tagName,isDraft \
-            --jq '[.[] | select(.isDraft)] | .[0].tagName // empty')
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(gh release list --limit 10 --json tagName,isDraft \
+              --jq '[.[] | select(.isDraft)] | .[0].tagName // empty')
+          fi
           if [ -z "$TAG" ]; then
             echo "No draft release to build — nothing to do."
             echo "tag=" >> "$GITHUB_OUTPUT"
