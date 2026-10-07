@@ -133,25 +133,8 @@ jobs:
       - name: Run tests (env-flow)
         run: cargo test -p env-flow --all-features
 
-      - name: Compile process-manager tests
-        run: timeout -k 15 600 cargo test -p process-manager --all-features --lib --no-run
-
-      - name: Run tests (process-manager lib)
-        run: |
-          set +e
-          timeout -k 15 240 cargo test -p process-manager --all-features --lib -- --test-threads=1 --nocapture > /tmp/pm-lib.log 2>&1
-          echo "exit=$?"
-          echo "--- fin du log ---"
-          tail -40 /tmp/pm-lib.log
-          echo "--- processus survivants ---"
-          pgrep -a -f 'sleep|pm-daemon' || echo "aucun"
-          exit 0
-
-      - name: Run tests (process-manager bins)
-        run: cargo test -p process-manager --all-features --bins
-
-      - name: Run tests (process-manager integration)
-        run: cargo test -p process-manager --all-features --test integration_tests
+      - name: Run tests (process-manager)
+        run: cargo test -p process-manager --all-features
 
       - name: Run tests (devcli-core)
         run: cargo test -p devcli-core --all-features
