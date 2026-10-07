@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ci-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ci-cargo-lint-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -120,7 +120,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ci-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ci-cargo-test-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ci-cargo-build-target-
 

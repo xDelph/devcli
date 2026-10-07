@@ -75,7 +75,6 @@ async fn wait_until_not_running(store: &StateStore, process: &ManagedProcess, ti
     );
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_spawn_and_terminate_detached_process() {
@@ -98,7 +97,6 @@ async fn test_spawn_and_terminate_detached_process() {
     assert!(!running.is_alive());
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_spawn_parses_quoted_shell_words() {
@@ -138,7 +136,6 @@ async fn test_spawn_parses_quoted_shell_words() {
     panic!("expected quoted argument in output, got: {output:?}");
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_terminate_sigterm_before_force() {
@@ -161,7 +158,6 @@ async fn test_terminate_sigterm_before_force() {
     panic!("process should exit after SIGTERM");
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_spawn_attached_process_keeps_child_handle() {
@@ -192,7 +188,6 @@ async fn test_spawn_attached_process_keeps_child_handle() {
     let _ = engine::terminate(running.pid, running.pgid, true).await;
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_spawn_streams_to_log_file() {
@@ -232,7 +227,6 @@ async fn test_spawn_streams_to_log_file() {
     assert!(content.contains("[STDERR]"));
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_restart_replaces_process() {
@@ -255,7 +249,6 @@ async fn test_restart_replaces_process() {
     let _ = engine::terminate(new_pid, new_pgid, true).await;
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_state_store_cleanup_dead() {
@@ -278,7 +271,6 @@ async fn test_state_store_cleanup_dead() {
     assert!(store.load("dead-app").unwrap().is_none());
 }
 
-#[ignore = "spawns real OS processes; wedges the GitHub Actions runner step (see git log). Pass on macOS and Ubuntu 24.04 with Rust 1.98.0. Run with --ignored."]
 #[tokio::test]
 #[cfg(unix)]
 async fn test_state_store_tracks_live_process() {
@@ -317,7 +309,6 @@ async fn test_state_store_tracks_live_process() {
 
 #[tokio::test]
 #[cfg(unix)]
-#[ignore = "requires a built pm-daemon binary and real process supervision; timing-sensitive on CI (run with --ignored)"]
 async fn test_ensure_daemon_running_singleton() {
     let temp_dir = TempDir::new().unwrap();
     let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();

@@ -10,8 +10,9 @@ use tokio::sync::mpsc::UnboundedSender;
 pub type OutputChannel = UnboundedSender<String>;
 
 pub fn state_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    Ok(home.join(".devcli").join("processes"))
+    let dir = crate::config::loader::config_home().join("processes");
+    std::fs::create_dir_all(&dir).context("Failed to create process state directory")?;
+    Ok(dir)
 }
 
 pub fn state_store() -> Result<StateStore> {
@@ -20,8 +21,7 @@ pub fn state_store() -> Result<StateStore> {
 }
 
 pub fn logs_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    let log_dir = home.join(".devcli").join("logs");
+    let log_dir = crate::config::loader::config_home().join("logs");
     std::fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
     Ok(log_dir)
 }

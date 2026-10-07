@@ -22,47 +22,50 @@ fn env_config_dir() -> Option<PathBuf> {
         .map(|dir| expand_tilde(&dir))
 }
 
+/// Root directory holding every devcli-owned file (config, preferences,
+/// process state, logs).
+///
+/// Priority: 1) `devcli_CONFIG_DIR`, 2) `.devcli` in the current directory when
+/// one already exists, 3) `~/.devcli`.
+///
+/// Everything must derive from here so that a single override isolates the whole
+/// tool; the process state and log directories used to be hardcoded to
+/// `~/.devcli`, which made `devcli_CONFIG_DIR` useless for tests.
+pub fn config_home() -> PathBuf {
+    if let Some(config_dir) = env_config_dir() {
+        return config_dir;
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        let local = current_dir.join(".devcli");
+        if local.exists() {
+            return local;
+        }
+    }
+
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".devcli")
+}
+
 // Get the full path to the config file
 // Returns: ./.devcli/config.json (current dir) or ~/.devcli/config.json (home dir)
 // Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_config_path() -> Result<PathBuf> {
-    if let Some(config_dir) = env_config_dir() {
-        let path = config_dir.join("config.json");
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        return Ok(path);
+    let path = config_home().join("config.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
-
-    let current_dir = env::current_dir()?;
-    let local_config = current_dir.join(".devcli").join("config.json");
-    if local_config.exists() {
-        return Ok(local_config);
-    }
-
-    let home = env::var("HOME")?;
-    Ok(PathBuf::from(home).join(".devcli").join("config.json"))
+    Ok(path)
 }
 
 // Get the full path to the preferences file
 // Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory
 pub fn get_preferences_path() -> Result<PathBuf> {
-    if let Some(config_dir) = env_config_dir() {
-        let path = config_dir.join("preferences.json");
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        return Ok(path);
+    let path = config_home().join("preferences.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
-
-    let current_dir = env::current_dir()?;
-    let local_prefs = current_dir.join(".devcli").join("preferences.json");
-    if local_prefs.exists() {
-        return Ok(local_prefs);
-    }
-
-    let home = env::var("HOME")?;
-    Ok(PathBuf::from(home).join(".devcli").join("preferences.json"))
+    Ok(path)
 }
 
 pub fn load_config() -> Result<Config> {
