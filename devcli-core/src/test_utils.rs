@@ -331,6 +331,22 @@ pub fn mock_app_with_deps(path: &str, deps: Vec<(&str, &str)>) -> App {
     builder.build()
 }
 
+/// Serialises tests that mutate process-global state.
+///
+/// `devcli_CONFIG_DIR` and the current working directory are global to the
+/// process, and cargo runs test functions on parallel threads. Two tests
+/// overriding them at once interleave: one clears the override while the other
+/// is mid-test, and the second then silently resolves the *real* `~/.devcli`
+/// and writes to it. Take this guard for the whole test to keep that from
+/// happening.
+#[cfg(test)]
+pub fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A poisoned lock means another test panicked; the data it guards is a
+    // process-global env var, so carry on rather than cascading the panic.
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

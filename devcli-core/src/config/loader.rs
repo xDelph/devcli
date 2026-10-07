@@ -96,8 +96,14 @@ mod tests {
     // Single sequential test on purpose: `devcli_CONFIG_DIR` is process-global,
     // so splitting these scenarios across parallel #[test]s would race each
     // other (env vars are shared between test threads).
+    //
+    // The shared `env_guard` also keeps this from colliding with the TUI config
+    // tests: while this test holds the override *unset*, a concurrent test that
+    // calls `save_config` would resolve the real ~/.devcli and overwrite the
+    // user's own configuration.
     #[test]
     fn devcli_config_dir_override_is_expanded_and_restored() {
+        let _guard = crate::test_utils::env_guard();
         let original = env::var("devcli_CONFIG_DIR").ok();
 
         // ~ expands to $HOME

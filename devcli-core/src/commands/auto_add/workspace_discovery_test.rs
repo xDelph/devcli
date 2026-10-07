@@ -72,6 +72,10 @@ mod tests {
             return;
         }
 
+        // The working directory is process-global: config_home() looks for a
+        // ./.devcli, so a concurrent test changing it would resolve the wrong
+        // config root. Serialise with the shared env guard.
+        let _guard = crate::test_utils::env_guard();
         let original = std::env::current_dir().unwrap();
         std::env::set_current_dir(repo_root).unwrap();
         let result = crate::detection::detect_app(std::path::Path::new("."));
@@ -94,6 +98,7 @@ mod tests {
             return;
         }
 
+        let _guard = crate::test_utils::env_guard();
         let original = std::env::current_dir().unwrap();
         std::env::set_current_dir(repo_root).unwrap();
         let apps = discover_all_apps(std::path::Path::new(".")).unwrap();

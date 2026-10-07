@@ -12,8 +12,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tempfile::TempDir;
 
-static CONFIG_DIR_TEST_LOCK: Mutex<()> = Mutex::new(());
-
 struct TestConfigGuard {
     _lock: MutexGuard<'static, ()>,
     _temp_dir: TempDir,
@@ -22,9 +20,10 @@ struct TestConfigGuard {
 
 impl TestConfigGuard {
     fn new() -> Self {
-        let _lock = CONFIG_DIR_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        // Use the *shared* env lock, not a private one: the loader tests clear
+        // devcli_CONFIG_DIR, and two different mutexes would not exclude each
+        // other, so save_config could still land on the real ~/.devcli.
+        let _lock = crate::test_utils::env_guard();
         let original_dir = std::env::var("devcli_CONFIG_DIR").ok();
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("devcli_CONFIG_DIR", temp_dir.path());
