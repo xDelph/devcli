@@ -124,10 +124,10 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
 
         let signal = if force { "-9" } else { "-15" };
 
-        // Signal the whole group first so children of a wrapper die with it, but
-        // never rely on it: `kill -9 -PGID` can exit 0 without terminating
-        // anything (observed on CI runners), which would make us report success
-        // on a process that is still running.
+        // Signal the whole group so children of a wrapper die with it, but treat
+        // it as best effort: `kill -9 -PGID` can exit 0 without terminating
+        // anything (observed on CI runners), which would make us report success on
+        // a process that is still running.
         if let Some(g) = pgid {
             let _ = Command::new("kill")
                 .arg(signal)
@@ -135,27 +135,19 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
                 .status();
         }
 
-        // The PID itself is the reliable target. A non-zero status here is not an
+        // The PID itself is the reliable target. A non-zero status is not an
         // error: the group signal above may already have killed it.
-        let pid_status = Command::new("kill")
+        let _ = Command::new("kill")
             .arg(signal)
             .arg(pid.to_string())
-            .status()
-            .context("Failed to execute kill command")?;
+            .status();
 
-        // Reap our own child so the zombie stops answering `kill -0`.
-        reap_child(pid);
-
-        // Confirm the process is actually gone instead of assuming it.
-        for _ in 0..40 {
+        // Confirm the process is actually gone instead of trusting the exit status.
+        for _ in 0..10 {
             if !process_exists(pid) {
                 return Ok(true);
             }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-
-        if !pid_status.success() && force {
-            anyhow::bail!("Failed to kill process {}", pid);
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
         Ok(false)
@@ -163,15 +155,6 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
     #[cfg(not(unix))]
     {
         anyhow::bail!("Termination not yet implemented for this platform");
-    }
-}
-
-/// Non-blocking reap of our own child; a no-op if it was already reaped.
-fn reap_child(pid: u32) {
-    let mut status = 0;
-    // SAFETY: waitpid only inspects/reaps our own child; WNOHANG never blocks.
-    unsafe {
-        libc::waitpid(pid as i32, &mut status, libc::WNOHANG);
     }
 }
 
