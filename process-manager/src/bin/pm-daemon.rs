@@ -24,6 +24,8 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    handle_meta_flags();
+
     let state_dir = parse_state_dir()?;
 
     // Acquire exclusive lock for daemon singleton guarantee.
@@ -53,6 +55,33 @@ async fn main() -> anyhow::Result<()> {
 
     // lock_file drops here → OS releases the exclusive lock automatically.
     Ok(())
+}
+
+/// Answer `--version` / `--help` before requiring `--state-dir`.
+///
+/// The daemon is normally never invoked by hand, but tooling does probe it —
+/// the Homebrew formula runs `pm-daemon --version` as a smoke test — and
+/// failing with "Missing required argument: --state-dir" made a perfectly
+/// healthy binary look broken.
+fn handle_meta_flags() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("pm-daemon {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("pm-daemon {}", env!("CARGO_PKG_VERSION"));
+        println!("Process monitor daemon, spawned automatically by devcli.");
+        println!();
+        println!("USAGE:");
+        println!("    pm-daemon --state-dir <path>");
+        println!();
+        println!("OPTIONS:");
+        println!("    --state-dir <path>    Directory holding the managed process state");
+        println!("    -V, --version         Print version");
+        println!("    -h, --help            Print this help");
+        std::process::exit(0);
+    }
 }
 
 fn parse_state_dir() -> anyhow::Result<PathBuf> {
