@@ -153,6 +153,16 @@ pub async fn run(cli: Cli) -> Result<()> {
             health_check_command(args).await?;
         }
 
+        Commands::InstallAgents { global, local } => {
+            let args = devcli_core::commands::install_agents::InstallAgentsArgs { global, local };
+            devcli_core::commands::install_agents::install_agents_command(&args).await?;
+        }
+
+        Commands::UninstallAgents { global, local } => {
+            let args = devcli_core::commands::install_agents::UninstallAgentsArgs { global, local };
+            devcli_core::commands::install_agents::uninstall_agents_command(&args).await?;
+        }
+
         Commands::Monitor { daemon } => {
             monitor_command(daemon).await?;
         }

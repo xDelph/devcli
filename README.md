@@ -227,6 +227,23 @@ Reset preferences to defaults:
 devcli pref reset
 ```
 
+## Using devcli with AI coding agents
+
+devcli speaks JSON and returns meaningful exit codes, so an agent can drive it
+without a TTY. The contract lives in [`AGENTS.md`](AGENTS.md) — but an agent
+has no reason to know devcli exists, so install the rules once:
+
+```bash
+devcli install-agents --global     # ~/.agents/AGENTS.md  (all projects)
+devcli install-agents --local .    # ./AGENTS.md          (this project)
+devcli uninstall-agents --global   # remove the block again
+```
+
+`AGENTS.md` is read natively by Claude Code, Cursor, Codex, Copilot, Gemini,
+Windsurf, Zed, Amp, JetBrains and Aider. The block is fenced by two markers so
+devcli can refresh or remove it without touching your own lines, and the
+previous file is saved as `AGENTS.md.backup` before every write.
+
 ## Features
 
 ### Config-Based Management

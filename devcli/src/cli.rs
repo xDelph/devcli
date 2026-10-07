@@ -171,6 +171,24 @@ pub enum Commands {
         app_type: Option<String>,
     },
 
+    #[command(about = "Install devcli's agent rules into AGENTS.md so AI agents can use it")]
+    InstallAgents {
+        #[arg(long, help = "Install for the current user (~/.agents/AGENTS.md)")]
+        global: bool,
+
+        #[arg(long, value_name = "PATH", help = "Install into <PATH>/AGENTS.md")]
+        local: Option<String>,
+    },
+
+    #[command(about = "Remove devcli's agent rules from AGENTS.md")]
+    UninstallAgents {
+        #[arg(long, help = "Remove from the current user's AGENTS.md")]
+        global: bool,
+
+        #[arg(long, value_name = "PATH", help = "Remove from <PATH>/AGENTS.md")]
+        local: Option<String>,
+    },
+
     #[command(about = "Manually check the health of a running app")]
     HealthCheck {
         #[arg(help = "Name of the application to check")]

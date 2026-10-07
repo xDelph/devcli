@@ -4,6 +4,7 @@ pub mod auto_add;
 pub mod config;
 pub mod env;
 pub mod health_check;
+pub mod install_agents;
 pub mod internal_spawner;
 pub mod logs;
 pub mod metrics;
@@ -24,6 +25,9 @@ pub use config::{
 };
 pub use env::{add_env_file, list_env_files, remove_env_file, set_default_stage};
 pub use health_check::health_check_command;
+pub use install_agents::{
+    install_agents_command, uninstall_agents_command, InstallAgentsArgs, UninstallAgentsArgs,
+};
 pub use internal_spawner::internal_spawner_command;
 pub use logs::logs_command;
 pub use metrics::metrics_command;
