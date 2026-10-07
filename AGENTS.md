@@ -161,25 +161,3 @@ interactive mode.
 | `DEVCLI_BIN`        | Binary devcli uses when spawning child processes.            |
 | `NO_COLOR`          | Disable colored output.                                      |
 | `LOG_LEVEL`         | `off` / `error` / `warn` / `info` / `debug` / `trace`.       |
-
-## Telling agents about devcli
-
-`AGENTS.md` is the de-facto standard read by Claude Code, Cursor, Codex,
-Copilot, Gemini, Windsurf, Zed, Amp, JetBrains and Aider, but an agent has no
-reason to know devcli exists. Install the rules into that file once:
-
-```bash
-devcli install-agents --global     # ~/.agents/AGENTS.md  (all projects)
-devcli install-agents --local .    # ./AGENTS.md          (this project)
-devcli uninstall-agents --global   # remove the block again
-```
-
-The block is delimited by two marker comments so `devcli` can refresh or
-remove it without touching a single line you wrote yourself. The markers are
-defined once, in `devcli-core/src/commands/install_agents.rs`, and are
-deliberately *not* written literally here: this file is what
-`install-agents` embeds, so a literal copy inside it would make the block
-impossible to delimit.
-
-Re-installing replaces the block in place (it never duplicates it), and the
-previous file is saved as `AGENTS.md.backup` before every write.
