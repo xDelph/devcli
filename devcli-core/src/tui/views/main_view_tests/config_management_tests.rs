@@ -7,6 +7,7 @@ use crate::config::models::{App, Commands, Config, Defaults, Project};
 use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use process_manager::StateStore;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tempfile::TempDir;
@@ -95,8 +96,12 @@ fn create_test_config() -> Config {
     Config { projects }
 }
 
+/// Build state against a throwaway process store so the test never reads or
+/// writes the real `~/.devcli/processes`.
 fn create_test_state_arc(config: &Config) -> Arc<Mutex<AppState>> {
-    let state = AppState::from_config(config).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+    let state = AppState::from_config_with_store(config, &store).unwrap();
     Arc::new(Mutex::new(state))
 }
 

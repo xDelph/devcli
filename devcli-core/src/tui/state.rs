@@ -6,6 +6,7 @@ use crate::config::models::{App, Config};
 use crate::process_manager_support::{find_process, state_store};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use process_manager::StateStore;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -46,7 +47,19 @@ impl AppState {
     /// Loads all projects and apps, and queries their running status
     pub fn from_config(config: &Config) -> Result<Self> {
         let store = state_store()?;
-        let _ = store.cleanup_dead();
+        Self::from_config_with_store(config, &store)
+    }
+
+    /// Same as [`from_config`], but against an explicit process state store.
+    ///
+    /// This constructor only *reads* the store. It deliberately does not call
+    /// `cleanup_dead()`: that deletes entries for dead processes, and doing it
+    /// here made a plain read path mutate (and delete from) the real state
+    /// directory — including from unit tests, which made them race each other
+    /// and could purge a user's own process records on `cargo test`.
+    /// Callers that want the cleanup do it explicitly; the TUI already does,
+    /// just before building the state.
+    pub fn from_config_with_store(config: &Config, store: &StateStore) -> Result<Self> {
         let mut projects: Vec<ProjectState> = Vec::new();
 
         // Iterate through each project in the config
@@ -56,10 +69,10 @@ impl AppState {
             // Iterate through each app in the project
             for (app_name, app_config) in &project_config.apps {
                 // Determine status and runtime details from process-manager state.
-                let process_info = find_process(&store, project_name, app_name, None)?;
+                let process_info = find_process(store, project_name, app_name, None)?;
                 let status = process_info
                     .as_ref()
-                    .map(|info| AppStatus::from_process(&store, info))
+                    .map(|info| AppStatus::from_process(store, info))
                     .unwrap_or(AppStatus::Stopped);
 
                 // Get the active stage from the running process (if any)

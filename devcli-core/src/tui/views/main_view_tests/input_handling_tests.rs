@@ -4,9 +4,13 @@ use crate::test_utils::{AppBuilder, ConfigBuilder};
 use crate::tui::state::AppState;
 use crate::tui::views::main_view::{ConfigField, ConfigMode, MainTab, MainView, PanelFocus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use process_manager::StateStore;
 use std::sync::{Arc, Mutex};
 
-fn create_test_state() -> Arc<Mutex<AppState>> {
+/// Build state against a throwaway process store so the test never reads or
+/// writes the real `~/.devcli/processes` (which it used to do, and which
+/// `cleanup_dead` would prune).
+fn create_test_state_with(store: &StateStore) -> Arc<Mutex<AppState>> {
     let app = AppBuilder::new("nodejs", "/test/path")
         .with_local_command("start", "npm start")
         .with_local_command("test", "npm test")
@@ -17,8 +21,14 @@ fn create_test_state() -> Arc<Mutex<AppState>> {
         .with_app("test-project", "test-app", app)
         .build();
 
-    let state = AppState::from_config(&config).unwrap();
+    let state = AppState::from_config_with_store(&config, store).unwrap();
     Arc::new(Mutex::new(state))
+}
+
+fn create_test_state() -> Arc<Mutex<AppState>> {
+    let dir = tempfile::tempdir().unwrap();
+    let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+    create_test_state_with(&store)
 }
 
 #[test]
