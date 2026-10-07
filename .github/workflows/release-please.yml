@@ -30,11 +30,11 @@ jobs:
           # workflow_run payloads do not carry the triggering ref
           target-branch: develop
 
-          # Release type for Rust projects
-          release-type: rust
-
-          # Which package to release (for workspace)
-          package-name: devcli
+          # The workspace root is a virtual manifest and every crate inherits
+          # `version.workspace = true`, so release-please is configured in
+          # release-please-config.json with release-type "simple" and bumps
+          # Cargo.toml [workspace.package].version directly. The "rust" release
+          # type would instead expand the workspace and demand a per-crate tag.
 
           # Changelog sections
           changelog-types: |
