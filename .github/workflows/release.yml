@@ -15,24 +15,57 @@ name: Release
 # Ordering matters: the draft is only published once all assets exist, and the
 # tap is only updated once the release is live (so the asset URLs are reachable).
 
+# Trigger: the Release Please workflow finishing. It is what creates the draft,
+# and it is the only event that reliably fires once the draft exists — a `release:
+# created` event does NOT fire for draft releases, and a `push: tags` event never
+# fires because GitHub only creates the tag when the draft is published. Either
+# way the build could never start. Here we wait for Release Please to complete,
+# then pick up the draft it left behind.
+#
+# Ordering matters: the draft is only published once all assets exist, and the
+# tap is only updated once the release is live (so the asset URLs are reachable).
+
 on:
-  release:
-    types: [created]
+  workflow_run:
+    workflows: ["Release Please"]
+    types: [completed]
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event.release.tag_name }}
 
 jobs:
+  prepare:
+    name: Resolve pending draft release
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pending.outputs.tag }}
+    steps:
+      - name: Find the draft release left by Release Please
+        id: pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release list --limit 10 --json tagName,isDraft \
+            --jq '[.[] | select(.isDraft)] | .[0].tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "No draft release to build — nothing to do."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found pending draft: $TAG"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    name: Build ${{ matrix.target }}
-    # Only handle the draft release-please just created. A `created` event also
-    # fires for releases published straight away, which already have assets.
-    if: github.event.release.draft == true
+    name: Build ${{ needs.prepare.outputs.tag }}
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
     runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +159,8 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - name: Publish the draft release now that every asset is uploaded
         env:
@@ -136,6 +171,8 @@ jobs:
     name: Update Homebrew tap
     needs: publish
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - name: Read version
         id: meta

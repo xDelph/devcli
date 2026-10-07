@@ -53,11 +53,18 @@ jobs:
               {"type":"ci","section":"CI/CD","hidden":true}
             ]
 
-      # Output the release information
+      # Output the release information.
+      # The `pr` output is raw JSON whose changelog body contains parentheses
+      # ("*beep* (boop)"), which the shell tried to parse — that alone turned every
+      # successful release run red. Only the title is echoed, and the whole payload
+      # is passed through stdin so nothing is ever word-split.
       - name: Show release info
         if: steps.release.outputs.release_created
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
           echo "🎉 Release created!"
-          echo "Tag: ${{ steps.release.outputs.tag_name }}"
+          echo "Tag: $TAG_NAME"
           echo "Version: ${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}"
-          echo "Release PR: ${{ steps.release.outputs.pr }}"
+          echo "Release PR title: $(printf '%s' "$PR_JSON" | jq -r '.title // "n/a"')"
