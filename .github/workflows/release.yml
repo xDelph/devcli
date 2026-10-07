@@ -44,6 +44,11 @@ jobs:
     outputs:
       tag: ${{ steps.pending.outputs.tag }}
     steps:
+      # `gh` needs a git repo to resolve its default repository, so check one out
+      # even though this job only queries the API.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Find the draft release left by Release Please
         id: pending
         env:
