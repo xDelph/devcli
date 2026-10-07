@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/xDelph/devcli/compare/v0.3.0...v0.4.0) (2026-10-07)
+
+
+### Features
+
+* **agents:** add install-agents / uninstall-agents ([7cf3e28](https://github.com/xDelph/devcli/commit/7cf3e288a769285e5d3ae8ca72bcc88da9bc5dc1))
+* **release:** add a manual trigger to build and publish a release ([148037b](https://github.com/xDelph/devcli/commit/148037bd335e34ff7799db34ee4b1e3a46fc4cb9))
+
+
+### Bug Fixes
+
+* **agents:** never embed the block markers in the rules body ([fb2d4ad8](https://github.com/xDelph/devcli/commit/fb2d4ad8ccf4f4f9f4e82917ed985c51e892522c))
+* **build:** drop OpenSSL so aarch64-linux cross-compiles ([ebe2d91](https://github.com/xDelph/devcli/commit/ebe2d91aac1744e681c2b24ae92e7a8073582253))
+* **pm-daemon:** answer --version and --help before requiring --state-dir ([0e7c865](https://github.com/xDelph/devcli/commit/0e7c8651f951c9c70ec271e5409c255046dfa0be))
+* **release:** check out the repo in the prepare job ([eeede05](https://github.com/xDelph/devcli/commit/eeede05c398b42baba9601c5e50e89d2bb61c441))
+* **release:** re-resolve the tag in publish and homebrew ([b029897](https://github.com/xDelph/devcli/commit/b0298974162c8f363a3613816a2dae66750b2373))
+
 ## [0.3.0](https://github.com/xDelph/devcli/compare/v0.2.1...v0.3.0) (2026-10-07)
 
 
