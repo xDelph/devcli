@@ -174,14 +174,12 @@ devcli install-agents --local .    # ./AGENTS.md          (this project)
 devcli uninstall-agents --global   # remove the block again
 ```
 
-The block is fenced by two markers so devcli can refresh or remove it without
-touching anything you wrote yourself:
-
-```
-# ===== XDELPH/DEVCLI rules start =====
-...
-# ===== XDELPH/DEVCLI rules stop =====
-```
+The block is delimited by two marker comments so `devcli` can refresh or
+remove it without touching a single line you wrote yourself. The markers are
+defined once, in `devcli-core/src/commands/install_agents.rs`, and are
+deliberately *not* written literally here: this file is what
+`install-agents` embeds, so a literal copy inside it would make the block
+impossible to delimit.
 
 Re-installing replaces the block in place (it never duplicates it), and the
 previous file is saved as `AGENTS.md.backup` before every write.

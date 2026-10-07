@@ -54,13 +54,20 @@ fn target_path(global: bool, local: Option<&str>) -> Result<PathBuf> {
 }
 
 /// Render the managed block, header included.
+///
+/// The body is scrubbed of any literal marker: the rules live in the repo's
+/// AGENTS.md, and if that file ever contained a marker, embedding it verbatim
+/// would nest blocks and make `find_block` match the wrong offsets.
 fn render_block() -> String {
+    let body = RULES_BODY
+        .replace(MARKER_START, "(see marker definition above)")
+        .replace(MARKER_STOP, "(see marker definition above)");
     format!(
         "{MARKER_START}\n\
          <!-- Managed by `devcli install-agents`. Edit outside these markers; \
          edits inside are overwritten on update and removed on uninstall. -->\n\
          \n\
-         {RULES_BODY}\n\
+         {body}\n\
          \n\
          {MARKER_STOP}\n"
     )
@@ -240,5 +247,27 @@ mod tests {
         // The installed rules must actually teach agents the contract.
         assert!(RULES_BODY.contains("--json"));
         assert!(RULES_BODY.contains("Exit codes"));
+    }
+
+    #[test]
+    fn embedded_body_never_contains_the_markers() {
+        // Regression guard: this file (AGENTS.md) is embedded verbatim, so a
+        // literal marker in it would nest blocks and break every offset. The
+        // AGENTS.md prose must therefore never write them out.
+        assert!(
+            !RULES_BODY.contains(MARKER_START),
+            "AGENTS.md must not contain the start marker literally"
+        );
+        assert!(
+            !RULES_BODY.contains(MARKER_STOP),
+            "AGENTS.md must not contain the stop marker literally"
+        );
+    }
+
+    #[test]
+    fn rendered_block_contains_exactly_one_marker_pair() {
+        let block = render_block();
+        assert_eq!(block.matches(MARKER_START).count(), 1);
+        assert_eq!(block.matches(MARKER_STOP).count(), 1);
     }
 }
