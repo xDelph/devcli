@@ -134,7 +134,7 @@ jobs:
         run: cargo test -p env-flow --all-features
 
       - name: Run tests (process-manager lib)
-        run: cargo test -p process-manager --all-features --lib
+        run: timeout 240 cargo test -p process-manager --all-features --lib -- --test-threads=1 --nocapture
 
       - name: Run tests (process-manager bins)
         run: cargo test -p process-manager --all-features --bins
