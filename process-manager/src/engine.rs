@@ -111,12 +111,7 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
         use std::process::Command;
         use std::time::Duration;
 
-        let alive = Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        let alive = process_exists(pid) || pgid.is_some_and(crate::state::group_has_live_member);
 
         if !alive {
             return Ok(false);
@@ -143,8 +138,12 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
             .status();
 
         // Confirm the process is actually gone instead of trusting the exit status.
+        // When the leader had already exited we must also wait for the group to
+        // empty out, otherwise children of the app keep serving unnoticed.
         for _ in 0..10 {
-            if !process_exists(pid) {
+            let gone =
+                !process_exists(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
+            if gone {
                 return Ok(true);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;

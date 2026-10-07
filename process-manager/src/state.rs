@@ -89,26 +89,55 @@ impl StateStore {
         }
         Ok(())
     }
+}
 
+/// Whether the process group still contains a live, non-zombie member.
+///
+/// `kill -0 -PGID` cannot answer this: a process group keeps resolving after its
+/// last member exited, so a long-dead process would look alive forever (which
+/// stops the monitor from ever restarting a crash). Enumerating the group and
+/// filtering out zombies gives the answer the caller actually wants.
+pub fn group_has_live_member(pgid: i32) -> bool {
+    let output = match std::process::Command::new("ps")
+        .args(["-eo", "pid=,pgid=,stat="])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        let group = fields.nth(1);
+        let state = fields.next();
+        matches!((group, state), (Some(g), Some(s))
+                if g.parse::<i32>() == Ok(pgid) && !s.starts_with('Z'))
+    })
+}
+
+impl StateStore {
     /// Check if a process or its group is still running
     pub fn is_running(&self, process: &ManagedProcess) -> bool {
         #[cfg(unix)]
         {
             use std::process::Command;
 
-            // Liveness is decided by the tracked PID, never by the process group:
-            // a group outlives its last member, so `kill -0 -PGID` keeps
-            // succeeding for processes that no longer exist and a crashed process
-            // would look alive forever.
-            //
-            // Zombies are not handled here: terminate() reaps the child it killed,
-            // and tokio reaps the rest in the background.
-            Command::new("kill")
+            // The tracked PID answers for itself.
+            let alive = Command::new("kill")
                 .arg("-0")
                 .arg(process.pid.to_string())
                 .output()
                 .map(|o| o.status.success())
-                .unwrap_or(false)
+                .unwrap_or(false);
+
+            if alive {
+                return true;
+            }
+
+            // The leader is gone, but the app may still be alive as a child of its
+            // group: `npm run dev` records npm's pid while node keeps serving.
+            // Only trust the group if it still holds a live, non-zombie member.
+            process.pgid.is_some_and(group_has_live_member)
         }
         #[cfg(not(unix))]
         {
