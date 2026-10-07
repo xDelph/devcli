@@ -181,6 +181,25 @@ jobs:
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
+      # Re-resolve the tag when prepare was skipped: re-running only the failed
+      # jobs leaves `prepare` green but unevaluated, so its output is empty and
+      # `gh release edit ""` would fail on a not-a-git-repository error.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve the release to publish
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$TAG"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --limit 10 --json tagName,isDraft \
+              --jq '[.[] | select(.isDraft)] | .[0].tagName // empty')
+            echo "Resolved draft from API: $TAG"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
       - name: Publish the draft release now that every asset is uploaded
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -193,6 +212,24 @@ jobs:
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Same reason as publish: prepare may be unevaluated after a partial re-run.
+      - name: Resolve the published release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$TAG"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view "${{ github.event.inputs.tag }}" --json tagName -q .tagName 2>/dev/null || true)
+          fi
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
       - name: Read version
         id: meta
         run: |
