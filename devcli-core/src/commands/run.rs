@@ -6,12 +6,13 @@
 
 use crate::config::{load_config, load_preferences, resolve_app};
 use crate::process_manager_support::{
-    emit_line, find_process, log_file_path, process_id, state_store, stream_output, OutputChannel,
+    emit_line, find_process, log_file_path, process_id, state_store, stream_output,
+    to_pm_health_check, to_pm_restart_policy, OutputChannel,
 };
 use crate::utils::path::expand_path;
 use crate::Result;
 use process_manager::state::{ManagedProcess, ProcessRuntime};
-use process_manager::{engine, HealthCheck, RestartPolicy, Task};
+use process_manager::{engine, Task};
 use std::collections::HashMap;
 
 // Arguments for the run command
@@ -231,7 +232,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         Ok(())
     };
 
-    if !is_pid_running(pid) {
+    if !engine::pid_alive(pid) {
         emit_line(
             silent,
             args.output_tx.as_ref(),
@@ -338,59 +339,4 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn is_pid_running(pid: u32) -> bool {
-    engine::pid_alive(pid)
-}
-
-fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -> HealthCheck {
-    match health {
-        Some(crate::config::models::HealthCheck::Http {
-            url,
-            timeout_secs,
-            expected_status,
-        }) => HealthCheck::Http {
-            url: url.clone(),
-            timeout_secs: *timeout_secs,
-            expected_status: *expected_status,
-        },
-        Some(crate::config::models::HealthCheck::Tcp {
-            host,
-            port,
-            timeout_secs,
-        }) => HealthCheck::Tcp {
-            host: host.clone(),
-            port: *port,
-            timeout_secs: *timeout_secs,
-        },
-        Some(crate::config::models::HealthCheck::Command {
-            command,
-            timeout_secs,
-            expected_exit_code,
-        }) => HealthCheck::Command {
-            command: command.clone(),
-            timeout_secs: *timeout_secs,
-            expected_exit_code: *expected_exit_code,
-        },
-        Some(crate::config::models::HealthCheck::Process {}) | None => HealthCheck::Process {},
-    }
-}
-
-fn to_pm_restart_policy(policy: Option<&crate::config::models::RestartPolicy>) -> RestartPolicy {
-    match policy {
-        Some(policy) => RestartPolicy {
-            enabled: policy.enabled,
-            max_restarts: policy.max_restarts,
-            restart_window_secs: policy.restart_window_secs,
-            initial_backoff_secs: policy.initial_backoff_secs,
-            max_backoff_secs: policy.max_backoff_secs,
-            backoff_multiplier: policy.backoff_multiplier,
-            restart_on_exit_codes: policy.restart_on_exit_codes.clone(),
-        },
-        None => RestartPolicy {
-            enabled: false,
-            ..RestartPolicy::default()
-        },
-    }
 }

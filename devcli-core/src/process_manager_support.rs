@@ -3,7 +3,7 @@ use anyhow::Context;
 use chrono::Utc;
 use process_manager::engine::OutputReceiver;
 use process_manager::state::ManagedProcess;
-use process_manager::{HealthCheck, StateStore};
+use process_manager::{HealthCheck, RestartPolicy, StateStore};
 use std::path::PathBuf;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -141,5 +141,25 @@ pub fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -
             expected_exit_code: *expected_exit_code,
         },
         Some(crate::config::models::HealthCheck::Process {}) | None => HealthCheck::Process {},
+    }
+}
+
+pub fn to_pm_restart_policy(
+    policy: Option<&crate::config::models::RestartPolicy>,
+) -> RestartPolicy {
+    match policy {
+        Some(policy) => RestartPolicy {
+            enabled: policy.enabled,
+            max_restarts: policy.max_restarts,
+            restart_window_secs: policy.restart_window_secs,
+            initial_backoff_secs: policy.initial_backoff_secs,
+            max_backoff_secs: policy.max_backoff_secs,
+            backoff_multiplier: policy.backoff_multiplier,
+            restart_on_exit_codes: policy.restart_on_exit_codes.clone(),
+        },
+        None => RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
     }
 }
