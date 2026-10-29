@@ -213,6 +213,22 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Wait a moment to check if the process completed or crashed
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
+    let log_file = task.log_file.clone();
+    let json_result = |running: bool| -> Result<()> {
+        if crate::output::json_enabled() && !silent {
+            crate::output::print_json(&serde_json::json!({
+                "project": resolved_app.project,
+                "app": resolved_app.app_name,
+                "environment": environment,
+                "command_variant": args.command_variant,
+                "pid": pid,
+                "running": running,
+                "log_file": log_file,
+            }))?;
+        }
+        Ok(())
+    };
+
     if !is_pid_running(pid) {
         emit_line(
             silent,
@@ -222,6 +238,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                 args.app_name, args.command_variant, pid
             ),
         );
+        json_result(false)?;
         return Ok(());
     }
 
@@ -260,8 +277,11 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         ),
     );
 
-    // Non-detached mode: keep viewing until Ctrl+C or process exits
-    if !preferences.detached_mode {
+    json_result(true)?;
+
+    // Non-detached mode: keep viewing until Ctrl+C or process exits. `--json`
+    // implies detached, like `start`: an agent waiting on this would hang.
+    if !preferences.detached_mode && !crate::output::json_enabled() {
         emit_line(
             silent,
             args.output_tx.as_ref(),
