@@ -1398,4 +1398,30 @@ mod tests {
             "{result:?}"
         );
     }
+
+    /// Highlighting a search hit must not duplicate or shift text.
+    #[test]
+    fn search_highlight_keeps_the_text_intact() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("p_api_local_20260101.log");
+        std::fs::write(&path, "café aaaa\n").unwrap();
+        let mut view = SingleLogView::new(path, "api".to_string(), Color::White).unwrap();
+        view.search.query = "aa".to_string();
+        view.search.perform_search(&view.content);
+
+        let spans = view.apply_search_highlighting(
+            &view.content[0].formatted,
+            view.search.get_match_ranges(0).unwrap(),
+            Color::Black,
+            true,
+        );
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "café aaaa");
+        let highlighted: Vec<&str> = spans
+            .iter()
+            .filter(|s| s.style.bg == Some(Color::Rgb(255, 255, 0)))
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(highlighted, vec!["aa", "aa"]);
+    }
 }
