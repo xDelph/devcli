@@ -200,10 +200,14 @@ impl ProjectAppResolver {
     fn collect_matches(&self, config: &Config, app_name: &str) -> Vec<(String, String, App)> {
         let mut matches = Vec::new();
         for (project_name, project) in &config.projects {
+            // Within one project an exact key wins over an alias, as it does for
+            // `--project` resolution, so one project contributes one candidate.
+            if let Some(app) = project.apps.get(app_name) {
+                matches.push((project_name.clone(), app_name.to_string(), app.clone()));
+                continue;
+            }
             for (actual_app_name, app) in &project.apps {
-                let name_matches = actual_app_name == app_name;
-                let alt_matches = app.alternative_name.as_deref() == Some(app_name);
-                if name_matches || alt_matches {
+                if app.alternative_name.as_deref() == Some(app_name) {
                     matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
                 }
             }
@@ -258,7 +262,11 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
                 })
             }
             _ => {
-                let candidates: Vec<String> = matches.iter().map(|(p, _, _)| p.clone()).collect();
+                // `project/app`, not just the project: two apps of one project can
+                // answer to the same alias, and a project name alone then cannot
+                // say which one was picked.
+                let candidates: Vec<String> =
+                    matches.iter().map(|(p, a, _)| format!("{p}/{a}")).collect();
                 Err(CmError::Ambiguous {
                     id: id.to_string(),
                     candidates,
@@ -284,6 +292,15 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
 }
 
 /// Map config-manager resolution errors to the public CLI messages.
+/// Error for a name matching several apps (`candidates` are `project/app`).
+pub fn ambiguous_app_error(app_name: &str, candidates: &[String]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "App name '{}' is ambiguous: it matches {}. Use --project or name it as project/app.",
+        app_name,
+        candidates.join(", ")
+    )
+}
+
 pub fn map_resolve_error(err: CmError, app_name: &str) -> anyhow::Error {
     match err {
         CmError::NotFound { id, suggestion } if id.contains('/') => {
@@ -304,11 +321,7 @@ pub fn map_resolve_error(err: CmError, app_name: &str) -> anyhow::Error {
                 anyhow::anyhow!("App '{}' not found in config.", app_name)
             }
         }
-        CmError::Ambiguous { candidates, .. } => anyhow::anyhow!(
-            "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
-            app_name,
-            candidates.join(", ")
-        ),
+        CmError::Ambiguous { candidates, .. } => ambiguous_app_error(app_name, &candidates),
         other => anyhow::anyhow!("{other}"),
     }
 }
@@ -1093,5 +1106,33 @@ mod tests {
             err.contains("App 'rediss' not found in project 'infra'"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn ambiguity_candidates_name_the_app_and_prefer_exact_keys() {
+        let app = |alias: Option<&str>| {
+            let mut app = AppBuilder::new("nodejs", "/tmp").build();
+            app.alternative_name = alias.map(str::to_string);
+            app
+        };
+        let config = ConfigBuilder::new()
+            // In p1 the exact key `api` shadows `web`'s alias `api`.
+            .with_app("p1", "api", app(None))
+            .with_app("p1", "web", app(Some("api")))
+            .with_app("p2", "backend", app(Some("api")))
+            .build();
+
+        match ProjectAppResolver::new()
+            .resolve(&config, "api")
+            .unwrap_err()
+        {
+            CmError::Ambiguous { candidates, .. } => {
+                assert_eq!(
+                    candidates,
+                    vec!["p1/api".to_string(), "p2/backend".to_string()]
+                );
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
     }
 }
