@@ -345,6 +345,22 @@ async fn test_ensure_daemon_running_singleton() {
     let lock_path = temp_dir.path().join(".daemon.lock");
     assert!(lock_path.exists());
 
+    // The daemon must lead its own process group (setsid), so a Ctrl+C sent to
+    // the terminal that launched devcli cannot reach it.
+    let daemon_pid = find_daemon_pid(temp_dir.path())
+        .await
+        .expect("pm-daemon running");
+    let daemon_pgid = std::process::Command::new("ps")
+        .args(["-o", "pgid=", "-p", &daemon_pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        daemon_pgid,
+        daemon_pid.to_string(),
+        "pm-daemon shares our process group"
+    );
+
     let _ = engine::terminate(pid, pgid, true).await;
     store.delete("daemon-app").unwrap();
 
@@ -360,6 +376,25 @@ async fn test_ensure_daemon_running_singleton() {
         !daemon_lock_held(&lock_path),
         "pm-daemon should release lock when state store is empty"
     );
+}
+
+async fn find_daemon_pid(state_dir: &Path) -> Option<u32> {
+    let needle = format!("--state-dir {}", state_dir.display());
+    for _ in 0..30 {
+        let output = std::process::Command::new("ps")
+            .args(["-eo", "pid=,command="])
+            .output()
+            .ok()?;
+        let found = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|l| l.contains("pm-daemon") && l.contains(&needle))
+            .and_then(|l| l.split_whitespace().next()?.parse().ok());
+        if found.is_some() {
+            return found;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    None
 }
 
 fn locate_pm_daemon_dir() -> Option<PathBuf> {

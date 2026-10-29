@@ -297,13 +297,32 @@ impl StateStore {
             return Ok(());
         };
 
-        std::process::Command::new(&daemon_bin)
-            .arg("--state-dir")
+        let mut cmd = std::process::Command::new(&daemon_bin);
+        cmd.arg("--state-dir")
             .arg(&self.base_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+            .stderr(std::process::Stdio::null());
+
+        // Detach into a session of its own. Otherwise the daemon stays in the
+        // foreground process group of whatever terminal ran `devcli start`, so
+        // Ctrl+C on a streaming `start` (or closing that terminal) killed it and
+        // silently ended monitoring and auto-restart for every app.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: setsid(2) is async-signal-safe and touches no Rust state.
+            unsafe {
+                cmd.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        cmd.spawn()
             .with_context(|| format!("Failed to spawn pm-daemon at {}", daemon_bin.display()))?;
 
         tracing::debug!(
