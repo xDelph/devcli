@@ -76,7 +76,7 @@ async fn handle_metrics_request(
                 tracing::debug!(size_bytes = json.len(), "Sending metrics response");
 
                 let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                         json.len(),
                         json
                     );
