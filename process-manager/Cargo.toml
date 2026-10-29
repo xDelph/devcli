@@ -18,7 +18,7 @@ tracing = "0.1"
 # which has no cross-compilation story and broke the aarch64-unknown-linux-gnu
 # release build (openssl-sys fails inside the `cross` container). rustls is
 # pure Rust and needs no system OpenSSL.
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 dirs = "5.0"
 filetime = "0.2"
 uuid = { version = "1.7", features = ["v4", "serde"] }
