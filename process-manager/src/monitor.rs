@@ -89,6 +89,12 @@ impl Monitor {
     }
 
     async fn check_process(&self, proc: &mut crate::state::ManagedProcess) -> Result<()> {
+        if let Some(log) = &proc.task.log_file {
+            if let Err(e) = engine::rotate_log_if_large(log, engine::MAX_LOG_BYTES) {
+                tracing::warn!(id = %proc.id, error = %e, "Failed to rotate log file");
+            }
+        }
+
         if !self.state.is_running(proc) {
             tracing::warn!(id = %proc.id, "Process detected as dead");
             return self.handle_failure(proc, "crash".to_string()).await;

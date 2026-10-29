@@ -589,3 +589,48 @@ async fn test_reused_pid_is_not_reported_as_running() {
 
     let _ = engine::terminate(pid, pgid, true).await;
 }
+
+/// Rotating the log of a running detached app keeps it logging, from the start
+/// of the truncated file (the child writes in append mode, so no sparse hole).
+#[tokio::test]
+#[cfg(unix)]
+async fn test_log_rotation_while_app_runs() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("rotate.log");
+
+    let task = Task {
+        id: "rotate".to_string(),
+        command: "sh -c 'i=0; while [ $i -lt 100 ]; do echo line $i; i=$((i+1)); sleep 0.02; done'"
+            .to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let running = engine::spawn(&task).await.expect("spawn");
+    drop(running.output_rx);
+    wait_for_log_content(&log_path, "line 10").await;
+
+    assert!(engine::rotate_log_if_large(&log_path, 1).unwrap());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !std::fs::read_to_string(&log_path)
+        .unwrap_or_default()
+        .contains("line 99")
+    {
+        assert!(std::time::Instant::now() < deadline, "app stopped logging");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let content = std::fs::read(&log_path).unwrap();
+    assert_ne!(content.first(), Some(&0u8), "sparse hole after truncation");
+    assert!(!String::from_utf8_lossy(&content).contains("line 0\n"));
+    let rotated = std::fs::read_to_string(temp_dir.path().join("rotate.log.1")).unwrap();
+    assert!(rotated.contains("line 0\n"));
+}

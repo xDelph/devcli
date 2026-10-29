@@ -264,6 +264,36 @@ pub async fn restart(
     spawn(task).await
 }
 
+/// Size above which a log file is rotated.
+pub const MAX_LOG_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Rotate `path` if it grew past `max_bytes`: copy it to `<path>.1` (replacing
+/// the previous one) and truncate it in place.
+///
+/// Logs used to grow without bound for as long as an app ran. Truncating in
+/// place ("copytruncate") rather than renaming is what keeps this safe while
+/// the app is running: the app holds the file open in append mode, so its next
+/// write simply lands at the new, smaller end. Lines written between the copy
+/// and the truncation are lost, which is acceptable for dev logs.
+pub fn rotate_log_if_large(path: &std::path::Path, max_bytes: u64) -> std::io::Result<bool> {
+    let len = match std::fs::metadata(path) {
+        Ok(meta) => meta.len(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if len <= max_bytes {
+        return Ok(false);
+    }
+    let mut rotated = path.as_os_str().to_owned();
+    rotated.push(".1");
+    std::fs::copy(path, &rotated)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .set_len(0)?;
+    Ok(true)
+}
+
 /// Open (creating if needed) a log file in append mode for a child to inherit.
 ///
 /// Returns the file and its length before the child writes anything, which is
@@ -272,6 +302,9 @@ fn open_log_for_child(path: &std::path::Path) -> Result<(std::fs::File, u64)> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create log directory {}", parent.display()))?;
+    }
+    if let Err(e) = rotate_log_if_large(path, MAX_LOG_BYTES) {
+        tracing::warn!(path = %path.display(), error = %e, "Failed to rotate log file");
     }
     let mut options = std::fs::OpenOptions::new();
     options.create(true).append(true);
@@ -305,6 +338,7 @@ fn spawn_log_follower(path: PathBuf, offset: u64, pid: u32, tx: OutputSender) {
             return;
         }
 
+        let mut position = offset;
         let mut pending: Vec<u8> = Vec::new();
         let mut buf = vec![0u8; 8192];
         loop {
@@ -313,6 +347,18 @@ fn spawn_log_follower(path: PathBuf, offset: u64, pid: u32, tx: OutputSender) {
             }
             match file.read(&mut buf).await {
                 Ok(0) => {
+                    // Rotated (truncated in place): continue from the new start.
+                    let len = tokio::fs::metadata(&path)
+                        .await
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    if len < position {
+                        if file.seek(std::io::SeekFrom::Start(0)).await.is_err() {
+                            return;
+                        }
+                        position = 0;
+                        continue;
+                    }
                     if !pid_alive(pid) {
                         if !pending.is_empty() {
                             let _ = tx.send(OutputMessage {
@@ -326,6 +372,7 @@ fn spawn_log_follower(path: PathBuf, offset: u64, pid: u32, tx: OutputSender) {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
                 Ok(n) => {
+                    position += n as u64;
                     pending.extend_from_slice(&buf[..n]);
                     while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
                         let line: Vec<u8> = pending.drain(..=pos).collect();
@@ -458,6 +505,24 @@ mod tests {
         let current_pid = std::process::id();
         let rp = make_running_process(current_pid);
         assert_eq!(rp.is_alive(), rp.is_alive());
+    }
+
+    #[test]
+    fn test_rotate_log_if_large() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("app.log");
+
+        assert!(!rotate_log_if_large(&path, 10).unwrap(), "missing file");
+        std::fs::write(&path, b"0123456789").unwrap();
+        assert!(!rotate_log_if_large(&path, 10).unwrap(), "at the limit");
+
+        std::fs::write(&path, b"0123456789abc").unwrap();
+        assert!(rotate_log_if_large(&path, 10).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        assert_eq!(
+            std::fs::read(dir.path().join("app.log.1")).unwrap(),
+            b"0123456789abc"
+        );
     }
 
     #[test]
