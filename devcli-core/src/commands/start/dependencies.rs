@@ -3,15 +3,21 @@
 //! This module handles:
 //! - Resolving dependency chains for all apps collectively
 //! - Checking which dependencies are running
-//! - Auto-starting missing dependencies in parallel
+//! - Auto-starting missing dependencies, in parallel waves that respect the
+//!   order of dependency chains
 
 use super::resolver::StartCommandArgs;
 use crate::config::{
     dependencies::{check_dependencies_running, dedup_dependencies, resolve_dependency_chain},
-    load_config, load_preferences,
+    load_config, load_preferences, Config,
 };
 use crate::process_manager_support::state_store;
 use crate::Result;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
+
+/// How long to wait for a started dependency's health check before moving on.
+const DEPENDENCY_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Handle dependencies for all apps collectively
 ///
@@ -78,7 +84,14 @@ pub async fn handle_dependencies(
 
     // Handle missing dependencies based on preferences
     if preferences.auto_start_deps {
-        start_missing_dependencies(missing, environment, silent).await?;
+        let waves = start_waves(&config, &missing)?;
+        for (index, wave) in waves.iter().enumerate() {
+            start_missing_dependencies(wave.clone(), environment, silent).await?;
+            // Later waves depend on this one: give it the chance to come up.
+            if index + 1 < waves.len() {
+                wait_until_ready(&config, wave, silent).await;
+            }
+        }
         if crate::output::human(silent) {
             println!("\n✓ All dependencies started successfully");
             // Flush stdout to ensure message is captured by TUI
@@ -93,6 +106,93 @@ pub async fn handle_dependencies(
     }
 
     Ok(())
+}
+
+/// Split `missing` ("project/app" keys) into waves that can start in parallel.
+///
+/// Every app comes after the missing apps it (transitively) depends on. Starting
+/// a whole chain at once made, for Worker → API → Redis, API's own dependency
+/// check run before Redis existed and fail with "Missing dependencies: redis".
+pub(super) fn start_waves(config: &Config, missing: &[String]) -> Result<Vec<Vec<String>>> {
+    let missing_set: HashSet<&str> = missing.iter().map(String::as_str).collect();
+
+    let mut deps_of: HashMap<&str, Vec<String>> = HashMap::new();
+    for key in missing {
+        let Some((project, app)) = key.split_once('/') else {
+            continue;
+        };
+        let resolved = crate::config::resolve_app(config, app, Some(project))?;
+        let chain = resolve_dependency_chain(config, &resolved)?;
+        let blocking = chain
+            .iter()
+            .map(|dep| format!("{}/{}", dep.project, dep.app_name))
+            .filter(|dep| missing_set.contains(dep.as_str()) && dep != key)
+            .collect();
+        deps_of.insert(key.as_str(), blocking);
+    }
+
+    let mut done: HashSet<String> = HashSet::new();
+    let mut remaining: Vec<String> = missing.to_vec();
+    let mut waves = Vec::new();
+    while !remaining.is_empty() {
+        let (ready, blocked): (Vec<String>, Vec<String>) = remaining.into_iter().partition(|key| {
+            deps_of
+                .get(key.as_str())
+                .is_none_or(|deps| deps.iter().all(|d| done.contains(d)))
+        });
+        if ready.is_empty() {
+            anyhow::bail!(
+                "Circular dependency between: {}. Check app dependencies in config.",
+                blocked.join(", ")
+            );
+        }
+        done.extend(ready.iter().cloned());
+        waves.push(ready);
+        remaining = blocked;
+    }
+    Ok(waves)
+}
+
+/// Wait (bounded) for the health checks of a freshly started wave to pass.
+///
+/// Apps without a health check are only known to be spawned; nothing to wait
+/// for. A dependency that is still not healthy after the timeout is reported
+/// but does not abort the start: the dependent app may well retry on its own.
+async fn wait_until_ready(config: &Config, wave: &[String], silent: bool) {
+    let engine = process_manager::HealthCheckEngine::new();
+    for key in wave {
+        let Some((project, app)) = key.split_once('/') else {
+            continue;
+        };
+        let Ok(resolved) = crate::config::resolve_app(config, app, Some(project)) else {
+            continue;
+        };
+        let check =
+            crate::process_manager_support::to_pm_health_check(resolved.app.health_check.as_ref());
+        if matches!(check, process_manager::HealthCheck::Process {}) {
+            continue;
+        }
+
+        let deadline = tokio::time::Instant::now() + DEPENDENCY_READY_TIMEOUT;
+        let mut healthy = false;
+        while tokio::time::Instant::now() < deadline {
+            if engine.check(&check).await.unwrap_or(false) {
+                healthy = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if !healthy {
+            tracing::warn!(dependency = %key, "Dependency not healthy before timeout");
+            if crate::output::human(silent) {
+                println!(
+                    "⚠ {} is not healthy after {}s, continuing",
+                    key,
+                    DEPENDENCY_READY_TIMEOUT.as_secs()
+                );
+            }
+        }
+    }
 }
 
 /// Start missing dependencies in parallel

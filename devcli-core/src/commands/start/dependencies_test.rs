@@ -58,4 +58,62 @@ mod tests {
     // setting up config files and process tracking, which is better
     // suited for integration tests rather than unit tests.
     // The core logic is tested through the existing integration test suite.
+
+    fn chain_config() -> crate::config::Config {
+        use crate::test_utils::ConfigBuilder;
+        let leaf = AppBuilder::new("redis", "/tmp")
+            .with_local_command("start", "redis-server")
+            .build();
+        let api = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm start")
+            .with_dependency("proj", "redis")
+            .build();
+        let worker = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm run worker")
+            .with_dependency("proj", "api")
+            .build();
+        let other = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm start")
+            .build();
+        ConfigBuilder::new()
+            .with_app("proj", "redis", leaf)
+            .with_app("proj", "api", api)
+            .with_app("proj", "worker", worker)
+            .with_app("proj", "other", other)
+            .build()
+    }
+
+    #[test]
+    fn test_start_waves_respect_dependency_order() {
+        let config = chain_config();
+        let missing = vec![
+            "proj/worker".to_string(),
+            "proj/api".to_string(),
+            "proj/other".to_string(),
+            "proj/redis".to_string(),
+        ];
+        let waves = super::super::dependencies::start_waves(&config, &missing).unwrap();
+
+        let position = |key: &str| waves.iter().position(|w| w.iter().any(|k| k == key));
+        assert!(position("proj/redis") < position("proj/api"));
+        assert!(position("proj/api") < position("proj/worker"));
+        // Independent apps start in the first wave.
+        assert_eq!(position("proj/other"), Some(0));
+        assert_eq!(waves.iter().map(Vec::len).sum::<usize>(), 4);
+    }
+
+    #[test]
+    fn test_start_waves_only_order_missing_apps() {
+        // redis is already running (not missing): api is unblocked.
+        let config = chain_config();
+        let missing = vec!["proj/api".to_string(), "proj/worker".to_string()];
+        let waves = super::super::dependencies::start_waves(&config, &missing).unwrap();
+        assert_eq!(
+            waves,
+            vec![
+                vec!["proj/api".to_string()],
+                vec!["proj/worker".to_string()]
+            ]
+        );
+    }
 }
