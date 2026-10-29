@@ -44,7 +44,9 @@ impl LogManager {
         // The directory the apps' logs are written to. It used to be hard-coded
         // to ~/.devcli/logs, so with DEVCLI_CONFIG_DIR (or a project-local
         // ./.devcli) the TUI showed "No logs available" for every app.
-        let log_dir = crate::process_manager_support::logs_dir()?;
+        // Only the path: nothing is created here (listing a directory that
+        // does not exist yet simply finds no logs).
+        let log_dir = crate::config::loader::config_home().join("logs");
 
         Ok(Self {
             log_dir,
