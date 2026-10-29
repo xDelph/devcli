@@ -309,6 +309,23 @@ impl Commands {
         }
     }
 
+    /// The command map of `env` (absent or present).
+    pub fn slot_mut(&mut self, env: Environment) -> &mut Option<HashMap<String, String>> {
+        match env {
+            Environment::Local => &mut self.local,
+            Environment::Docker => &mut self.docker,
+            Environment::OrbStack => &mut self.orbstack,
+            Environment::DockerCompose => &mut self.docker_compose,
+            Environment::K8s => &mut self.k8s,
+            Environment::Ci => &mut self.ci,
+        }
+    }
+
+    /// The command map of `env`, created empty if the app had none yet.
+    pub fn entry(&mut self, env: Environment) -> &mut HashMap<String, String> {
+        self.slot_mut(env).get_or_insert_with(HashMap::new)
+    }
+
     /// Returns all environment keys that have commands defined, in a consistent order
     pub fn available_envs(&self) -> Vec<&'static str> {
         let mut envs = Vec::new();
@@ -408,16 +425,18 @@ impl Defaults {
         }
     }
 
-    /// Get mutable default command for a specific environment
-    pub fn get_mut(&mut self, env: &str) -> &mut Option<String> {
+    /// The default command slot of `env`.
+    ///
+    /// Typed on purpose: the string-keyed version fell back to `local` for an
+    /// unknown name, silently changing the wrong default.
+    pub fn slot_mut(&mut self, env: Environment) -> &mut Option<String> {
         match env {
-            "local" => &mut self.local,
-            "docker" => &mut self.docker,
-            "orbstack" => &mut self.orbstack,
-            "k8s" | "kubernetes" => &mut self.k8s,
-            "docker-compose" | "compose" => &mut self.docker_compose,
-            "ci" => &mut self.ci,
-            _ => &mut self.local, // Fallback (shouldn't happen)
+            Environment::Local => &mut self.local,
+            Environment::Docker => &mut self.docker,
+            Environment::OrbStack => &mut self.orbstack,
+            Environment::DockerCompose => &mut self.docker_compose,
+            Environment::K8s => &mut self.k8s,
+            Environment::Ci => &mut self.ci,
         }
     }
 }

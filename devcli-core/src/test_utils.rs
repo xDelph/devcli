@@ -347,6 +347,60 @@ pub fn env_guard() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// A throwaway config directory for the duration of a test.
+///
+/// Holds [`env_guard`], points `devcli_CONFIG_DIR` at a fresh temp dir and
+/// restores the previous value on drop, so code under test that loads and
+/// saves the config can never reach the user's real `~/.devcli`.
+#[cfg(test)]
+pub struct TempConfigDir {
+    dir: tempfile::TempDir,
+    previous: Option<std::ffi::OsString>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl TempConfigDir {
+    pub fn new() -> Self {
+        let lock = env_guard();
+        let previous = std::env::var_os("devcli_CONFIG_DIR");
+        let dir = tempfile::TempDir::new().expect("create temp config dir");
+        std::env::set_var("devcli_CONFIG_DIR", dir.path());
+        Self {
+            dir,
+            previous,
+            _lock: lock,
+        }
+    }
+
+    /// Directory standing in for `~/.devcli`.
+    pub fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// Write `config` as this directory's config.json.
+    pub fn write_config(&self, config: &crate::config::Config) {
+        crate::config::save_config(config).expect("save test config");
+    }
+}
+
+#[cfg(test)]
+impl Default for TempConfigDir {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempConfigDir {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(previous) => std::env::set_var("devcli_CONFIG_DIR", previous),
+            None => std::env::remove_var("devcli_CONFIG_DIR"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
