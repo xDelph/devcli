@@ -59,6 +59,23 @@ fn layer_infos(layers: &[ResolvedLayer]) -> Vec<LayerInfo> {
         .collect()
 }
 
+/// Load an env file pinned in the app's `env_files`, as `(vars, layers, summary)`.
+///
+/// A pinned file that does not exist used to yield no variables without a
+/// word; it is now flagged in the summary ("Using env file: x (missing)") and
+/// in the log, and `config validate` reports it.
+fn load_pinned_file(
+    working_dir: &Path,
+    path: String,
+) -> Result<(HashMap<String, String>, Vec<LayerInfo>, String)> {
+    let full = working_dir.join(&path);
+    if !full.exists() {
+        tracing::warn!(path = %full.display(), "env file pinned in config does not exist");
+        return Ok((HashMap::new(), Vec::new(), format!("{path} (missing)")));
+    }
+    Ok((load_file(&full)?, Vec::new(), path))
+}
+
 fn load_file(path: &Path) -> Result<HashMap<String, String>> {
     if !path.exists() {
         return Ok(HashMap::new());
@@ -128,7 +145,7 @@ pub fn load_local_runtime(
 ) -> Result<Option<EnvLoad>> {
     let (vars, layers, summary) =
         if let Some(path) = resolve_config_env_path(env_files_map, stage, "local")? {
-            (load_file(&working_dir.join(&path))?, Vec::new(), path)
+            load_pinned_file(working_dir, path)?
         } else {
             let (cascade_vars, cascade_layers) =
                 load_runtime_cascade(working_dir, stage, "local", None)?;
@@ -143,7 +160,9 @@ pub fn load_local_runtime(
             )
         };
 
-    if vars.is_empty() {
+    // Nothing to apply - unless a file was pinned: its "(missing)" summary is
+    // the only sign the user gets that the configured file is not there.
+    if vars.is_empty() && !summary.ends_with(" (missing)") {
         return Ok(None);
     }
 
@@ -168,7 +187,7 @@ pub fn load_process_runtime(
 
     let (vars, layers, summary) =
         if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
-            (load_file(&working_dir.join(&path))?, Vec::new(), path)
+            load_pinned_file(working_dir, path)?
         } else {
             let (cascade_vars, cascade_layers) =
                 load_runtime_cascade(working_dir, stage, environment, dockerfile_path)?;
@@ -183,7 +202,9 @@ pub fn load_process_runtime(
             )
         };
 
-    if vars.is_empty() {
+    // Nothing to apply - unless a file was pinned: its "(missing)" summary is
+    // the only sign the user gets that the configured file is not there.
+    if vars.is_empty() && !summary.ends_with(" (missing)") {
         return Ok(None);
     }
 
@@ -213,8 +234,17 @@ pub fn prepare_container_env_file(
     scratch_name: &str,
 ) -> Result<Option<ContainerEnvFile>> {
     if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
+        let full = working_dir.join(&path);
+        if !full.exists() {
+            // docker would fail with a bare "no such file"; say which setting.
+            anyhow::bail!(
+                "Env file '{}' pinned in env_files for {} does not exist",
+                path,
+                environment
+            );
+        }
         return Ok(Some(ContainerEnvFile {
-            path: working_dir.join(&path),
+            path: full,
             summary: path,
         }));
     }
@@ -804,5 +834,21 @@ line2"
 
         assert_eq!(loaded.vars.get("APP"), Some(&"1".to_string()));
         assert_eq!(loaded.vars.get("CI"), Some(&"1".to_string()));
+    }
+
+    #[test]
+    fn missing_pinned_env_file_is_flagged() {
+        let dir = TempDir::new().unwrap();
+        let mut pins = HashMap::new();
+        pins.insert(
+            "base".to_string(),
+            HashMap::from([("local".to_string(), ".env.missing".to_string())]),
+        );
+
+        let loaded = load_local_runtime(dir.path(), Some(&pins), None)
+            .unwrap()
+            .expect("pinned file reported");
+        assert_eq!(loaded.summary, ".env.missing (missing)");
+        assert!(loaded.vars.is_empty());
     }
 }

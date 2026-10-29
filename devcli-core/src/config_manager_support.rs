@@ -600,6 +600,21 @@ fn validate_app(result: &mut ValidationResult, field: &str, config: &Config, app
         ));
     }
 
+    // Env files pinned in the config must exist, or the app silently starts
+    // without their variables.
+    if path.exists() {
+        for (stage, by_env) in app.env_files.iter().flatten() {
+            for (env, file) in by_env {
+                if !path.join(file).exists() {
+                    result.add_warning(ValidationWarning::new(
+                        field,
+                        format!("Env file '{file}' (env_files.{stage}.{env}) does not exist"),
+                    ));
+                }
+            }
+        }
+    }
+
     for dep in &app.dependencies {
         if let Err(e) = crate::config::resolver::get_app_by_project(config, &dep.project, &dep.app)
         {
