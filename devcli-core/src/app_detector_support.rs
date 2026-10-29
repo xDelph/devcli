@@ -200,7 +200,7 @@ pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::Hash
         return None;
     }
 
-    let expanded = app_detector::utils::workspace::expand_workspace_members(path, &members);
+    let expanded = app_detector::utils::workspace::expand_cargo_workspace(path, &content);
     Some(
         expanded
             .into_iter()

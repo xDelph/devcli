@@ -4,7 +4,7 @@ use crate::{
     context::DetectionContext,
     strategy::DetectionStrategy,
     types::*,
-    utils::workspace::{cargo_workspace_members, expand_workspace_members},
+    utils::workspace::{cargo_workspace_members, expand_cargo_workspace},
     Result,
 };
 use std::collections::HashMap;
@@ -63,22 +63,16 @@ impl DetectionStrategy for RustStrategy {
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
         let content = ctx.read_file("Cargo.toml")?;
 
-        if let Some(members) = cargo_workspace_members(&content) {
-            if !members.is_empty() {
-                return detect_workspace(ctx, &content, members);
-            }
+        if cargo_workspace_members(&content).is_some_and(|members| !members.is_empty()) {
+            return detect_workspace(ctx, &content);
         }
 
         detect_crate(ctx, &content)
     }
 }
 
-fn detect_workspace(
-    ctx: &DetectionContext,
-    content: &str,
-    member_patterns: Vec<String>,
-) -> Result<DetectionResult> {
-    let workspace_info = expand_workspace_members(&ctx.root_path, &member_patterns);
+fn detect_workspace(ctx: &DetectionContext, content: &str) -> Result<DetectionResult> {
+    let workspace_info = expand_cargo_workspace(&ctx.root_path, content);
     let workspaces: Vec<String> = workspace_info.iter().map(|w| w.path.clone()).collect();
 
     let mut metadata = HashMap::new();

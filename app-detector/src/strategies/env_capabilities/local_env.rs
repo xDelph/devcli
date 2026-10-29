@@ -392,7 +392,12 @@ fn extract_cargo_workspace_commands(info: &MonorepoInfo, commands: &mut HashMap<
     commands.insert("build".to_string(), "cargo build --workspace".to_string());
     commands.insert("test".to_string(), "cargo test --workspace".to_string());
     commands.insert("check".to_string(), "cargo check --workspace".to_string());
-    commands.insert("run".to_string(), "cargo run --workspace".to_string());
+    // `cargo run` takes no `--workspace` flag (the command used to be generated
+    // and always failed). A plain `cargo run` only works when the workspace
+    // root is itself a package; otherwise use the per-member `run-<name>`.
+    if info.metadata.contains_key("package_name") {
+        commands.insert("run".to_string(), "cargo run".to_string());
+    }
 
     for workspace in &info.workspace_info {
         let name = workspace.name.clone().unwrap_or_else(|| {

@@ -4,7 +4,10 @@ use crate::{
     context::DetectionContext,
     strategy::DetectionStrategy,
     types::*,
-    utils::workspace::{discover_python_packages, expand_workspace_members, uv_workspace_members},
+    utils::workspace::{
+        discover_python_packages, expand_uv_workspace, expand_workspace_members,
+        uv_workspace_members,
+    },
     Result,
 };
 use std::collections::HashMap;
@@ -81,7 +84,11 @@ fn detect_workspace(
     member_patterns: Vec<String>,
     tool: &str,
 ) -> Result<DetectionResult> {
-    let workspace_info = expand_workspace_members(&ctx.root_path, &member_patterns);
+    let workspace_info = if tool == "uv" {
+        expand_uv_workspace(&ctx.root_path, content)
+    } else {
+        expand_workspace_members(&ctx.root_path, &member_patterns)
+    };
     detect_workspace_from_members(ctx, content, workspace_info, tool)
 }
 
