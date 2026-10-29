@@ -2,7 +2,7 @@
 // Handles detection of individual applications (not in Nx monorepos)
 // Supports discovery of multiple apps in subdirectories
 
-use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
+use crate::config::{save_config, App, Commands, Defaults, Project};
 use crate::detection::detect_app;
 use crate::Result;
 use std::collections::HashMap;
@@ -152,9 +152,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
     }
 
     // Load existing config or create empty one
-    let config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: Default::default(),
-    });
+    let config = crate::config::loader::load_config_or_new()?;
 
     let (project_name, app_name) = if args.is_non_interactive() {
         let project_name = args.project.clone().unwrap_or_else(|| "global".to_string());
@@ -493,9 +491,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
     }
 
     // Load existing config or create a new empty one
-    let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: Default::default(),
-    });
+    let mut config = crate::config::loader::load_config_or_new()?;
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;

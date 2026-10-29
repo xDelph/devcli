@@ -261,4 +261,56 @@ mod tests {
         assert!(app_types.contains(&"redis"));
         assert!(app_types.contains(&"traefik"));
     }
+
+    fn node_app(dir: &std::path::Path, name: &str) {
+        fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"{name}","scripts":{{"dev":"node x.js"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    fn add_args(path: &std::path::Path, name: &str) -> crate::commands::auto_add::AutoAddArgs {
+        crate::commands::auto_add::AutoAddArgs {
+            path: Some(path.to_string_lossy().into_owned()),
+            yes: true,
+            project: Some("proj".to_string()),
+            name: Some(name.to_string()),
+            app_type: Some("nodejs".to_string()),
+        }
+    }
+
+    /// A config that fails to parse must be left alone, not replaced by a
+    /// config holding only the new app.
+    #[tokio::test]
+    async fn test_auto_add_refuses_to_overwrite_an_unparseable_config() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
+        let config_path = config_dir.path().join("config.json");
+        let broken = r#"{"projects":{"proj":{"apps":{"keep":{"type":"nodejs","path":"/tmp","commands":{},"defaults":{}}},}}}"#;
+        fs::write(&config_path, broken).unwrap();
+
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "newapp");
+
+        let err = crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "newapp"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("before adding apps"), "{err}");
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), broken);
+    }
+
+    /// Without any config file, auto-add creates one.
+    #[tokio::test]
+    async fn test_auto_add_creates_the_config_when_missing() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "first");
+
+        crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "first"))
+            .await
+            .unwrap();
+        let config = crate::config::load_config().unwrap();
+        assert!(config.projects["proj"].apps.contains_key("first"));
+        assert!(config_dir.path().join("config.json").exists());
+    }
 }

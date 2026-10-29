@@ -80,6 +80,25 @@ pub fn get_preferences_path() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// The config to extend when adding apps: empty if there is no config file
+/// yet, the parsed config otherwise.
+///
+/// Never empty because of an *error*: `auto-add` used to fall back to an empty
+/// config on any load failure - a trailing comma, a typo - and then saved it,
+/// replacing every app the user had with the one being added.
+pub fn load_config_or_new() -> Result<Config> {
+    if !get_config_path()?.exists() {
+        return Ok(Config {
+            projects: Default::default(),
+        });
+    }
+    load_config().map_err(|e| {
+        anyhow::anyhow!(
+            "{e}\nFix the config file (see `devcli config validate`) before adding apps."
+        )
+    })
+}
+
 pub fn load_config() -> Result<Config> {
     let config_path = get_config_path()?;
     DevCliConfigManager::for_path(&config_path)?.load()

@@ -2,7 +2,7 @@
 // Handles detection of multiple apps in Nx workspaces
 // Provides interactive selection for adding multiple apps at once
 
-use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
+use crate::config::{save_config, App, Commands, Defaults, Project};
 use crate::Result;
 
 use super::interactive::{
@@ -29,9 +29,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
     }
 
     // Load existing config or create a new empty one
-    let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: Default::default(),
-    });
+    let mut config = crate::config::loader::load_config_or_new()?;
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
