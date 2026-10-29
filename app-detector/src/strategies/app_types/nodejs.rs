@@ -112,14 +112,8 @@ impl DetectionStrategy for NodeJsStrategy {
 }
 
 fn detect_node_version() -> Option<String> {
-    use std::process::Command;
-
-    Command::new("node")
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|s| s.trim().trim_start_matches('v').to_string())
+    crate::utils::tool_version::tool_version_output("node")
+        .map(|s| s.trim_start_matches('v').to_string())
 }
 
 #[cfg(test)]
