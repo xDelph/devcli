@@ -348,4 +348,46 @@ mod tests {
         kill_and_reap(&running).await;
         store.delete("slow-boot").unwrap();
     }
+
+    /// A process the daemon restarted reports its exit code, and a clean exit
+    /// (code 0) is then not treated as a crash.
+    #[tokio::test]
+    async fn test_clean_exit_of_a_restarted_process_is_not_restarted() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let flag = temp_dir.path().join("second-run");
+
+        // First run sleeps (we kill it = a crash); the restarted run exits 0.
+        let mut task = sleep_task("clean-exit", 120);
+        task.command = format!(
+            "sh -c 'if [ -e {flag} ]; then exit 0; fi; touch {flag}; sleep 120'",
+            flag = flag.display()
+        );
+        let running = spawn_and_track(&store, task).await;
+        wait_until(|| flag.exists(), Duration::from_secs(10)).await;
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        wait_until(
+            || {
+                store
+                    .load("clean-exit")
+                    .ok()
+                    .flatten()
+                    .is_some_and(|p| p.runtime.last_exit_code == Some(0))
+            },
+            Duration::from_secs(15),
+        )
+        .await;
+
+        // The restarted instance exited 0: the policy declines another restart.
+        monitor.tick().await.unwrap();
+        wait_until(
+            || store.load("clean-exit").unwrap().is_none(),
+            Duration::from_secs(10),
+        )
+        .await;
+    }
 }

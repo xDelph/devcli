@@ -200,6 +200,13 @@ Automatically restart crashed or unhealthy processes.
 Process exited with code 1 → automatic restart
 ```
 
+The exit code is only known for instances that the monitor daemon restarted
+itself (it is their parent). When the first instance started by `devcli start`
+exits, its code cannot be observed and any exit counts as a crash.
+
+Health checks only start counting failures 30 seconds after each (re)start, so
+slow-booting servers are not restarted while they come up.
+
 **2. Health Check Failures** (3 consecutive):
 ```
 Health check failed 3 times → automatic restart

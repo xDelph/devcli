@@ -160,9 +160,10 @@ impl Monitor {
                         let _ = engine::terminate(old_pid, old_pgid, true).await;
                     }
 
-                    let result = engine::spawn(&task).await?;
+                    let mut result = engine::spawn_supervised(&task).await?;
                     // Output goes straight to the log file; nobody reads the channel.
                     drop(result.output_rx);
+                    let child = result.child.take();
 
                     let mut updated_proc = current;
                     updated_proc.pid = result.pid;
@@ -172,11 +173,21 @@ impl Monitor {
                     updated_proc.start_time = Utc::now();
                     updated_proc.runtime.restart_count += 1;
                     updated_proc.runtime.health_failures = 0;
+                    updated_proc.runtime.last_exit_code = None;
+                    updated_proc.runtime.last_exit_time = None;
                     updated_proc.runtime.history.push(crate::state::RestartEvent {
                         timestamp: Utc::now(),
                         reason: format!("Auto-restart due to {}", reason),
                     });
                     state.save(&updated_proc)?;
+
+                    // We are this process's parent: wait for it so its exit code
+                    // reaches the restart policy (`restart_on_exit_codes`, "a clean
+                    // exit is not a crash"). The first instance, started by the
+                    // CLI, has no surviving parent, so its exit code stays unknown.
+                    if let Some(child) = child {
+                        watch_exit(Arc::clone(&state), id.clone(), result.pid, child);
+                    }
                     Ok(())
                 })
                 .await;
@@ -190,5 +201,41 @@ impl Monitor {
         }
 
         Ok(())
+    }
+}
+
+/// Record the exit status of a child we spawned in its state entry.
+fn watch_exit(state: Arc<StateStore>, id: String, pid: u32, mut child: tokio::process::Child) {
+    tokio::spawn(async move {
+        let Ok(status) = child.wait().await else {
+            return;
+        };
+        let code = exit_code(&status);
+        let Ok(_guard) = state.lock_entry(&id) else {
+            return;
+        };
+        if let Ok(Some(mut proc)) = state.load(&id) {
+            // Only if the entry still describes this process.
+            if proc.pid == pid {
+                proc.runtime.last_exit_code = code;
+                proc.runtime.last_exit_time = Some(Utc::now());
+                let _ = state.save(&proc);
+            }
+        }
+    });
+}
+
+/// Exit code, or 128 + signal number for a signal death (shell convention).
+fn exit_code(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status
+            .code()
+            .or_else(|| status.signal().map(|sig| 128 + sig))
+    }
+    #[cfg(not(unix))]
+    {
+        status.code()
     }
 }

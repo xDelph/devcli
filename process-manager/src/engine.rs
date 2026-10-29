@@ -28,6 +28,18 @@ impl RunningProcess {
 }
 
 pub async fn spawn(task: &Task) -> Result<RunningProcess> {
+    spawn_inner(task, false).await
+}
+
+/// Like [`spawn`], but keeps the `Child` handle even for a detached task.
+///
+/// For a supervisor that outlives the child (pm-daemon) and wants to `wait()`
+/// on it to learn its exit status.
+pub async fn spawn_supervised(task: &Task) -> Result<RunningProcess> {
+    spawn_inner(task, true).await
+}
+
+async fn spawn_inner(task: &Task, keep_child: bool) -> Result<RunningProcess> {
     // Parse command using shell-words to handle quoted arguments correctly
     let parts = shell_words::split(&task.command).context("Failed to parse command string")?;
 
@@ -113,7 +125,11 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
     Ok(RunningProcess {
         pid,
         pgid,
-        child: if task.is_detached { None } else { Some(child) },
+        child: if task.is_detached && !keep_child {
+            None
+        } else {
+            Some(child)
+        },
         output_rx: rx,
     })
 }

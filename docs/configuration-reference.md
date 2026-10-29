@@ -424,7 +424,8 @@ devcli start frontend
 ```
 
 **Behavior**:
-- Restarts process on crash (non-zero exit code)
+- Restarts process on crash (non-zero exit code; the exit code of the first
+  instance started by `devcli start` is not observable, so any exit of it counts)
 - Exponential backoff: 5s, 10s, 20s, 40s, 80s...
 - Resets restart count after window expires
 - Stops restarting after max_restarts reached
