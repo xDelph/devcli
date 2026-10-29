@@ -24,7 +24,9 @@ pub struct FileLoader;
 impl FileLoader {
     /// Loads the log file and processes it for display
     pub fn load(path: &Path, syntax_set: &SyntaxSet, theme: &Theme) -> Result<Vec<LogLine>> {
-        let content_str = std::fs::read_to_string(path)?;
+        // Bytes, decoded lossily: apps write whatever bytes they like, and one
+        // invalid UTF-8 sequence used to make the whole log fail to open.
+        let content_str = String::from_utf8_lossy(&std::fs::read(path)?).into_owned();
         let lines: Vec<&str> = content_str.lines().collect();
         let total_lines = lines.len();
 

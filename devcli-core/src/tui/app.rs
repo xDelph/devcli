@@ -412,6 +412,13 @@ impl TuiApp {
                     self.needs_redraw = true;
                     Ok(true)
                 }
+                LogInputResult::Error(message) => {
+                    if let Ok(mut state) = self.state.lock() {
+                        state.error_message = Some(message);
+                    }
+                    self.needs_redraw = true;
+                    Ok(true)
+                }
             }
         } else {
             Ok(false)

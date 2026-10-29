@@ -37,6 +37,8 @@ pub enum LogInputResult {
 
     RequestAddPanel,
     RequestSelectLog,
+    /// Something went wrong that the user should see (shown in the error bar).
+    Error(String),
 }
 
 /// Item in the log selection list
@@ -427,18 +429,23 @@ impl LogViewerView {
                     .candidates
                     .get(self.selection_state.selected_idx)
                 {
-                    match self.selection_state.mode {
-                        SelectionMode::Replace(idx) => {
-                            // If empty, treat replace as add (start state)
-                            if self.panels.is_empty() {
-                                self.add_panel(path.clone())?;
-                            } else {
-                                self.replace_panel(idx, path.clone())?;
-                            }
+                    let path = path.clone();
+                    let opened = match self.selection_state.mode {
+                        // If empty, treat replace as add (start state)
+                        SelectionMode::Replace(_) if self.panels.is_empty() => {
+                            self.add_panel(path.clone())
                         }
-                        SelectionMode::Add => {
-                            self.add_panel(path.clone())?;
-                        }
+                        SelectionMode::Replace(idx) => self.replace_panel(idx, path.clone()),
+                        SelectionMode::Add => self.add_panel(path.clone()),
+                    };
+                    // A log that cannot be opened (deleted since it was listed,
+                    // unreadable) used to propagate up and quit the whole TUI.
+                    if let Err(e) = opened {
+                        self.selection_state.active = false;
+                        return Ok(LogInputResult::Error(format!(
+                            "Cannot open {}: {e}",
+                            path.display()
+                        )));
                     }
                 }
                 self.selection_state.active = false;
@@ -454,11 +461,16 @@ impl LogViewerView {
     }
 
     /// Refreshes log content for all panels
+    ///
+    /// A panel that fails to refresh no longer stops the ones after it.
     pub fn refresh(&mut self) -> Result<bool> {
         let mut any_updated = false;
         for panel in &mut self.panels {
-            if panel.refresh()? {
-                any_updated = true;
+            match panel.refresh() {
+                Ok(updated) => any_updated |= updated,
+                Err(e) => {
+                    tracing::debug!(path = %panel.log_path.display(), error = %e, "log refresh failed");
+                }
             }
         }
         Ok(any_updated)
@@ -1333,5 +1345,36 @@ mod tests {
         // For spacing-free text the emulation matches simple width math
         let line = "abcd".repeat(10); // 40 chars, no whitespace
         assert_eq!(wrapped_row_count(std::slice::from_ref(&line), 13), 4);
+    }
+
+    #[test]
+    fn logs_with_invalid_utf8_open() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("p_api_local_20260101.log");
+        std::fs::write(&path, b"ok\nbad \xff\xfe bytes\nlast\n").unwrap();
+        let view = SingleLogView::new(path, "api".to_string(), Color::White).unwrap();
+        assert_eq!(view.total_lines, 3);
+    }
+
+    #[test]
+    fn selecting_a_vanished_log_reports_instead_of_failing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut viewer = LogViewerView::new(vec![]).unwrap();
+        viewer.start_log_selection(
+            vec![SelectionItem::Option {
+                label: "gone".to_string(),
+                path: dir.path().join("gone.log"),
+            }],
+            SelectionMode::Add,
+        );
+        let result = viewer
+            .handle_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("must not fail the TUI");
+        assert!(
+            matches!(result, LogInputResult::Error(ref m) if m.contains("gone.log")),
+            "{result:?}"
+        );
     }
 }
