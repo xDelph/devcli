@@ -1478,6 +1478,7 @@ dependencies = [
  "env-flow",
  "futures",
  "inquire",
+ "libc",
  "process-manager",
  "ratatui",
  "ratatui-widgets",

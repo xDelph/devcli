@@ -79,7 +79,7 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
                     pid = existing.pid,
                     "App already running, skipping"
                 );
-                if !silent {
+                if crate::output::human(silent) {
                     println!(
                         "⚠ Process '{}' is already running with PID {}, skipping",
                         app_name, existing.pid
@@ -92,7 +92,7 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
                     pid = existing.pid,
                     "Cleaning up stale process"
                 );
-                if !silent {
+                if crate::output::human(silent) {
                     println!(
                         "Cleaning up stale process '{}' (PID {} is no longer running)",
                         app_name, existing.pid

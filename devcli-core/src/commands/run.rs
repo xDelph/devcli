@@ -40,7 +40,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
     let silent = args.silent;
-    let show_output = !silent && !preferences.detached_mode;
+    let show_output = crate::output::human(silent) && !preferences.detached_mode;
 
     // Resolve the app in the config
     let resolved_app = resolve_app(&config, &args.app_name, args.project.as_deref())?;

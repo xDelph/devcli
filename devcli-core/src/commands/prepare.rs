@@ -22,7 +22,7 @@ fn apply_loaded_env_vars(
         env_vars.insert(key.clone(), value.clone());
     }
 
-    if show_output {
+    if show_output && !crate::output::json_enabled() {
         let display = if loaded.layers.is_empty() {
             loaded.summary.clone()
         } else {
@@ -192,7 +192,7 @@ fn apply_container_env_file(
         *final_command =
             crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
 
-        if show_output {
+        if show_output && !crate::output::json_enabled() {
             println!("  Using env file: {}", prepared.summary);
         }
     }

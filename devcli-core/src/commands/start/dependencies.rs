@@ -54,7 +54,7 @@ pub async fn handle_dependencies(
         "Checking dependencies"
     );
 
-    if !silent {
+    if crate::output::human(silent) {
         println!("Checking dependencies for all apps...");
     }
 
@@ -63,7 +63,7 @@ pub async fn handle_dependencies(
 
     if missing.is_empty() {
         tracing::info!("All dependencies are running");
-        if !silent {
+        if crate::output::human(silent) {
             println!("✓ All dependencies are running");
         }
         return Ok(());
@@ -79,7 +79,7 @@ pub async fn handle_dependencies(
     // Handle missing dependencies based on preferences
     if preferences.auto_start_deps {
         start_missing_dependencies(missing, environment, silent).await?;
-        if !silent {
+        if crate::output::human(silent) {
             println!("\n✓ All dependencies started successfully");
             // Flush stdout to ensure message is captured by TUI
             use std::io::Write;
@@ -108,7 +108,7 @@ async fn start_missing_dependencies(
         "Starting missing dependencies in parallel"
     );
 
-    if !silent {
+    if crate::output::human(silent) {
         println!("⚠ Missing dependencies: {}", missing.join(", "));
         println!("Starting dependencies in parallel...\n");
         // Flush stdout to ensure messages are immediately visible when captured by TUI
@@ -117,7 +117,7 @@ async fn start_missing_dependencies(
     }
 
     let preferences = load_preferences()?;
-    let show_output = !silent && !preferences.detached_mode;
+    let show_output = crate::output::human(silent) && !preferences.detached_mode;
 
     // Collect all dependency start tasks to run in parallel
     let mut tasks = Vec::new();
@@ -130,7 +130,7 @@ async fn start_missing_dependencies(
             let dep_app = parts[1].to_string();
             let env = environment.to_string();
 
-            if !silent {
+            if crate::output::human(silent) {
                 println!("→ Starting: {}/{}", dep_project, dep_app);
                 // Flush stdout to ensure message is captured immediately by TUI
                 use std::io::Write;

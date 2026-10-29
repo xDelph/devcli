@@ -44,7 +44,7 @@ pub async fn start_apps_in_parallel(
     );
 
     let preferences = load_preferences()?;
-    let show_output = !silent && !preferences.detached_mode;
+    let show_output = crate::output::human(silent) && !preferences.detached_mode;
 
     let mut tasks = Vec::new();
 

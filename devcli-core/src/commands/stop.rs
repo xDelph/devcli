@@ -94,7 +94,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    if !silent && !crate::output::json_enabled() {
+    if crate::output::human(silent) {
         display_stop_summary(&processes_to_stop)?;
     }
 
@@ -132,7 +132,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
             .await
         {
             Ok(_) => {
-                if !silent && !crate::output::json_enabled() {
+                if crate::output::human(silent) {
                     let app_name = process
                         .metadata
                         .get("app_config_name")
@@ -157,7 +157,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         }
     }
 
-    if !silent && !crate::output::json_enabled() {
+    if crate::output::human(silent) {
         println!("\nStop Summary:");
         println!("  ✓ Successfully stopped: {}", stopped_count);
         if !errors.is_empty() {

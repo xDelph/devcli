@@ -81,7 +81,7 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
                     pid = existing.pid,
                     "App already running (started as dependency), skipping"
                 );
-                if !silent {
+                if crate::output::human(silent) {
                     println!(
                         "⚠ Process '{}' is already running with PID {}, skipping",
                         app_name, existing.pid

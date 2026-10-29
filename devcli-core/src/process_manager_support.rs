@@ -74,9 +74,11 @@ pub fn find_process(
     Ok(None)
 }
 
+/// Print a human progress line (suppressed with `--json`) and forward it to the
+/// TUI channel when there is one.
 pub fn emit_line(silent: bool, output_tx: Option<&OutputChannel>, line: impl Into<String>) {
     let line = line.into();
-    if !silent {
+    if !silent && !crate::output::json_enabled() {
         println!("{}", line);
     }
     if let Some(tx) = output_tx {
@@ -86,7 +88,7 @@ pub fn emit_line(silent: bool, output_tx: Option<&OutputChannel>, line: impl Int
 
 pub fn emit_error(silent: bool, output_tx: Option<&OutputChannel>, line: impl Into<String>) {
     let line = line.into();
-    if !silent {
+    if !silent && !crate::output::json_enabled() {
         eprintln!("{}", line);
     }
     if let Some(tx) = output_tx {
