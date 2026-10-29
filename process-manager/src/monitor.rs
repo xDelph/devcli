@@ -116,6 +116,9 @@ impl Monitor {
                     if let Some(mut updated_proc) = state.load(&id)? {
                         updated_proc.pid = result.pid;
                         updated_proc.pgid = result.pgid;
+                        // A new process: uptime and PID-reuse detection are
+                        // measured from here.
+                        updated_proc.start_time = Utc::now();
                         updated_proc.runtime.restart_count += 1;
                         updated_proc.runtime.health_failures = 0;
                         updated_proc.runtime.history.push(crate::state::RestartEvent {

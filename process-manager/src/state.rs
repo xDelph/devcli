@@ -174,18 +174,9 @@ impl StateStore {
     pub fn is_running(&self, process: &ManagedProcess) -> bool {
         #[cfg(unix)]
         {
-            use std::process::Command;
-
-            // The tracked PID answers for itself.
-            let alive = Command::new("kill")
-                .arg("-0")
-                .arg(process.pid.to_string())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-
-            if alive {
-                return true;
+            // The tracked PID answers for itself - as long as it is still ours.
+            if crate::engine::pid_alive(process.pid) {
+                return !process.pid_was_reused();
             }
 
             // The leader is gone, but the app may still be alive as a child of its
@@ -364,7 +355,28 @@ impl StateStore {
     }
 }
 
+/// Slack between the OS start of a process and the `start_time` we record just
+/// after spawning it (`ps` reports whole seconds).
+const PID_REUSE_TOLERANCE: chrono::Duration = chrono::Duration::seconds(5);
+
 impl ManagedProcess {
+    /// Whether the live process holding `self.pid` started after we recorded
+    /// ours, i.e. ours exited and the OS handed the PID to something else.
+    ///
+    /// Without this, `stop` (or `stop --all` on stale state) would signal an
+    /// unrelated process of the user's that happened to receive the PID. When
+    /// the age cannot be read the PID is assumed to be ours.
+    pub fn pid_was_reused(&self) -> bool {
+        let Some(age) = crate::engine::process_age(self.pid) else {
+            return false;
+        };
+        let Ok(age) = chrono::Duration::from_std(age) else {
+            return false;
+        };
+        let os_start = Utc::now() - age;
+        os_start > self.start_time + PID_REUSE_TOLERANCE
+    }
+
     pub fn should_restart(&self, policy: &RestartPolicy) -> bool {
         if !policy.enabled {
             return false;

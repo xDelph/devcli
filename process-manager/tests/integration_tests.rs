@@ -559,3 +559,33 @@ async fn test_attached_output_survives_invalid_utf8() {
     assert!(lines.contains(&"AFTER".to_string()), "got {lines:?}");
     wait_for_log_content(&log_path, "AFTER").await;
 }
+
+/// A live PID whose process started long after we recorded ours belongs to
+/// someone else: the store must not report it as our running app (which would
+/// make `stop` signal an unrelated process).
+#[tokio::test]
+#[cfg(unix)]
+async fn test_reused_pid_is_not_reported_as_running() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+
+    let task = sleep_task("reused", 30, None);
+    let running = engine::spawn(&task).await.expect("spawn sleep");
+    let (pid, pgid) = (running.pid, running.pgid);
+    drop(running.output_rx);
+
+    let genuine = managed_from_running(task.clone(), pid, None, HashMap::new());
+    assert!(
+        store.is_running(&genuine),
+        "freshly recorded process is ours"
+    );
+
+    let mut stale = genuine.clone();
+    stale.start_time = Utc::now() - chrono::Duration::hours(1);
+    assert!(
+        !store.is_running(&stale),
+        "a process started an hour after our record is not ours"
+    );
+
+    let _ = engine::terminate(pid, pgid, true).await;
+}

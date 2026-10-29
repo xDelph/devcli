@@ -319,19 +319,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
 }
 
 fn is_pid_running(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    engine::pid_alive(pid)
 }
 
 fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -> HealthCheck {

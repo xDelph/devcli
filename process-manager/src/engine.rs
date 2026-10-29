@@ -23,20 +23,7 @@ impl RunningProcess {
     /// Uses a signal-0 probe on Unix (no signal delivered, just existence check).
     /// Callers should not need to touch `self.pid` directly for liveness checks.
     pub fn is_alive(&self) -> bool {
-        #[cfg(unix)]
-        {
-            use std::process::Command;
-            Command::new("kill")
-                .arg("-0")
-                .arg(self.pid.to_string())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
+        pid_alive(self.pid)
     }
 }
 
@@ -135,41 +122,35 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
 pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool> {
     #[cfg(unix)]
     {
-        use std::process::Command;
         use std::time::Duration;
 
-        let alive = process_exists(pid) || pgid.is_some_and(crate::state::group_has_live_member);
+        let alive = pid_alive(pid) || pgid.is_some_and(crate::state::group_has_live_member);
 
         if !alive {
             return Ok(false);
         }
 
-        let signal = if force { "-9" } else { "-15" };
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
         // Signal the whole group so children of a wrapper die with it, but treat
-        // it as best effort: `kill -9 -PGID` can exit 0 without terminating
-        // anything (observed on CI runners), which would make us report success on
-        // a process that is still running.
-        if let Some(g) = pgid {
-            let _ = Command::new("kill")
-                .arg(signal)
-                .arg(format!("-{}", g))
-                .status();
+        // it as best effort: a group signal can report success without
+        // terminating anything (observed on CI runners), which would make us
+        // report success on a process that is still running.
+        if let Some(g) = pgid.filter(|g| *g > 1) {
+            send_signal(-g, signal);
         }
 
-        // The PID itself is the reliable target. A non-zero status is not an
-        // error: the group signal above may already have killed it.
-        let _ = Command::new("kill")
-            .arg(signal)
-            .arg(pid.to_string())
-            .status();
+        // The PID itself is the reliable target. Failure is not an error: the
+        // group signal above may already have killed it.
+        if let Ok(target) = i32::try_from(pid) {
+            send_signal(target, signal);
+        }
 
         // Confirm the process is actually gone instead of trusting the exit status.
         // When the leader had already exited we must also wait for the group to
         // empty out, otherwise children of the app keep serving unnoticed.
         for _ in 0..10 {
-            let gone =
-                !process_exists(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
+            let gone = !pid_alive(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
             if gone {
                 return Ok(true);
             }
@@ -184,8 +165,11 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
     }
 }
 
-/// Signal-0 probe without spawning a process (cheap enough to poll).
-fn pid_alive(pid: u32) -> bool {
+/// Whether the OS still knows about this PID.
+///
+/// Signal-0 probe through kill(2): no signal is delivered, and unlike spawning
+/// `kill -0` it costs no fork/exec and prints nothing on the user's stderr.
+pub fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         let Ok(pid) = i32::try_from(pid) else {
@@ -203,14 +187,49 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Whether the OS still knows about this PID.
-fn process_exists(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
+/// Deliver `signal` to a PID (positive) or a process group (negative).
+#[cfg(unix)]
+fn send_signal(target: i32, signal: libc::c_int) {
+    // SAFETY: kill(2) has no memory-safety preconditions; errors are ignored on
+    // purpose (the target may already be gone).
+    unsafe {
+        libc::kill(target, signal);
+    }
+}
+
+/// How long ago the OS started `pid`, if it is running.
+///
+/// Used to tell our process apart from an unrelated one that was given the same
+/// PID after ours exited. Parses `ps -o etime=` (`[[dd-]hh:]mm:ss`), the only
+/// elapsed-time format both macOS and Linux `ps` print.
+pub fn process_age(pid: u32) -> Option<std::time::Duration> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "etime=", "-p", &pid.to_string()])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_etime(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+fn parse_etime(etime: &str) -> Option<std::time::Duration> {
+    let (days, clock) = match etime.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
+        None => (0, etime),
+    };
+    let parts = clock
+        .split(':')
+        .map(|p| p.parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let (h, m, sec) = match parts.as_slice() {
+        [m, s] => (0, *m, *s),
+        [h, m, s] => (*h, *m, *s),
+        _ => return None,
+    };
+    Some(std::time::Duration::from_secs(
+        ((days * 24 + h) * 60 + m) * 60 + sec,
+    ))
 }
 
 /// Restart a managed process.
@@ -423,6 +442,27 @@ mod tests {
         let current_pid = std::process::id();
         let rp = make_running_process(current_pid);
         assert_eq!(rp.is_alive(), rp.is_alive());
+    }
+
+    #[test]
+    fn test_parse_etime_formats() {
+        use std::time::Duration;
+        assert_eq!(parse_etime("00:07"), Some(Duration::from_secs(7)));
+        assert_eq!(parse_etime("12:34"), Some(Duration::from_secs(754)));
+        assert_eq!(parse_etime("01:00:05"), Some(Duration::from_secs(3605)));
+        assert_eq!(
+            parse_etime("2-03:04:05"),
+            Some(Duration::from_secs(2 * 86400 + 3 * 3600 + 4 * 60 + 5))
+        );
+        assert_eq!(parse_etime(""), None);
+        assert_eq!(parse_etime("garbage"), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_age_of_current_process() {
+        let age = process_age(std::process::id()).expect("ps reports our age");
+        assert!(age < std::time::Duration::from_secs(3600));
     }
 
     #[tokio::test]
