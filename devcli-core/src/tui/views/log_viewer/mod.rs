@@ -488,14 +488,24 @@ pub struct SingleLogView {
     viewport: ViewportState,
     /// Search state (query, results)
     search: SearchState,
-    /// Syntax highlighting resources
-    highlighter: SyntaxHighlighter,
+    /// Syntax highlighting resources (shared by every panel)
+    highlighter: &'static SyntaxHighlighter,
     /// Total number of lines in the file (for display)
     total_lines: usize,
     /// Whether to show the JSON beautifier panel
     show_json_panel: bool,
     /// Last file size to detect changes
     last_file_size: u64,
+    /// Bytes of the file parsed into complete lines (up to the last `\n`):
+    /// a refresh only reads what was appended after this.
+    complete_bytes: u64,
+    /// Whether the last line in `content` had no trailing newline yet (it is
+    /// re-parsed once the rest of it arrives).
+    partial_tail: bool,
+    /// Wrapped row count of each line at `row_cache_width`, computed lazily for
+    /// the lines around the visible window only.
+    row_cache: Vec<Option<usize>>,
+    row_cache_width: usize,
     /// App name extracted from log file path
     app_name: String,
     /// Color assigned to this app for consistent display
@@ -517,30 +527,28 @@ impl SingleLogView {
             app_name,
             app_color
         );
-        let highlighter = SyntaxHighlighter::new();
+        let highlighter = SyntaxHighlighter::shared();
 
-        // Load content using FileLoader
-        let content = FileLoader::load(&log_path, &highlighter.syntax_set, &highlighter.theme)?;
-        let total_lines = content.len();
-
-        // Initialize viewport state
-        let viewport = ViewportState::new(total_lines);
-
-        // Get initial file size
-        let last_file_size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-
-        Ok(Self {
+        let mut view = Self {
             log_path,
-            content,
-            viewport,
+            content: Vec::new(),
+            viewport: ViewportState::new(0),
             search: SearchState::default(),
             highlighter,
-            total_lines,
+            total_lines: 0,
             show_json_panel: false,
-            last_file_size,
+            last_file_size: 0,
+            complete_bytes: 0,
+            partial_tail: false,
+            row_cache: Vec::new(),
+            row_cache_width: 0,
             app_name,
             app_color,
-        })
+        };
+        view.reload()?;
+        // Start at the bottom of the file (most recent logs)
+        view.viewport = ViewportState::new(view.total_lines);
+        Ok(view)
     }
 
     /// Renders the log viewer to the terminal
@@ -650,21 +658,6 @@ impl SingleLogView {
         frame.render_widget(header, area);
     }
 
-    /// Calculates how many visual rows a log line will occupy when wrapped
-    fn calculate_wrapped_rows(&self, log_line: &LogLine, available_width: usize) -> usize {
-        // The rendered line is: line-number prefix + "[app] " + content spans.
-        // A width-only `div_ceil` is NOT enough: ratatui's `Wrap` breaks on
-        // *word* boundaries (WordWrapper), which can produce more rows than the
-        // width math (fewer words fit per row depending on where they break).
-        // Undercounting kept the last rows of the log unreachable, so we
-        // emulate the exact packing algorithm (trim=false, ASCII width 1).
-        let mut content = format!("{:>5} | [{}] ", "", self.app_name);
-        for span in &log_line.formatted {
-            content.push_str(&span.content);
-        }
-        wrapped_row_count(std::slice::from_ref(&content), available_width)
-    }
-
     /// Applies search highlighting to formatted spans
     /// Highlights matched text with bright background colors
     ///
@@ -757,190 +750,216 @@ impl SingleLogView {
         result_spans
     }
 
-    /// Renders the main log content with line numbers and text wrapping
+    /// Wrapped rows line `i` takes at `width` (cached).
     ///
-    /// This method handles text wrapping by:
-    /// 1. Calculating visual row positions for each logical line
-    /// 2. Determining scroll offset to keep cursor visible
-    /// 3. Rendering all lines with proper highlighting and wrapping
-    fn render_content(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let available_width = area.width.saturating_sub(2) as usize;
-        let visible_height = area.height.saturating_sub(2) as usize;
-
-        // Calculate visual row position for each logical line
-        // This accounts for text wrapping - a long line may span multiple visual rows
-        let mut visual_row_positions: Vec<usize> = Vec::new();
-        let mut current_visual_row = 0;
-
-        for log_line in &self.content {
-            visual_row_positions.push(current_visual_row);
-            let wrapped_rows = self.calculate_wrapped_rows(log_line, available_width);
-            current_visual_row += wrapped_rows;
+    /// Measured with ratatui's own `Paragraph::line_count` on the same text the
+    /// renderer draws, so scrolling never drifts from what is on screen.
+    fn rows(&mut self, i: usize, width: usize) -> usize {
+        if let Some(Some(rows)) = self.row_cache.get(i) {
+            return *rows;
         }
-
-        // A shrunk/rotated file can leave the cursor past the content — never
-        // let the selection point into the void (keeps the highlight visible).
-        let max_cursor = self.content.len().saturating_sub(1);
-        if self.viewport.cursor_line > max_cursor {
-            self.viewport.cursor_line = max_cursor;
+        let line = &self.content[i];
+        let mut text = format!("{:>5} | [{}] ", line.line_number, self.app_name);
+        for span in &line.formatted {
+            text.push_str(&span.content);
         }
+        let rows = Paragraph::new(Line::raw(text))
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .line_count(width.min(u16::MAX as usize) as u16)
+            .max(1);
+        if let Some(slot) = self.row_cache.get_mut(i) {
+            *slot = Some(rows);
+        }
+        rows
+    }
 
-        // Get visual row position for cursor (emulation-wrapped). The EXACT
-        // total comes from `Paragraph::line_count` below — ratatui's own
-        // WordWrapper — which is the ground truth used to clamp the scroll so
-        // the last rows of the log are always reachable.
-        let cursor_visual_row_est = visual_row_positions
-            .get(self.viewport.cursor_line)
-            .copied()
-            .unwrap_or(0);
+    /// `(top_line, top_offset)` that puts the last row of `line` on the last
+    /// row of a `height`-row window.
+    fn anchor_bottom(&mut self, line: usize, height: usize, width: usize) -> (usize, usize) {
+        let mut top = line;
+        let mut used = self.rows(line, width);
+        while top > 0 && used < height {
+            top -= 1;
+            used += self.rows(top, width);
+        }
+        (top, used.saturating_sub(height))
+    }
 
-        // Build text with ALL lines
-        let mut text = Text::default();
-
-        for (i, log_line) in self.content.iter().enumerate() {
-            let bg_color = if i == self.viewport.cursor_line {
-                // Deliberately bright: a too-dark band (previous Rgb(40, 40, 60))
-                // was invisible on the black background, so the selected line
-                // seemed to have no highlight at all.
-                if is_active {
-                    Color::Rgb(90, 90, 135)
-                } else {
-                    Color::Rgb(55, 55, 85)
-                }
+    /// Builds the styled line `i` exactly as it is displayed.
+    fn display_line(&self, i: usize, available_width: usize, is_active: bool) -> Line<'static> {
+        let log_line = &self.content[i];
+        let bg_color = if i == self.viewport.cursor_line {
+            // Deliberately bright: a too-dark band (previous Rgb(40, 40, 60))
+            // was invisible on the black background, so the selected line
+            // seemed to have no highlight at all.
+            if is_active {
+                Color::Rgb(90, 90, 135)
             } else {
-                Color::Rgb(0, 0, 0)
-            };
+                Color::Rgb(55, 55, 85)
+            }
+        } else {
+            Color::Rgb(0, 0, 0)
+        };
 
-            let line_num_str = format!("{:>5} | ", log_line.line_number);
-            let line_num_span = if self.search.is_current_result(i) {
-                // Current search result gets bright yellow with arrow
-                let cursor_str = format!("{:>5} ▶ ", log_line.line_number);
-                Span::styled(
-                    cursor_str,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if self.search.is_match(i) {
-                // Other search matches get dimmer yellow
-                Span::styled(
-                    line_num_str.clone(),
-                    Style::default()
-                        .fg(Color::Rgb(200, 200, 100))
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if i == self.viewport.cursor_line {
-                let cursor_str = format!("{:>5} > ", log_line.line_number);
-                Span::styled(cursor_str, Style::default().fg(Color::Cyan))
-            } else {
-                Span::styled(line_num_str.clone(), Style::default().fg(Color::DarkGray))
-            };
+        let line_num_span = if self.search.is_current_result(i) {
+            // Current search result gets bright yellow with arrow
+            Span::styled(
+                format!("{:>5} ▶ ", log_line.line_number),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else if self.search.is_match(i) {
+            // Other search matches get dimmer yellow
+            Span::styled(
+                format!("{:>5} | ", log_line.line_number),
+                Style::default()
+                    .fg(Color::Rgb(200, 200, 100))
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else if i == self.viewport.cursor_line {
+            Span::styled(
+                format!("{:>5} > ", log_line.line_number),
+                Style::default().fg(Color::Cyan),
+            )
+        } else {
+            Span::styled(
+                format!("{:>5} | ", log_line.line_number),
+                Style::default().fg(Color::DarkGray),
+            )
+        };
 
-            let mut spans = vec![line_num_span];
-
-            // Add colored app name prefix: [appName]
-            let app_name_span = Span::styled(
+        let mut spans = vec![
+            line_num_span,
+            // Colored app name prefix: [appName]
+            Span::styled(
                 format!("[{}] ", self.app_name),
                 Style::default()
                     .fg(self.app_color)
                     .add_modifier(Modifier::BOLD)
                     .bg(bg_color),
-            );
-            spans.push(app_name_span);
+            ),
+        ];
 
-            // Apply search highlighting if this line has matches
-            let content_spans = if let Some(match_ranges) = self.search.get_match_ranges(i) {
-                self.apply_search_highlighting(
-                    &log_line.formatted,
-                    match_ranges,
-                    bg_color,
-                    self.search.is_current_result(i),
-                )
-            } else {
-                // No search matches, just apply background color
-                log_line
-                    .formatted
-                    .iter()
-                    .map(|s| {
-                        let mut style = s.style;
-                        style.bg = Some(bg_color);
-                        Span::styled(s.content.clone(), style)
-                    })
-                    .collect()
-            };
-
-            spans.extend(content_spans);
-
-            // Calculate the current line width to add padding for full-width background
-            let current_width: usize = spans.iter().map(|span| span.content.len()).sum();
-            let remaining_width = available_width.saturating_sub(current_width);
-
-            // Add padding span to fill the remaining width with background color
-            if remaining_width > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(remaining_width),
-                    Style::default().bg(bg_color),
-                ));
-            }
-
-            let line = Line::from(spans).style(Style::default().bg(bg_color));
-            text.lines.push(line);
+        // Apply search highlighting if this line has matches
+        if let Some(match_ranges) = self.search.get_match_ranges(i) {
+            spans.extend(self.apply_search_highlighting(
+                &log_line.formatted,
+                match_ranges,
+                bg_color,
+                self.search.is_current_result(i),
+            ));
+        } else {
+            spans.extend(log_line.formatted.iter().map(|s| {
+                let mut style = s.style;
+                style.bg = Some(bg_color);
+                Span::styled(s.content.clone(), style)
+            }));
         }
+
+        // Pad to the full width so the background covers the row. Measured in
+        // display cells: byte lengths over-padded lines with non-ASCII text,
+        // pushing the padding onto an extra wrapped row.
+        let current_width: usize = spans.iter().map(Span::width).sum();
+        let remaining_width = available_width.saturating_sub(current_width);
+        if remaining_width > 0 {
+            spans.push(Span::styled(
+                " ".repeat(remaining_width),
+                Style::default().bg(bg_color),
+            ));
+        }
+
+        Line::from(spans).style(Style::default().bg(bg_color))
+    }
+
+    /// Renders the main log content with line numbers and text wrapping
+    ///
+    /// Only the lines that fit in the panel are laid out and built. Rendering
+    /// used to rebuild, clone and wrap every line of the file on each frame
+    /// (and re-measure all of it), which froze the UI on large logs; the
+    /// absolute scroll offset was also a `u16`, so past 65,535 wrapped rows the
+    /// newest lines could not be reached.
+    fn render_content(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
+        let available_width = area.width.saturating_sub(2) as usize;
+        let visible_height = area.height.saturating_sub(2) as usize;
 
         let border_color = if is_active {
             Color::White
         } else {
             Color::DarkGray
         };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(Color::Rgb(0, 0, 0)));
 
-        // Use wrapping - scroll by visual rows
-        let paragraph = Paragraph::new(text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(border_color))
+        if self.content.is_empty() || visible_height == 0 || available_width == 0 {
+            frame.render_widget(
+                Paragraph::new(Text::default())
+                    .block(block)
                     .style(Style::default().bg(Color::Rgb(0, 0, 0))),
-            )
-            .style(Style::default().bg(Color::Rgb(0, 0, 0)))
-            .wrap(ratatui::widgets::Wrap { trim: false });
+                area,
+            );
+            return;
+        }
 
-        // Ground truth: total wrapped rows exactly as ratatui renders them
-        // (WordWrapper). Using the width-only estimate kept the last rows of
-        // the log unreachable, because word-boundary wrapping packs more rows
-        // than the width math predicts.
-        let total_visual_rows = paragraph.line_count(available_width as u16); // usize
-        let cursor_visual_row = cursor_visual_row_est.min(total_visual_rows.saturating_sub(1));
-        let max_scroll = total_visual_rows.saturating_sub(visible_height);
-        // When the cursor is on the very last line, pin the view to the exact
-        // bottom so the newest log rows are always visible.
-        let at_last_line = self.viewport.cursor_line + 1 >= self.content.len();
+        if self.row_cache_width != available_width {
+            self.row_cache.clear();
+            self.row_cache_width = available_width;
+        }
+        self.row_cache.resize(self.content.len(), None);
+
+        // A shrunk/rotated file can leave the cursor past the content — never
+        // let the selection point into the void (keeps the highlight visible).
+        let last = self.content.len() - 1;
+        self.viewport.cursor_line = self.viewport.cursor_line.min(last);
+        let cursor = self.viewport.cursor_line;
 
         // Standard (pager-like) scrolling:
-        // - cursor inside the visible range: keep the current scroll position
-        // - cursor leaves the top: re-anchor so it becomes the first visible row
-        // - cursor leaves the bottom: re-anchor so it becomes the last visible row
-        let current_top = self.viewport.last_visual_scroll.min(max_scroll);
-        let scroll_offset = if total_visual_rows <= visible_height {
-            // Everything fits on screen - never hide the first lines
-            0
-        } else if cursor_visual_row < current_top {
-            cursor_visual_row
-        } else if cursor_visual_row >= current_top + visible_height {
-            if at_last_line {
-                max_scroll
-            } else {
-                (cursor_visual_row + 1)
-                    .saturating_sub(visible_height)
-                    .min(max_scroll)
-            }
+        // - cursor on the last line: pin the view to the bottom (follow mode)
+        // - cursor above the window: it becomes the first visible line
+        // - cursor below the window: it becomes the last visible line
+        // - otherwise keep the current position
+        let mut top = self.viewport.top_line.min(last);
+        let mut offset = self
+            .viewport
+            .top_offset
+            .min(self.rows(top, available_width).saturating_sub(1));
+        if cursor == last {
+            (top, offset) = self.anchor_bottom(last, visible_height, available_width);
+        } else if cursor < top || (cursor == top && offset > 0) {
+            top = cursor;
+            offset = 0;
         } else {
-            current_top
-        };
+            let mut used = self.rows(top, available_width) - offset;
+            let mut i = top;
+            while i < cursor && used <= visible_height {
+                i += 1;
+                used += self.rows(i, available_width);
+            }
+            if used > visible_height {
+                (top, offset) = self.anchor_bottom(cursor, visible_height, available_width);
+            }
+        }
+        self.viewport.top_line = top;
+        self.viewport.top_offset = offset;
 
-        // Remember scroll position for next frame
-        self.viewport.last_visual_scroll = scroll_offset;
+        // Build just the lines that intersect the window.
+        let mut lines = Vec::new();
+        let mut shown = 0usize;
+        let mut i = top;
+        while i <= last && shown < visible_height + offset {
+            shown += self.rows(i, available_width);
+            lines.push(self.display_line(i, available_width, is_active));
+            i += 1;
+        }
 
-        frame.render_widget(paragraph.scroll((scroll_offset as u16, 0)), area);
+        let paragraph = Paragraph::new(Text::from(lines))
+            .block(block)
+            .style(Style::default().bg(Color::Rgb(0, 0, 0)))
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((offset.min(u16::MAX as usize) as u16, 0));
+        frame.render_widget(paragraph, area);
     }
 
     /// Checks if the current cursor line contains JSON
@@ -1178,8 +1197,34 @@ impl SingleLogView {
         &self.log_path
     }
 
+    /// Load the whole file from scratch.
+    fn reload(&mut self) -> Result<()> {
+        let bytes = std::fs::read(&self.log_path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        self.content = FileLoader::parse_lines(
+            &text,
+            1,
+            &self.highlighter.syntax_set,
+            &self.highlighter.theme,
+        );
+        self.total_lines = self.content.len();
+        self.last_file_size = bytes.len() as u64;
+        self.complete_bytes = bytes
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |pos| pos as u64 + 1);
+        self.partial_tail = self.complete_bytes < self.last_file_size;
+        self.row_cache.clear();
+        Ok(())
+    }
+
     /// Refreshes the log file content if it has changed
     /// Returns true if the content was updated
+    ///
+    /// Appended output is read and parsed incrementally; the whole file used to
+    /// be re-read, re-parsed and re-highlighted every time it grew (checked
+    /// every 100 ms), which is constant work proportional to the log size for
+    /// any app that is logging.
     pub fn refresh(&mut self) -> Result<bool> {
         // Check if file size has changed
         let current_size = std::fs::metadata(&self.log_path)
@@ -1194,155 +1239,133 @@ impl SingleLogView {
         // Remember if we were at the bottom before refresh
         let was_at_bottom = self.viewport.cursor_line + 1 >= self.total_lines;
 
-        // Reload the file
-        let new_content = FileLoader::load(
-            &self.log_path,
-            &self.highlighter.syntax_set,
-            &self.highlighter.theme,
-        )?;
-        let new_total_lines = new_content.len();
+        if current_size < self.complete_bytes {
+            // Truncated (rotated): start over.
+            self.reload()?;
+        } else {
+            use std::io::{Read, Seek, SeekFrom};
 
-        // Update content
-        self.content = new_content;
-        self.total_lines = new_total_lines;
-        self.last_file_size = current_size;
+            let mut file = std::fs::File::open(&self.log_path)?;
+            file.seek(SeekFrom::Start(self.complete_bytes))?;
+            let mut appended = Vec::new();
+            file.read_to_end(&mut appended)?;
+
+            if self.partial_tail {
+                // The previous last line was incomplete: it is in `appended`.
+                self.content.pop();
+            }
+            let complete = appended
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |pos| pos + 1);
+            let text = String::from_utf8_lossy(&appended);
+            let first_line_number = self.content.len() + 1;
+            self.content.extend(FileLoader::parse_lines(
+                &text,
+                first_line_number,
+                &self.highlighter.syntax_set,
+                &self.highlighter.theme,
+            ));
+            self.total_lines = self.content.len();
+            self.complete_bytes += complete as u64;
+            self.last_file_size = self.complete_bytes + (appended.len() - complete) as u64;
+            self.partial_tail = complete < appended.len();
+            // Lines past the old end (and a re-parsed tail) need measuring.
+            self.row_cache.truncate(first_line_number.saturating_sub(1));
+        }
 
         // Shrunk/rotated file: clamp a cursor that fell past the new content
         // so the selection stays visible.
-        self.viewport.clamp_cursor(new_total_lines);
+        self.viewport.clamp_cursor(self.total_lines);
 
         // If we were at the bottom, stay at the bottom (auto-scroll)
-        if was_at_bottom && new_total_lines > 0 {
-            self.viewport.jump_bottom(new_total_lines);
+        if was_at_bottom && self.total_lines > 0 {
+            self.viewport.jump_bottom(self.total_lines);
         }
 
         Ok(true)
     }
 }
 
-/// Counts how many visual rows a set of logical lines occupies when wrapped by
-/// ratatui's `WordWrapper` (`Wrap { trim: false }`, ASCII width 1).
-///
-/// Faithful port of `ratatui_widgets::reflow::WordWrapper::process_input`
-/// reduced to width bookkeeping (only the row count is needed). Tested in
-/// `mod tests` against the real ratatui renderer.
-fn wrapped_row_count(contents: &[String], available_width: usize) -> usize {
-    let max = available_width.max(1);
-    let mut total = 0usize;
-
-    for text in contents {
-        let mut count = 0usize; // wrapped rows for this logical line
-        let mut line_width = 0usize;
-        let mut word_width = 0usize;
-        let mut ws_width = 0usize;
-        let mut pending_line = 0usize;
-        let mut pending_ws: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-        let mut non_ws_prev = false;
-
-        for ch in text.chars() {
-            let is_ws = ch.is_whitespace();
-            // Cell width as unicode-width sees it: tabs/control chars have
-            // width 0, regular printable chars 1 (CJK/emoji are approximated).
-            let w = if ch == '\t' || ch.is_control() { 0 } else { 1 };
-            if w > max {
-                continue;
-            }
-
-            let word_found = non_ws_prev && is_ws;
-            // trim is false, so the trimmed_* overflow branches never trigger
-            let untrimmed_overflow = pending_line == 0 && word_width + ws_width + w > max;
-
-            if word_found || untrimmed_overflow {
-                // pending line always keeps whitespace when trim is false
-                pending_line += ws_width + word_width;
-                line_width += ws_width + word_width;
-                pending_ws.clear();
-                ws_width = 0;
-                word_width = 0;
-            }
-
-            let line_full = line_width >= max;
-            let pending_word_overflow = w > 0 && line_width + ws_width + word_width >= max;
-
-            if line_full || pending_word_overflow {
-                count += 1;
-                // ratatui computes the remaining *wrapped-row* width from the
-                // flushed line BEFORE resetting it (max - flushed_width)
-                let mut remaining = max.saturating_sub(line_width);
-                pending_line = 0;
-                line_width = 0;
-
-                // drain leading whitespace that fits on the wrapped row
-                while let Some(&front_w) = pending_ws.front() {
-                    if front_w > remaining {
-                        break;
-                    }
-                    ws_width -= front_w;
-                    remaining -= front_w;
-                    pending_ws.pop_front();
-                }
-
-                if is_ws && pending_ws.is_empty() {
-                    continue;
-                }
-            }
-
-            if is_ws {
-                ws_width += w;
-                pending_ws.push_back(w);
-            } else {
-                word_width += w;
-            }
-            non_ws_prev = !is_ws;
-        }
-
-        // flush the remaining tail (pending whitespace + word)
-        pending_line = ws_width + word_width;
-        if pending_line != 0 {
-            count += 1;
-        }
-        if count == 0 {
-            count = 1; // an empty logical line still renders as one row
-        }
-        total += count;
-    }
-
-    total
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The width-based emulation is only used to position the cursor reveal;
-    /// the scroll clamp uses ratatui's own `line_count`. These sanity tests
-    /// pin the emulation's invariants (never 0, never less than the width
-    /// lower bound, monotonic with width).
+    fn view_with_lines(dir: &tempfile::TempDir, count: usize) -> SingleLogView {
+        let path = dir.path().join("p_api_local_20260101.log");
+        let body: String = (0..count).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&path, body).unwrap();
+        SingleLogView::new(path, "api".to_string(), Color::White).unwrap()
+    }
+
+    fn render_once(view: &mut SingleLogView, width: u16, height: u16) -> String {
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| view.render_content(frame, frame.area(), true))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// A long log renders its newest lines (bottom pinned) without laying out
+    /// the whole file, and the scroll position stays line-based.
     #[test]
-    fn wrapped_row_count_sanity() {
-        let one = "hello world".to_string();
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&one), 100), 1);
-        assert_eq!(wrapped_row_count(&[String::new()], 40), 1);
-
-        // long single word spills to the width lower bound at least
-        let long = "x".repeat(41);
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&long), 10), 5);
-
-        // wider width never yields more rows
-        assert!(
-            wrapped_row_count(std::slice::from_ref(&long), 30)
-                <= wrapped_row_count(std::slice::from_ref(&long), 10)
-        );
-
-        // empty content is 0 rows, not crash
-        assert_eq!(wrapped_row_count(&[], 10), 0);
+    fn large_log_shows_the_newest_lines() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut view = view_with_lines(&dir, 100_000);
+        let screen = render_once(&mut view, 60, 12);
+        assert!(screen.contains("line 99999"), "{screen}");
+        assert!(!screen.contains("line 99980"), "{screen}");
+        // Only the window (and a little context) was measured.
+        let measured = view.row_cache.iter().filter(|r| r.is_some()).count();
+        assert!(measured < 50, "measured {measured} lines");
+        assert_eq!(view.viewport.top_line, 100_000 - 10);
     }
 
     #[test]
-    fn wrapped_row_count_matches_width_bound_for_plain_words() {
-        // For spacing-free text the emulation matches simple width math
-        let line = "abcd".repeat(10); // 40 chars, no whitespace
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&line), 13), 4);
+    fn moving_the_cursor_up_scrolls_the_window() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut view = view_with_lines(&dir, 1_000);
+        render_once(&mut view, 60, 12);
+        view.viewport.scroll_up(500);
+        let screen = render_once(&mut view, 60, 12);
+        assert!(screen.contains("line 499"), "{screen}");
+        assert!(!screen.contains("line 999"), "{screen}");
+    }
+
+    /// Appended output is parsed incrementally, a partial last line included.
+    #[test]
+    fn refresh_appends_and_completes_the_partial_line() {
+        use std::io::Write;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("p_api_local_20260101.log");
+        std::fs::write(&path, "one\ntw").unwrap();
+        let mut view = SingleLogView::new(path.clone(), "api".to_string(), Color::White).unwrap();
+        assert_eq!(view.total_lines, 2);
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"o\nthree\n").unwrap();
+        assert!(view.refresh().unwrap());
+        let raws: Vec<&str> = view.content.iter().map(|l| l.raw.as_str()).collect();
+        assert_eq!(raws, vec!["one", "two", "three"]);
+        assert_eq!(view.content[2].line_number, 3);
+
+        // Rotation (truncate) reloads from scratch.
+        std::fs::write(&path, "fresh\n").unwrap();
+        assert!(view.refresh().unwrap());
+        assert_eq!(view.total_lines, 1);
     }
 
     #[test]
