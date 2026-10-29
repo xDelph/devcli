@@ -18,11 +18,11 @@ futures = "0.3"
 colored = "2.1"
 inquire = "0.9"
 # unstable-rendered-line-info enables Paragraph::line_count (exact wrapped-row
-# count, used by the log viewer scroll clamp). Pinned by Cargo.lock; ratatui has
-# more options in 0.30-beta where line_count is still unstable.
-ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }
-ratatui-widgets = "0.3.0-beta.0"
-crossterm = "0.27"
+# count, used by the log viewer and the command popup for scrolling).
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+# Same crossterm as ratatui's backend, so there is one copy of it (and of its
+# raw-mode and event state) in the binary.
+crossterm = "0.29"
 # Only the bundled syntaxes/themes are used (JSON log highlighting). The
 # default feature set also pulls the YAML/plist/HTML loaders, and with them
 # the unmaintained yaml-rust (RUSTSEC-2024-0320).
