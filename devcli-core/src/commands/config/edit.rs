@@ -15,7 +15,7 @@ use std::process::Command;
 ///
 /// Example: `devcli config edit`
 ///
-/// Opens the config file in $EDITOR (or vim if not set).
+/// Opens the config file in $VISUAL / $EDITOR (or vim if neither is set).
 /// After editing, suggests running validate to check changes.
 ///
 /// # Errors
@@ -23,32 +23,37 @@ use std::process::Command;
 /// Returns an error if:
 /// - Config file doesn't exist
 /// - Editor command fails
-/// - Cannot determine HOME directory
 pub async fn config_edit() -> Result<()> {
-    // Build path to config file
-    let home = env::var("HOME")?;
-    let config_path = std::path::PathBuf::from(home)
-        .join(".devcli")
-        .join("config.json");
+    // The same file every other command reads: honours devcli_CONFIG_DIR and a
+    // project-local ./.devcli, unlike a hard-coded ~/.devcli/config.json.
+    let config_path = crate::config::loader::get_config_path()?;
 
     // Make sure config exists
     if !config_path.exists() {
         anyhow::bail!("Config file not found. Run 'devcli config init' to create one.");
     }
 
-    // Get editor from environment variable
-    // .unwrap_or_else() provides a default if EDITOR is not set
-    // The closure (|_| ...) is only called if env::var fails
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let editor = env::var("VISUAL")
+        .or_else(|_| env::var("EDITOR"))
+        .ok()
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| "vim".to_string());
 
-    // Launch the editor as a subprocess
-    // Command::new() creates a new command to run
-    // .arg() adds an argument (the file path)
-    // .status() runs the command and waits for it to finish
-    let status = Command::new(&editor).arg(&config_path).status()?;
+    // `EDITOR="code -w"` / `"subl -n -w"` are common: split like a shell would
+    // instead of looking for a program literally named "code -w".
+    let parts = shell_words::split(&editor)
+        .map_err(|e| anyhow::anyhow!("Cannot parse editor command '{}': {}", editor, e))?;
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("Editor command is empty"))?;
+
+    let status = Command::new(program)
+        .args(args)
+        .arg(&config_path)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to launch editor '{}': {}", editor, e))?;
 
     // Check if the editor exited successfully
-    // .success() returns true if exit code was 0
     if !status.success() {
         anyhow::bail!("Editor exited with error");
     }

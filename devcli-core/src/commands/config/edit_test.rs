@@ -313,4 +313,37 @@ mod edit_tests {
         .unwrap_err();
         assert!(err.to_string().contains("Invalid environment"));
     }
+
+    /// `config init` creates the file the other commands read.
+    #[tokio::test]
+    async fn test_config_init_honours_the_config_dir_override() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        crate::commands::config::init::config_init().await.unwrap();
+        assert!(dir.path().join("config.json").exists());
+        assert!(crate::config::load_config().unwrap().projects.is_empty());
+    }
+
+    /// A multi-word $EDITOR (`code -w`) is split like a shell would.
+    #[tokio::test]
+    async fn test_config_edit_runs_an_editor_with_arguments() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        dir.write_config(&config_with_api());
+        let previous_visual = std::env::var_os("VISUAL");
+        let previous_editor = std::env::var_os("EDITOR");
+        std::env::remove_var("VISUAL");
+        std::env::set_var("EDITOR", "sh -c 'echo edited > \"$1.marker\"' sh");
+
+        let result = crate::commands::config::edit::config_edit().await;
+
+        match previous_visual {
+            Some(v) => std::env::set_var("VISUAL", v),
+            None => std::env::remove_var("VISUAL"),
+        }
+        match previous_editor {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+        result.unwrap();
+        assert!(dir.path().join("config.json.marker").exists());
+    }
 }
