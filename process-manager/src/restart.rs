@@ -5,13 +5,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
-pub enum RestartReason {
-    Crash { exit_code: i32 },
-    HealthCheckFailure { check_type: String },
-    Manual,
-}
-
 pub struct RestartGuard {
     file: File,
 }
