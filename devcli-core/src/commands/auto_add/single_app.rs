@@ -37,7 +37,13 @@ pub struct AutoAddArgs {
 impl AutoAddArgs {
     /// True when any non-interactive flag was supplied.
     pub fn is_non_interactive(&self) -> bool {
-        self.yes || self.project.is_some() || self.name.is_some() || self.app_type.is_some()
+        // `--json` means a program is reading the output: never prompt it (many
+        // agents run in a pseudo-terminal, so the TTY check alone is not enough).
+        self.yes
+            || self.project.is_some()
+            || self.name.is_some()
+            || self.app_type.is_some()
+            || crate::output::json_enabled()
     }
 }
 
@@ -46,7 +52,35 @@ impl AutoAddArgs {
 // Args:
 //   - args.path: Optional custom path to scan (defaults to current directory)
 //   - args.yes/--project/--name/--type: non-interactive mode for agents
+/// App types devcli knows how to generate commands and defaults for.
+pub const KNOWN_APP_TYPES: &[&str] = &[
+    "nodejs",
+    "nx",
+    "nx-workspace",
+    "rust",
+    "python",
+    "docker",
+    "redis",
+    "traefik",
+];
+
 pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
+    // A typo (`--type nodjs`) used to be saved as-is.
+    if let Some(app_type) = &args.app_type {
+        if !KNOWN_APP_TYPES.contains(&app_type.as_str()) {
+            let candidates: Vec<String> = KNOWN_APP_TYPES.iter().map(|t| t.to_string()).collect();
+            let hint = config_manager::resolver::fuzzy_match(app_type, &candidates, 3)
+                .map(|t| format!(" Did you mean '{t}'?"))
+                .unwrap_or_default();
+            anyhow::bail!(
+                "Unknown app type '{}'.{} Known types: {}.",
+                app_type,
+                hint,
+                KNOWN_APP_TYPES.join(", ")
+            );
+        }
+    }
+
     // Use provided path or default to current directory
     let target_path = if let Some(p) = &args.path {
         std::path::PathBuf::from(p)
@@ -206,7 +240,8 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         "project": project_name,
         "app": app_name,
         "type": detected.app_type,
-        "path": detected.path,
+        // Absolute, as AGENTS.md documents; the config itself keeps `~/...`.
+        "path": crate::utils::path::expand_path(&detected.path),
     });
     let non_interactive = args.is_non_interactive();
     add_to_config(

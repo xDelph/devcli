@@ -167,13 +167,14 @@ running monitor: process and system metrics are then computed from the state.
 devcli --json auto-add --path ./apps/api --yes --project proj --name api --type nodejs
 ```
 
-`--yes` (or any of `--project/--name/--type`) selects non-interactive mode:
+`--yes` (or any of `--project/--name/--type`, or `--json`) selects non-interactive mode:
 detected defaults are accepted without prompting, and env files with an
 ambiguous context are skipped. Without a TTY and without `--yes`, the command
 fails with a clear message. Monorepos and multi-app directories require the
 interactive mode. An app that already exists is not replaced unless `--force`
 is given; its dependencies, health check, restart policy and alternative name
-are then kept.
+are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
+`python`, `docker`, `redis`, `traefik`; `path` in the answer is absolute.
 
 ```json
 { "project": "proj", "app": "api", "type": "nodejs", "path": "/abs/apps/api" }

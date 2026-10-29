@@ -380,4 +380,19 @@ mod tests {
             apps.iter().map(|a| &a.path).collect::<Vec<_>>()
         );
     }
+
+    #[tokio::test]
+    async fn test_auto_add_rejects_unknown_types() {
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "api");
+        let mut args = add_args(app_dir.path(), "api");
+        args.app_type = Some("nodjs".to_string());
+
+        let err = crate::commands::auto_add::auto_add_command(args)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Did you mean 'nodejs'?"), "{err}");
+    }
 }
