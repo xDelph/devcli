@@ -67,13 +67,10 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         local_commands = env.local_commands.clone().unwrap_or_default();
     }
 
-    let suggested_local_default = if local_commands.contains_key("serve") {
-        Some("serve".to_string())
-    } else if local_commands.contains_key("start") {
-        Some("start".to_string())
-    } else {
-        local_commands.keys().next().cloned()
-    };
+    let suggested_local_default = crate::app_detector_support::pick_default_command(
+        Some(&local_commands),
+        &["serve", "start", "dev"],
+    );
 
     Ok(DetectedApp {
         app_type: "nx".to_string(),
@@ -276,13 +273,10 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
     local_commands.insert("migrate".to_string(), format!("{} migrate", nx_cmd));
     local_commands.insert("daemon".to_string(), format!("{} daemon", nx_cmd));
 
-    let suggested_local_default = if local_commands.contains_key("build") {
-        Some("build".to_string())
-    } else if local_commands.contains_key("graph") {
-        Some("graph".to_string())
-    } else {
-        local_commands.keys().next().cloned()
-    };
+    let suggested_local_default = crate::app_detector_support::pick_default_command(
+        Some(&local_commands),
+        &["build", "graph"],
+    );
 
     Ok(DetectedApp {
         app_type: "nx-workspace".to_string(),

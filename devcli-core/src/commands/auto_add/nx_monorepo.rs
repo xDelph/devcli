@@ -119,10 +119,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path, force: bool) -
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
                 orbstack: detected.suggested_orbstack_default.clone(),
-                k8s: detected
-                    .k8s_commands
-                    .as_ref()
-                    .and_then(|cmds| cmds.keys().next().cloned()),
+                k8s: crate::app_detector_support::suggest_k8s_default(&detected.k8s_commands),
                 ..Default::default()
             },
             dockerfile_path: detected.dockerfile_path.clone(),

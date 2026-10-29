@@ -283,47 +283,31 @@ pub fn resolve_dockerfile_path(path: &Path, report: &DetectionReport) -> Option<
     })
 }
 
+pub use app_detector::defaults::pick_default_command;
+
 pub fn suggest_local_default(
     app_type: &str,
     commands: &Option<HashMap<String, String>>,
 ) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    match app_type {
-        "nodejs" | "nx" => {
-            if cmds.contains_key("serve") {
-                return Some("serve".to_string());
-            }
-            if cmds.contains_key("start") {
-                return Some("start".to_string());
-            }
-            if cmds.contains_key("dev") {
-                return Some("dev".to_string());
-            }
-        }
-        "python" | "redis" | "traefik" if cmds.contains_key("start") => {
-            return Some("start".to_string());
-        }
-        _ => {}
-    }
-    cmds.keys().next().cloned()
+    let preferred: &[&str] = match app_type {
+        "nodejs" | "nx" => &["serve", "start", "dev"],
+        // `run` is the dev loop; `start` is the release build.
+        "rust" => &["run", "start"],
+        _ => &["start", "dev", "serve", "run"],
+    };
+    pick_default_command(commands.as_ref(), preferred)
 }
 
 pub fn suggest_docker_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    if cmds.contains_key("run") {
-        Some("run".to_string())
-    } else {
-        cmds.keys().next().cloned()
-    }
+    pick_default_command(commands.as_ref(), &["run", "up", "start"])
 }
 
 pub fn suggest_orbstack_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    if cmds.contains_key("run") {
-        Some("run".to_string())
-    } else {
-        cmds.keys().next().cloned()
-    }
+    pick_default_command(commands.as_ref(), &["run", "up", "start"])
+}
+
+pub fn suggest_k8s_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
+    pick_default_command(commands.as_ref(), &["apply", "up", "install"])
 }
 
 /// Fallback Dockerfile lookup (used when a strategy didn't report dockerfiles).
@@ -557,5 +541,39 @@ mod tests {
 
         assert_eq!(detect_app_type(dir.path()).unwrap(), "nodejs");
         assert_eq!(extract_app_name(dir.path(), "nodejs").unwrap(), "pkg");
+    }
+
+    fn named(names: &[&str]) -> Option<HashMap<String, String>> {
+        Some(
+            names
+                .iter()
+                .map(|n| (n.to_string(), format!("cmd {n}")))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn k8s_default_is_never_destructive() {
+        assert_eq!(
+            suggest_k8s_default(&named(&["delete", "apply", "logs"])).as_deref(),
+            Some("apply")
+        );
+        assert_eq!(suggest_k8s_default(&named(&["delete", "uninstall"])), None);
+    }
+
+    #[test]
+    fn rust_apps_default_to_run() {
+        assert_eq!(
+            suggest_local_default("rust", &named(&["build", "test", "run", "start"])).as_deref(),
+            Some("run")
+        );
+    }
+
+    #[test]
+    fn node_without_dev_scripts_does_not_default_to_deploy() {
+        assert_eq!(
+            suggest_local_default("nodejs", &named(&["deploy", "lint"])).as_deref(),
+            Some("lint")
+        );
     }
 }

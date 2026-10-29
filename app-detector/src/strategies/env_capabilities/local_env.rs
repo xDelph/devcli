@@ -479,8 +479,8 @@ fn suggest_default_command(
         _ => {}
     }
 
-    // Fallback: just use the first available command
-    commands.keys().next().cloned()
+    // Fallback: a deterministic, non-destructive choice
+    crate::defaults::pick_default_command(Some(commands), &[])
 }
 
 #[cfg(test)]
