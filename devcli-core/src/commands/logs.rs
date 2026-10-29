@@ -83,10 +83,16 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
     let tail = tail_lines(&path, args.lines)?;
 
     if json {
+        // AGENTS.md documents `environment` on every successful answer; when the
+        // caller did not filter, report the environment of the file we read.
+        let environment = args
+            .environment
+            .clone()
+            .or_else(|| environment_from_log_name(&path, &resolved.project, &resolved.app_name));
         output::print_json(&LogsOutput {
             project: resolved.project,
             app: resolved.app_name,
-            environment: args.environment,
+            environment,
             file: Some(path.display().to_string()),
             lines: tail,
         })?;
@@ -133,6 +139,16 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
 
     candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     Ok(candidates.into_iter().next().map(|(_, path)| path))
+}
+
+/// Environment part of `{project}_{app}_{env}_{YYYYMMDD}.log`.
+fn environment_from_log_name(path: &Path, project: &str, app: &str) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let rest = name
+        .strip_prefix(&format!("{project}_{app}_"))?
+        .strip_suffix(".log")?;
+    let (env, date) = rest.rsplit_once('_')?;
+    (!env.is_empty() && date.chars().all(|c| c.is_ascii_digit())).then(|| env.to_string())
 }
 
 /// Read the last `n` lines of a file without loading it entirely.
@@ -183,7 +199,7 @@ fn follow(path: &Path, json: bool) -> Result<()> {
         }
         if json {
             let value = serde_json::json!({ "line": line.trim_end_matches(['\n', '\r']) });
-            writeln!(out, "{value}")?;
+            output::print_json_line(&value)?;
         } else {
             out.write_all(line.as_bytes())?;
         }
@@ -209,5 +225,17 @@ mod tests {
         assert_eq!(all.len(), 4);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_environment_from_log_name() {
+        let env = |name: &str| environment_from_log_name(Path::new(name), "proj", "api");
+        assert_eq!(env("proj_api_local_20240101.log").as_deref(), Some("local"));
+        assert_eq!(
+            env("proj_api_docker-compose_20240101.log").as_deref(),
+            Some("docker-compose")
+        );
+        assert_eq!(env("other_api_local_20240101.log"), None);
+        assert_eq!(env("proj_api_local.log"), None);
     }
 }
