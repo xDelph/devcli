@@ -391,7 +391,9 @@ Health Check: api
 
 ### `metrics`
 
-Display metrics from the monitor daemon.
+Display process, system and performance metrics. Fetched from the metrics API
+when `devcli monitor --daemon` is running (`DEVCLI_METRICS_ADDR`, default
+`127.0.0.1:9090`), computed from the state store otherwise.
 
 **Usage**:
 ```bash

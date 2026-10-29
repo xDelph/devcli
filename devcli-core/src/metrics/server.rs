@@ -1,7 +1,7 @@
 // Metrics HTTP server - exposes metrics via JSON API
 //
 // Provides:
-// - HTTP server on localhost:9090
+// - HTTP server on localhost (DEVCLI_METRICS_ADDR, default 127.0.0.1:9090)
 // - GET /metrics endpoint returning JSON
 // - Non-blocking async server
 // - Error handling and logging
@@ -12,15 +12,25 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// Start the metrics HTTP server on localhost:9090
+/// Address the metrics API listens on (`DEVCLI_METRICS_ADDR`, default
+/// `127.0.0.1:9090`). Configurable so two state directories (e.g. a test
+/// config via `devcli_CONFIG_DIR`) can each run a monitor.
+pub fn metrics_addr() -> String {
+    std::env::var("DEVCLI_METRICS_ADDR")
+        .ok()
+        .filter(|addr| !addr.trim().is_empty())
+        .unwrap_or_else(|| "127.0.0.1:9090".to_string())
+}
+
+/// Start the metrics HTTP server on [`metrics_addr`]
 ///
 /// This function spawns a background task that listens for HTTP requests
 /// and serves metrics data as JSON. The server runs indefinitely until
 /// the process exits.
 #[tracing::instrument(skip(collector))]
 pub async fn start_metrics_server(collector: Arc<MetricsCollector>) -> Result<()> {
-    let addr = "127.0.0.1:9090";
-    let listener = TcpListener::bind(addr).await?;
+    let addr = metrics_addr();
+    let listener = TcpListener::bind(&addr).await?;
 
     tracing::info!(
         address = %addr,

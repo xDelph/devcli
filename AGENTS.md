@@ -154,7 +154,8 @@ devcli --json health-check api --env local
 devcli --json metrics
 ```
 
-Returns the raw monitor metrics document (process, system, performance).
+Returns the metrics document (process, system, performance). Works without a
+running monitor: process and system metrics are then computed from the state.
 
 ### `auto-add` (non-interactive)
 
@@ -178,5 +179,6 @@ interactive mode.
 | ------------------- | ------------------------------------------------------------ |
 | `devcli_CONFIG_DIR` | Override the config directory (default `~/.devcli`).         |
 | `DEVCLI_BIN`        | Binary devcli uses when spawning child processes.            |
+| `DEVCLI_METRICS_ADDR` | Metrics API address (default `127.0.0.1:9090`).            |
 | `NO_COLOR`          | Disable colored output.                                      |
 | `LOG_LEVEL`         | `off` / `error` / `warn` / `info` / `debug` / `trace`.       |

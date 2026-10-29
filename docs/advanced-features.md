@@ -340,10 +340,19 @@ Real-time insights into process behavior and performance.
 devcli metrics
 ```
 
-**HTTP API (Raw JSON)**:
+**HTTP API (Raw JSON)**, served while `devcli monitor --daemon` runs:
 ```bash
 curl http://localhost:9090/metrics | jq
 ```
+
+Without a metrics server, `devcli metrics` computes the process and system
+metrics from the state store itself; only the in-memory performance counters
+need the server. The listen address can be changed with
+`DEVCLI_METRICS_ADDR` (default `127.0.0.1:9090`). The API sends no CORS
+headers, so web pages cannot read it.
+
+`health_check_success_rate` is the share of running apps whose latest health
+checks pass.
 
 ### Metrics Categories
 

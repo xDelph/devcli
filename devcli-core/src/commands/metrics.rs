@@ -1,7 +1,7 @@
-// Metrics command - display metrics from the monitor daemon
+// Metrics command - display process and monitor metrics
 //
-// Queries the metrics HTTP API at localhost:9090 and displays
-// formatted metrics information
+// Queries the metrics HTTP API (`devcli monitor --daemon`) when it is up, and
+// otherwise computes the same process/system metrics from the state store.
 
 use crate::Result;
 
@@ -11,53 +11,53 @@ use crate::Result;
 /// human-readable format
 #[tracing::instrument]
 pub async fn metrics_command() -> Result<()> {
-    tracing::info!("Fetching metrics from API");
+    tracing::info!("Fetching metrics");
 
-    let url = "http://127.0.0.1:9090/metrics";
-
-    // Try to fetch metrics
-    match reqwest::get(url).await {
-        Ok(response) => {
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Metrics API returned error: {}. Is the monitor running?",
-                    response.status()
-                );
-            }
-
-            let metrics: crate::metrics::AllMetrics = response.json().await?;
-
-            tracing::debug!(
-                total_processes = metrics.processes.total_processes,
-                "Metrics fetched successfully"
-            );
-
-            // Agents get the raw metrics document; humans get the formatted view.
-            if crate::output::json_enabled() {
-                crate::output::print_json(&metrics)?;
-                return Ok(());
-            }
-
-            // Display metrics in a formatted way
-            display_metrics(&metrics);
-
-            Ok(())
+    let metrics = match fetch_from_api().await? {
+        Some(metrics) => metrics,
+        // No metrics server: pm-daemon (spawned by `start`) does not run one.
+        // Every process/system figure comes from the state store anyway, so
+        // compute it here instead of failing; only the in-memory performance
+        // counters of a running `monitor --daemon` are unavailable.
+        None => {
+            crate::metrics::MetricsCollector::new()
+                .collect_all()
+                .await?
         }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to fetch metrics");
+    };
 
-            // Check if it's a connection error
-            if e.is_connect() {
-                anyhow::bail!(
-                    "Failed to connect to metrics API at {}.\n\
-                    Is the monitor daemon running? Try: devcli monitor --daemon",
-                    url
-                );
-            } else {
-                anyhow::bail!("Failed to fetch metrics: {}", e);
-            }
-        }
+    tracing::debug!(
+        total_processes = metrics.processes.total_processes,
+        "Metrics collected"
+    );
+
+    // Agents get the raw metrics document; humans get the formatted view.
+    if crate::output::json_enabled() {
+        crate::output::print_json(&metrics)?;
+        return Ok(());
     }
+
+    display_metrics(&metrics);
+    Ok(())
+}
+
+/// Metrics from a running metrics server, or `None` if none is listening.
+async fn fetch_from_api() -> Result<Option<crate::metrics::AllMetrics>> {
+    let url = format!("http://{}/metrics", crate::metrics::server::metrics_addr());
+
+    let response = match reqwest::get(&url).await {
+        Ok(response) => response,
+        Err(e) if e.is_connect() => {
+            tracing::debug!(url = %url, "No metrics server, collecting locally");
+            return Ok(None);
+        }
+        Err(e) => anyhow::bail!("Failed to fetch metrics from {}: {}", url, e),
+    };
+
+    if !response.status().is_success() {
+        anyhow::bail!("Metrics API at {} returned {}", url, response.status());
+    }
+    Ok(Some(response.json().await?))
 }
 
 /// Display metrics in a human-readable format
