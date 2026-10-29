@@ -21,7 +21,10 @@ struct NxJson {
 
 #[derive(Deserialize)]
 struct PackageJson {
-    name: String,
+    /// Optional, see the Node.js strategy: a nameless root package.json made
+    /// the whole Nx strategy fail.
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
@@ -58,14 +61,13 @@ impl DetectionStrategy for NxStrategy {
         // Parse package.json for monorepo name
         let _package_name = if ctx.file_exists("package.json") {
             let package_json: PackageJson = ctx.parse_json("package.json")?;
-            metadata.insert(
-                "package_name".to_string(),
-                serde_json::json!(package_json.name),
-            );
+            if let Some(ref name) = package_json.name {
+                metadata.insert("package_name".to_string(), serde_json::json!(name));
+            }
             if let Some(ref version) = package_json.version {
                 metadata.insert("package_version".to_string(), serde_json::json!(version));
             }
-            Some(package_json.name)
+            package_json.name
         } else {
             None
         };
