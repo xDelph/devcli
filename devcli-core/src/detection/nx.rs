@@ -62,7 +62,8 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
     let report = crate::app_detector_support::detect_single(app_path)?;
     let env = crate::app_detector_support::build_detected_app(app_path, &report)?;
 
-    let mut local_commands = nx_show_project_commands(&app_name, workspace_root);
+    let project_name = nx_project_name(app_path, &app_name);
+    let mut local_commands = nx_show_project_commands(&project_name, workspace_root);
     if local_commands.is_empty() {
         local_commands = env.local_commands.clone().unwrap_or_default();
     }
@@ -92,38 +93,63 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
     })
 }
 
-fn nx_show_project_commands(app_name: &str, workspace_root: &Path) -> HashMap<String, String> {
+/// The Nx project name of `app_path`.
+///
+/// Nx addresses projects by the name in `project.json` (or `package.json`),
+/// often scoped (`@org/web`), not by folder; asking for the folder name made
+/// `nx show project` fail and the app fall back to generic commands.
+fn nx_project_name(app_path: &Path, folder_name: &str) -> String {
+    ["project.json", "package.json"]
+        .iter()
+        .filter_map(|file| fs::read_to_string(app_path.join(file)).ok())
+        .filter_map(|content| serde_json::from_str::<Value>(&content).ok())
+        .find_map(|json| json.get("name")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| folder_name.to_string())
+}
+
+/// `nx show project <name> --json` targets, as `npx nx run <name>:<target>`.
+///
+/// Runs the workspace's own nx binary when installed, otherwise
+/// `npx --no-install nx`: plain `npx nx` with no local nx silently downloaded
+/// it from the registry (stdin is not a terminal, so npx assumes "yes").
+fn nx_show_project_commands(project_name: &str, workspace_root: &Path) -> HashMap<String, String> {
     let mut local_commands = HashMap::new();
 
-    for nx_cmd in &["npx nx", "nx"] {
-        let mut cmd = std::process::Command::new(if nx_cmd.contains("npx") { "npx" } else { "nx" });
-        if nx_cmd.contains("npx") {
-            cmd.arg("nx");
-        }
+    let local_bin = workspace_root.join("node_modules/.bin/nx");
+    let mut invocations: Vec<(std::path::PathBuf, Vec<&str>)> = Vec::new();
+    if local_bin.is_file() {
+        invocations.push((local_bin, vec![]));
+    }
+    invocations.push(("npx".into(), vec!["--no-install", "nx"]));
+    invocations.push(("nx".into(), vec![]));
 
-        if let Ok(output) = cmd
-            .args(["show", "project", app_name, "--json"])
+    for (program, prefix) in invocations {
+        let Ok(output) = std::process::Command::new(&program)
+            .args(&prefix)
+            .args(["show", "project", project_name, "--json"])
             .current_dir(workspace_root)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .output()
-        {
-            if output.status.success() {
-                if let Ok(json_str) = String::from_utf8(output.stdout) {
-                    if let Ok(project_config) = serde_json::from_str::<Value>(&json_str) {
-                        if let Some(targets) =
-                            project_config.get("targets").and_then(|t| t.as_object())
-                        {
-                            for (target_name, _) in targets {
-                                local_commands.insert(
-                                    target_name.clone(),
-                                    format!("{} run {}:{}", nx_cmd, app_name, target_name),
-                                );
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
         }
+        let Some(targets) = serde_json::from_slice::<Value>(&output.stdout)
+            .ok()
+            .and_then(|config| config.get("targets")?.as_object().cloned())
+        else {
+            continue;
+        };
+        for target_name in targets.keys() {
+            local_commands.insert(
+                target_name.clone(),
+                format!("npx nx run {}:{}", project_name, target_name),
+            );
+        }
+        break;
     }
 
     local_commands
@@ -395,5 +421,19 @@ mod tests {
             .get("build")
             .unwrap()
             .contains("--context orbstack"));
+    }
+
+    #[test]
+    fn nx_project_name_prefers_project_json() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(nx_project_name(dir.path(), "web"), "web");
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"@org/web-pkg"}"#,
+        )
+        .unwrap();
+        assert_eq!(nx_project_name(dir.path(), "web"), "@org/web-pkg");
+        std::fs::write(dir.path().join("project.json"), r#"{"name":"@org/web"}"#).unwrap();
+        assert_eq!(nx_project_name(dir.path(), "web"), "@org/web");
     }
 }
