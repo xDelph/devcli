@@ -23,7 +23,7 @@ thiserror = "1.0"
 once_cell = "1.19"
 
 # Interactive prompts (optional)
-inquire = { version = "0.7", optional = true }
+inquire = { version = "0.9", optional = true }
 
 # File watching (optional)
 notify = { version = "6.1", optional = true }

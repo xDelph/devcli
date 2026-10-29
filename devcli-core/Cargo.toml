@@ -14,7 +14,7 @@ chrono.workspace = true
 dirs = "5.0"
 futures = "0.3"
 colored = "2.1"
-inquire = "0.7"
+inquire = "0.9"
 # unstable-rendered-line-info enables Paragraph::line_count (exact wrapped-row
 # count, used by the log viewer scroll clamp). Pinned by Cargo.lock; ratatui has
 # more options in 0.30-beta where line_count is still unstable.
