@@ -352,4 +352,32 @@ mod tests {
         assert_eq!(app.alternative_name.as_deref(), Some("Backend"));
         assert_eq!(app.dependencies.len(), 1);
     }
+
+    /// A Python service with a virtualenv and an `app/` package is one app.
+    #[test]
+    fn test_python_service_with_venv_and_package_is_a_single_app() {
+        let root = create_temp_dir();
+        fs::write(
+            root.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("main.py"), "print('hi')\n").unwrap();
+        fs::create_dir_all(root.path().join("app")).unwrap();
+        fs::write(root.path().join("app/__init__.py"), "").unwrap();
+        fs::write(root.path().join("app/routes.py"), "x = 1\n").unwrap();
+        let site = root.path().join(".venv/lib/python3.12/site-packages/pkg");
+        fs::create_dir_all(&site).unwrap();
+        fs::write(site.join("mod.py"), "y = 2\n").unwrap();
+        fs::create_dir_all(root.path().join("venv/lib")).unwrap();
+        fs::write(root.path().join("venv/lib/z.py"), "z = 3\n").unwrap();
+
+        let apps = discover_all_apps(root.path()).unwrap();
+        assert_eq!(
+            apps.len(),
+            1,
+            "{:?}",
+            apps.iter().map(|a| &a.path).collect::<Vec<_>>()
+        );
+    }
 }

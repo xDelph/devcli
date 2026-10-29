@@ -258,7 +258,9 @@ pub fn discover_all_apps(
                 }
 
                 // Discover individual apps in this subdirectory
-                discovered_apps.extend(discover_individual_apps(&entry.path())?);
+                if has_project_manifest(&entry.path()) {
+                    discovered_apps.extend(discover_individual_apps(&entry.path())?);
+                }
 
                 // Standard monorepo container dirs (apps/, packages/, libs/, …)
                 // hold the real projects one level deeper — recurse into them
@@ -312,7 +314,9 @@ fn discover_apps_in_container(
                 continue;
             }
 
-            apps.extend(discover_individual_apps(&entry.path())?);
+            if has_project_manifest(&entry.path()) {
+                apps.extend(discover_individual_apps(&entry.path())?);
+            }
         }
     }
 
@@ -324,23 +328,72 @@ fn normalize_scan_root(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn should_skip_scan_dir(dir_name: &str) -> bool {
-    matches!(
-        dir_name,
-        "node_modules"
-            | ".git"
-            | "target"
-            | "dist"
-            | "build"
-            | ".next"
-            | "coverage"
-            | ".cursor"
-            | ".github"
-            | ".obsidian"
-            | ".kiro"
-            | "docs"
-            | "scripts"
-            | "reports"
-    )
+    // Hidden directories are tooling state (.git, .venv, .turbo, .nx, .tox,
+    // .mypy_cache, ...), never an app of their own.
+    dir_name.starts_with('.')
+        || matches!(
+            dir_name,
+            "node_modules"
+                | "venv"
+                | "__pycache__"
+                | "vendor"
+                | "target"
+                | "dist"
+                | "build"
+                | ".next"
+                | "coverage"
+                | ".cursor"
+                | ".github"
+                | ".obsidian"
+                | ".kiro"
+                | "docs"
+                | "scripts"
+                | "reports"
+        )
+}
+
+/// Whether `dir` holds a project of its own rather than source files of the
+/// project around it.
+///
+/// Without this, a Python package directory (`app/` of a FastAPI service) was
+/// detected as a second app through its `.py` files, and `auto-add --yes`
+/// refused the very directory that is the app ("Multiple apps detected").
+fn has_project_manifest(dir: &std::path::Path) -> bool {
+    const MANIFESTS: &[&str] = &[
+        "package.json",
+        "Cargo.toml",
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "Pipfile",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "Gemfile",
+        "composer.json",
+        "mix.exs",
+        "project.json",
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ];
+    if MANIFESTS.iter().any(|m| dir.join(m).is_file()) {
+        return true;
+    }
+    // Config-file apps (redis*.conf, traefik*.yml) are discovered by file name.
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            (name.starts_with("redis") && (name.ends_with(".conf") || name.ends_with(".config")))
+                || (name.starts_with("traefik")
+                    && (name.ends_with(".yml")
+                        || name.ends_with(".yaml")
+                        || name.ends_with(".toml")))
+        })
+    })
 }
 
 // Discover individual config files as separate apps in a single directory
