@@ -65,6 +65,43 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+/// Put the terminal back the way the shell expects it: mouse released,
+/// normal screen, raw mode off, cursor visible. Every step is attempted even
+/// when an earlier one fails, and errors are ignored - there is nothing better
+/// to do with them on the way out.
+fn restore_terminal() {
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, DisableMouseCapture);
+    let _ = execute!(stdout, LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout, crossterm::cursor::Show);
+}
+
+/// Restores the terminal when dropped (error returns, unwinding).
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
+/// Restore the terminal before the panic message is printed.
+///
+/// Without it a panic in the TUI (or in one of its tasks) left the shell in
+/// raw mode on the alternate screen with the mouse captured: the message was
+/// unreadable and the terminal unusable until `reset`.
+fn install_restore_on_panic() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore_terminal();
+            previous(info);
+        }));
+    });
+}
+
 /// The main TUI application struct
 /// Manages the terminal, state, and event loop
 pub struct TuiApp {
@@ -205,8 +242,11 @@ impl TuiApp {
     pub async fn run(&mut self) -> Result<()> {
         crate::debug!("TuiApp::run() starting");
 
-        // Setup terminal
+        // Setup terminal. From here on the terminal is restored however this
+        // function ends: normal return, error (`?`), or a panic anywhere.
+        install_restore_on_panic();
         enable_raw_mode().context("Failed to enable raw mode")?;
+        let _restore = TerminalGuard;
         let mut stdout = io::stdout();
         // Capture the mouse so wheel events reach the app (routed to scroll in
         // Runtime). In the alternate screen this only enables scrolling; text
@@ -229,13 +269,11 @@ impl TuiApp {
         // Stop the background polling task
         polling_handle.abort();
 
-        // Cleanup terminal
-        execute!(terminal.backend_mut(), DisableMouseCapture)
-            .context("Failed to disable mouse capture")?;
-        disable_raw_mode().context("Failed to disable raw mode")?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)
-            .context("Failed to leave alternate screen")?;
-        terminal.show_cursor().context("Failed to show cursor")?;
+        // Cleanup terminal (also done by `_restore` on every other way out).
+        // Each step is attempted even if an earlier one fails: the old chain of
+        // `?` left raw mode on if releasing the mouse failed.
+        restore_terminal();
+        let _ = terminal.show_cursor();
 
         result
     }
