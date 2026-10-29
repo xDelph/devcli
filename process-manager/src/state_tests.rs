@@ -348,4 +348,49 @@ mod tests {
         let mtime_after_delete = std::fs::metadata(&status_path).unwrap().modified().unwrap();
         assert!(mtime_after_delete >= mtime_after_save);
     }
+
+    /// Readers must never observe a half-written entry while it is rewritten.
+    #[test]
+    fn test_concurrent_save_never_hides_the_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().to_path_buf();
+        let store = StateStore::new(dir.clone()).unwrap();
+        let mut process = create_test_process("busy-app", 4242);
+        // A large entry makes a torn write far more likely to be observed.
+        for i in 0..4000 {
+            process.metadata.insert(format!("k{i}"), "v".repeat(64));
+        }
+        store.save(&process).unwrap();
+
+        let writer = std::thread::spawn(move || {
+            let store = StateStore::new(dir).unwrap();
+            for _ in 0..300 {
+                store.save(&process).unwrap();
+            }
+        });
+
+        while !writer.is_finished() {
+            let listed = store.list().unwrap();
+            assert_eq!(listed.len(), 1, "entry vanished during a concurrent save");
+        }
+        writer.join().unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind");
+    }
+
+    /// Deleting an entry someone else already removed is not an error.
+    #[test]
+    fn test_delete_twice_is_ok() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        store.save(&create_test_process("gone", 1)).unwrap();
+        store.delete("gone").unwrap();
+        store.delete("gone").unwrap();
+        assert!(store.load("gone").unwrap().is_none());
+    }
 }

@@ -50,17 +50,54 @@ impl StateStore {
     pub fn save(&self, process: &ManagedProcess) -> Result<()> {
         let path = self.base_dir.join(format!("{}.json", process.id));
         let json = serde_json::to_string_pretty(process)?;
-        fs::write(path, json)?;
+        self.write_atomic(&path, json.as_bytes())?;
         self.notify_change()?;
         Ok(())
     }
 
+    /// Replace `path` in one step: write a sibling temp file, then rename it.
+    ///
+    /// The daemon, the CLI and the TUI read these files concurrently. A plain
+    /// `fs::write` truncates first, so a reader could see an empty or half-written
+    /// file, which `list()` silently skips: the monitor then believed nothing was
+    /// tracked and exited. A rename is atomic, so readers see the old or the new
+    /// content, never a mix.
+    fn write_atomic(&self, path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("state");
+        // Leading dot and non-.json suffix: `list()` never picks up a temp file.
+        let tmp = self
+            .base_dir
+            .join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+
+        let result = (|| -> Result<()> {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .with_context(|| format!("Failed to create {}", tmp.display()))?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)
+                .with_context(|| format!("Failed to replace {}", path.display()))?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
+    }
+
     pub fn load(&self, id: &str) -> Result<Option<ManagedProcess>> {
         let path = self.base_dir.join(format!("{}.json", id));
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = fs::read_to_string(path)?;
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            // Deleted between our call and the read (another stop/cleanup).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         let process = serde_json::from_str(&content)?;
         Ok(Some(process))
     }
@@ -83,9 +120,13 @@ impl StateStore {
 
     pub fn delete(&self, id: &str) -> Result<()> {
         let path = self.base_dir.join(format!("{}.json", id));
-        if path.exists() {
-            fs::remove_file(path)?;
-            self.notify_change()?;
+        match fs::remove_file(path) {
+            Ok(()) => self.notify_change()?,
+            // Two concurrent `cleanup_dead()` calls (daemon tick + a CLI command)
+            // race to delete the same entry; losing that race is not an error, and
+            // used to abort the whole `start`/`status` with ENOENT.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
         Ok(())
     }
