@@ -143,7 +143,7 @@ where
         .map_err(|e| Error::SaveError(format!("Failed to serialize TOML: {}", e)))?;
 
         // Write to file
-        fs::write(&path, content).map_err(|e| {
+        crate::utils::fs::write_atomic(&path, content.as_bytes()).map_err(|e| {
             Error::SaveError(format!("Failed to write to {}: {}", path.display(), e))
         })?;
 

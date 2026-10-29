@@ -2,6 +2,7 @@
 //!
 //! This module provides various utility functions used throughout the library.
 
+pub mod fs;
 pub mod path;
 pub mod string;
 
