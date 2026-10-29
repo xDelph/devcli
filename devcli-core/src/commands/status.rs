@@ -61,7 +61,7 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
 
     if args.show_deps {
         if let Some(app_name) = args.app_name {
-            return show_with_dependencies(app_name, &store).await;
+            return show_with_dependencies(app_name, args.project.as_deref(), &store).await;
         }
     }
 
@@ -157,7 +157,7 @@ async fn status_json(
     if args.show_deps {
         if let Some(app_name) = &args.app_name {
             let config = load_config()?;
-            let resolved = resolve_app(&config, app_name, None)?;
+            let resolved = resolve_app(&config, app_name, args.project.as_deref())?;
             let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
             let deps: Vec<_> = dependencies
@@ -227,10 +227,11 @@ async fn status_json(
 #[tracing::instrument(skip(store), fields(app_name = %app_name))]
 async fn show_with_dependencies(
     app_name: String,
+    project: Option<&str>,
     store: &process_manager::StateStore,
 ) -> Result<()> {
     let config = load_config()?;
-    let resolved = resolve_app(&config, &app_name, None)?;
+    let resolved = resolve_app(&config, &app_name, project)?;
     let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
     println!(
