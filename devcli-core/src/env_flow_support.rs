@@ -41,16 +41,11 @@ pub fn context_from_env(environment: &str) -> RuntimeContext {
     RuntimeContext::from(environment)
 }
 
+/// Env vars as handed to the child process. An empty value stays empty:
+/// `DEBUG=` means "set to nothing", which many tools treat as false.
 fn env_vars_to_map(vars: EnvVars) -> HashMap<String, String> {
     vars.iter()
-        .map(|(key, value)| {
-            let value = if value.is_empty() {
-                "XXX".to_string()
-            } else {
-                value.to_string()
-            };
-            (key.to_string(), value)
-        })
+        .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect()
 }
 
@@ -467,13 +462,13 @@ line2"
     }
 
     #[test]
-    fn empty_value_becomes_xxx() {
+    fn empty_value_stays_empty() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".env");
         fs::write(&path, "EMPTY=\nFILLED=value\n").unwrap();
 
         let vars = load_file(&path).unwrap();
-        assert_eq!(vars.get("EMPTY"), Some(&"XXX".to_string()));
+        assert_eq!(vars.get("EMPTY"), Some(&String::new()));
         assert_eq!(vars.get("FILLED"), Some(&"value".to_string()));
     }
 
