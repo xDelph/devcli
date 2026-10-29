@@ -74,36 +74,80 @@ fn render_block() -> String {
 }
 
 /// Locate the current block in `content`, as (start, end) byte offsets.
-fn find_block(content: &str) -> Option<(usize, usize)> {
-    let start = content.find(MARKER_START)?;
-    let stop_at = content[start..].find(MARKER_STOP)? + start;
-    let end = stop_at + MARKER_STOP.len();
-    Some((start, end))
+///
+/// Errors on a damaged block: with a start marker but no stop marker, the old
+/// code appended a second block, and the next run then treated everything from
+/// the first start to the new stop - the user's own text included - as the
+/// block to replace or remove.
+fn find_block(content: &str, path: &Path) -> Result<Option<(usize, usize)>> {
+    let starts = content.matches(MARKER_START).count();
+    let stops = content.matches(MARKER_STOP).count();
+    if starts == 0 && stops == 0 {
+        return Ok(None);
+    }
+
+    let well_formed = starts == 1 && stops == 1 && {
+        let start = content.find(MARKER_START).unwrap_or(usize::MAX);
+        content.find(MARKER_STOP).is_some_and(|stop| stop > start)
+    };
+    if !well_formed {
+        anyhow::bail!(
+            "{} has {} devcli start and {} stop marker(s) instead of one block; \
+             fix the markers by hand so no text of yours is overwritten",
+            path.display(),
+            starts,
+            stops
+        );
+    }
+
+    let start = content.find(MARKER_START).unwrap_or_default();
+    let stop_at = content.find(MARKER_STOP).unwrap_or_default();
+    Ok(Some((start, stop_at + MARKER_STOP.len())))
 }
 
-/// Write `content` to `path`, backing up any previous file first.
+/// Current content of `path`, or `None` if it does not exist.
 ///
-/// The backup is the *previous* content, so it always represents "before devcli
-/// touched this", and it is written before the write can fail.
-fn write_with_backup(path: &Path, content: &str) -> Result<Option<PathBuf>> {
+/// Any other failure is an error: falling back to "" for an unreadable or
+/// non-UTF-8 AGENTS.md made `install-agents` replace the whole file with the
+/// devcli block (and the backup failed the same way, so nothing was kept).
+fn read_existing(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(anyhow::anyhow!(
+            "Cannot read {} ({e}); not modifying it",
+            path.display()
+        )),
+    }
+}
+
+/// Write `content` to `path`, backing up the previous version first.
+///
+/// The backup holds the file as it was just before this run (it is replaced
+/// on every run), and it is written before the file itself can be touched.
+fn write_with_backup(
+    path: &Path,
+    previous: Option<&str>,
+    content: &str,
+) -> Result<Option<PathBuf>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let backup = match std::fs::read_to_string(path) {
-        Ok(existing) => {
+    let backup = match previous {
+        Some(existing) => {
             let backup_path =
                 path.with_extension(match path.extension().and_then(|e| e.to_str()) {
                     Some(ext) => format!("{ext}.backup"),
                     None => "backup".to_string(),
                 });
-            std::fs::write(&backup_path, &existing)?;
+            std::fs::write(&backup_path, existing)?;
             Some(backup_path)
         }
-        Err(_) => None,
+        None => None,
     };
 
-    std::fs::write(path, content)?;
+    config_manager::utils::fs::write_atomic(path, content.as_bytes())?;
     Ok(backup)
 }
 
@@ -111,10 +155,11 @@ fn write_with_backup(path: &Path, content: &str) -> Result<Option<PathBuf>> {
 #[tracing::instrument(skip(args))]
 pub async fn install_agents_command(args: &InstallAgentsArgs) -> Result<()> {
     let path = target_path(args.global, args.local.as_deref())?;
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let previous = read_existing(&path)?;
+    let existing = previous.clone().unwrap_or_default();
     let block = render_block();
 
-    let (updated, action) = match find_block(&existing) {
+    let (updated, action) = match find_block(&existing, &path)? {
         Some((start, end)) => {
             tracing::info!("refreshing existing devcli block");
             (
@@ -133,7 +178,7 @@ pub async fn install_agents_command(args: &InstallAgentsArgs) -> Result<()> {
         }
     };
 
-    let backup = write_with_backup(&path, &updated)?;
+    let backup = write_with_backup(&path, previous.as_deref(), &updated)?;
 
     if crate::output::json_enabled() {
         crate::output::print_json(&serde_json::json!({
@@ -157,9 +202,9 @@ pub async fn install_agents_command(args: &InstallAgentsArgs) -> Result<()> {
 pub async fn uninstall_agents_command(args: &UninstallAgentsArgs) -> Result<()> {
     let path = target_path(args.global, args.local.as_deref())?;
 
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => {
+    let existing = match read_existing(&path)? {
+        Some(c) => c,
+        None => {
             if crate::output::json_enabled() {
                 crate::output::print_json(&serde_json::json!({
                     "action": "noop", "path": path.display().to_string(),
@@ -171,7 +216,7 @@ pub async fn uninstall_agents_command(args: &UninstallAgentsArgs) -> Result<()> 
         }
     };
 
-    let (start, end) = match find_block(&existing) {
+    let (start, end) = match find_block(&existing, &path)? {
         Some(b) => b,
         None => {
             if crate::output::json_enabled() {
@@ -192,7 +237,7 @@ pub async fn uninstall_agents_command(args: &UninstallAgentsArgs) -> Result<()> 
     let mut rest = format!("{}{}", &existing[..start], &existing[end..]);
     rest = rest.trim_start_matches('\n').to_string();
 
-    let backup = write_with_backup(&path, &rest)?;
+    let backup = write_with_backup(&path, Some(&existing), &rest)?;
 
     if crate::output::json_enabled() {
         crate::output::print_json(&serde_json::json!({
@@ -216,9 +261,13 @@ mod tests {
     #[test]
     fn block_is_detected_and_replaced() {
         let first = format!("# mine\n\n{}\nrest\n", render_block());
-        let (s, _e) = find_block(&first).expect("block found");
+        let (s, _e) = find_block(&first, Path::new("AGENTS.md"))
+            .unwrap()
+            .expect("block found");
         let second = format!("{}{}tail\n", &first[..s], render_block());
-        let (s2, e2) = find_block(&second).unwrap();
+        let (s2, e2) = find_block(&second, Path::new("AGENTS.md"))
+            .unwrap()
+            .unwrap();
         // Replacement keeps one block only and preserves the user's content.
         assert_eq!(second.matches(MARKER_START).count(), 1);
         assert!(second.starts_with("# mine"));
@@ -229,7 +278,9 @@ mod tests {
     #[test]
     fn removal_preserves_user_content() {
         let content = format!("# head\n\n{}\n\n# foot\n", render_block());
-        let (s, e) = find_block(&content).unwrap();
+        let (s, e) = find_block(&content, Path::new("AGENTS.md"))
+            .unwrap()
+            .unwrap();
         let rest = format!("{}{}", &content[..s], &content[e..]);
         assert!(rest.contains("# head"));
         assert!(rest.contains("# foot"));
@@ -239,7 +290,9 @@ mod tests {
 
     #[test]
     fn no_block_is_a_noop() {
-        assert!(find_block("# just my notes\n").is_none());
+        assert!(find_block("# just my notes\n", Path::new("AGENTS.md"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -269,5 +322,29 @@ mod tests {
         let block = render_block();
         assert_eq!(block.matches(MARKER_START).count(), 1);
         assert_eq!(block.matches(MARKER_STOP).count(), 1);
+    }
+
+    #[test]
+    fn a_damaged_block_is_refused() {
+        let path = Path::new("AGENTS.md");
+        let start_only = format!("# mine\n{MARKER_START}\nold rules\n# my notes\n");
+        assert!(find_block(&start_only, path).is_err());
+        let stop_first = format!("{MARKER_STOP}\n# mine\n{MARKER_START}\n");
+        assert!(find_block(&stop_first, path).is_err());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn a_non_utf8_agents_md_is_left_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("AGENTS.md");
+        std::fs::write(&file, b"# notes \xff\xfe\n").unwrap();
+
+        let args = InstallAgentsArgs {
+            global: false,
+            local: Some(dir.path().to_string_lossy().into_owned()),
+        };
+        assert!(install_agents_command(&args).await.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"# notes \xff\xfe\n");
     }
 }
