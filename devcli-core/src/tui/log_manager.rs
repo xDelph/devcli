@@ -20,6 +20,10 @@ pub struct LogFileInfo {
     pub modified: DateTime<Utc>,
 }
 
+/// Log listings by `(project, app)`, with when they were taken.
+type ListingCache =
+    std::collections::HashMap<(String, String), (std::time::Instant, Vec<LogFileInfo>)>;
+
 /// Manages log file discovery and access
 /// Discovers log files in the ~/.devcli/logs/ directory
 pub struct LogManager {
@@ -28,6 +32,9 @@ pub struct LogManager {
     /// Last known modification time of the logs directory
     /// Used to detect when new log files are created
     last_dir_modified: Option<DateTime<Utc>>,
+    /// Recent listings per `(project, app)`: the status panel asks on every
+    /// redraw, which used to cost a directory read plus a `stat` per file.
+    listing_cache: std::cell::RefCell<ListingCache>,
 }
 
 impl LogManager {
@@ -42,6 +49,7 @@ impl LogManager {
         Ok(Self {
             log_dir,
             last_dir_modified: None,
+            listing_cache: Default::default(),
         })
     }
 
@@ -54,6 +62,21 @@ impl LogManager {
         project_name: &str,
         app_name: &str,
     ) -> Result<Vec<LogFileInfo>> {
+        const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(1);
+        let key = (project_name.to_string(), app_name.to_string());
+        if let Some((at, logs)) = self.listing_cache.borrow().get(&key) {
+            if at.elapsed() < FRESH_FOR {
+                return Ok(logs.clone());
+            }
+        }
+        let logs = self.scan_logs_for_app(project_name, app_name)?;
+        self.listing_cache
+            .borrow_mut()
+            .insert(key, (std::time::Instant::now(), logs.clone()));
+        Ok(logs)
+    }
+
+    fn scan_logs_for_app(&self, project_name: &str, app_name: &str) -> Result<Vec<LogFileInfo>> {
         // Check if log directory exists
         if !self.log_dir.exists() {
             // No logs directory means no logs yet

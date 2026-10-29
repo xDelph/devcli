@@ -1,5 +1,5 @@
 use super::super::{ConfigField, ConfigMode, DeleteType, MainView, PanelFocus};
-use crate::config::loader::load_config;
+use crate::config::loader::load_config_cached;
 use crate::tui::state::AppState;
 use crate::tui::theme::Theme;
 use ratatui::{
@@ -106,7 +106,7 @@ impl MainView {
             ]));
             lines.push(Line::from(""));
 
-            match load_config() {
+            match load_config_cached() {
                 Ok(config) => {
                     if let Some(project) = config.projects.get(&app.project) {
                         if let Some(full_app) = project.apps.get(&app.name) {

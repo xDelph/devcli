@@ -2,7 +2,7 @@
 // Shows confirmation dialog before executing commands and displays execution feedback
 // Follows the design pattern of modal dialogs with clear user feedback
 
-use crate::config::{list_all_apps, load_config};
+use crate::config::{list_all_apps, loader::load_config_cached};
 use crate::tui::theme::Theme;
 use crate::tui::views::log_viewer::app_color_manager::AppColorManager;
 use ratatui::{
@@ -84,7 +84,7 @@ impl CommandPopup {
     ) -> Self {
         // Load config to get all app names for colorization
         // If config loading fails, use empty list (graceful degradation)
-        let all_app_names = load_config()
+        let all_app_names = load_config_cached()
             .map(|config| {
                 list_all_apps(&config)
                     .into_iter()
@@ -140,7 +140,7 @@ impl CommandPopup {
 
         // Load config to get all app names for colorization
         // If config loading fails, use empty list (graceful degradation)
-        let all_app_names = load_config()
+        let all_app_names = load_config_cached()
             .map(|config| {
                 list_all_apps(&config)
                     .into_iter()

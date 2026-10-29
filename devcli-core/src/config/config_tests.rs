@@ -375,4 +375,33 @@ mod tests {
         assert!(warnings.iter().any(|w| w.contains("'future_setting'")));
         assert!(warnings.iter().any(|w| w.contains("'owner'")));
     }
+
+    /// The cached loader follows changes to the file.
+    #[test]
+    fn test_load_config_cached_sees_updates() {
+        let _dir = crate::test_utils::TempConfigDir::new();
+        let app = crate::test_utils::AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "x")
+            .build();
+        let one = crate::test_utils::ConfigBuilder::new()
+            .with_app("p", "a", app.clone())
+            .build();
+        crate::config::save_config(&one).unwrap();
+        assert!(crate::config::loader::load_config_cached()
+            .unwrap()
+            .projects["p"]
+            .apps
+            .contains_key("a"));
+
+        let two = crate::test_utils::ConfigBuilder::new()
+            .with_app("p", "a", app.clone())
+            .with_app("p", "second", app)
+            .build();
+        crate::config::save_config(&two).unwrap();
+        assert!(crate::config::loader::load_config_cached()
+            .unwrap()
+            .projects["p"]
+            .apps
+            .contains_key("second"));
+    }
 }

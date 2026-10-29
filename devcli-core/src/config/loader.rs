@@ -99,6 +99,37 @@ pub fn load_config_or_new() -> Result<Config> {
     })
 }
 
+/// The config, parsed again only when config.json changed on disk.
+///
+/// For render paths that want it on every frame: the TUI's config panel used
+/// to read and parse the whole file (and create the config directory) on each
+/// redraw. A `stat` per call decides whether the cached copy is still valid.
+pub fn load_config_cached() -> Result<Config> {
+    use std::sync::Mutex;
+    type Key = (PathBuf, std::time::SystemTime, u64);
+    static CACHE: Mutex<Option<(Key, Config)>> = Mutex::new(None);
+
+    let path = config_home().join("config.json");
+    let key = match fs::metadata(&path).and_then(|m| Ok((m.modified()?, m.len()))) {
+        Ok((modified, len)) => (path, modified, len),
+        Err(_) => return load_config(),
+    };
+
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((cached_key, config)) = cache.as_ref() {
+            if *cached_key == key {
+                return Ok(config.clone());
+            }
+        }
+    }
+
+    let config = load_config()?;
+    if let Ok(mut cache) = CACHE.lock() {
+        *cache = Some((key, config.clone()));
+    }
+    Ok(config)
+}
+
 pub fn load_config() -> Result<Config> {
     let config_path = get_config_path()?;
     DevCliConfigManager::for_path(&config_path)?.load()
