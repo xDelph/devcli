@@ -140,29 +140,15 @@ impl MainView {
                             let max_name_len = self.calculate_max_command_name_len(full_app);
                             let mut global_cmd_idx = 0;
 
-                            // Render commands for each environment dynamically
-                            let env_configs = [
-                                ("LOCAL", &full_app.commands.local, &full_app.defaults.local),
-                                (
-                                    "DOCKER",
-                                    &full_app.commands.docker,
-                                    &full_app.defaults.docker,
-                                ),
-                                (
-                                    "ORBSTACK",
-                                    &full_app.commands.orbstack,
-                                    &full_app.defaults.orbstack,
-                                ),
-                                ("K8S", &full_app.commands.k8s, &full_app.defaults.k8s),
-                            ];
-
-                            for (env_name, commands, defaults) in env_configs {
+                            // Render commands for each environment, in the order
+                            // every other part of the TUI uses (Environment::all).
+                            for env in crate::config::models::Environment::all() {
                                 self.render_env_commands(
                                     &mut lines,
                                     &mut global_cmd_idx,
-                                    env_name,
-                                    commands,
-                                    defaults,
+                                    env.display_name(),
+                                    full_app.commands.get(env.as_str()),
+                                    full_app.defaults.get(env.as_str()),
                                     max_name_len,
                                     theme,
                                 );
@@ -296,20 +282,11 @@ impl MainView {
     }
 
     fn calculate_max_command_name_len(&self, app: &crate::config::models::App) -> usize {
-        let mut max_len = 15;
-        if let Some(local) = &app.commands.local {
-            max_len = max_len.max(local.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(docker) = &app.commands.docker {
-            max_len = max_len.max(docker.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(orbstack) = &app.commands.orbstack {
-            max_len = max_len.max(orbstack.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(k8s) = &app.commands.k8s {
-            max_len = max_len.max(k8s.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        max_len
+        crate::config::models::Environment::all()
+            .iter()
+            .filter_map(|env| app.commands.get(env.as_str()))
+            .flat_map(|cmds| cmds.keys().map(String::len))
+            .fold(15, usize::max)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -318,8 +295,8 @@ impl MainView {
         lines: &mut Vec<Line<'static>>,
         global_cmd_idx: &mut usize,
         env_name: &str,
-        commands: &Option<std::collections::HashMap<String, String>>,
-        default: &Option<String>,
+        commands: Option<&std::collections::HashMap<String, String>>,
+        default: Option<&String>,
         max_name_len: usize,
         theme: &Theme,
     ) {
@@ -335,7 +312,7 @@ impl MainView {
             for (name, cmd) in sorted_cmds {
                 let is_selected = *global_cmd_idx == self.selected_config_command_idx
                     && self.focus == PanelFocus::DetailPanel;
-                let is_this_default = default.as_ref() == Some(name);
+                let is_this_default = default == Some(name);
 
                 let (prefix, name_style, cmd_style) = if is_selected {
                     (

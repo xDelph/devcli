@@ -206,17 +206,11 @@ impl AppState {
     fn extract_commands(app: &App) -> HashMap<String, Vec<CommandInfo>> {
         let mut commands = HashMap::new();
 
-        // Extract commands for each environment dynamically from the app's commands
-        // Check all possible environment fields
-        let env_maps = [
-            ("local", &app.commands.local),
-            ("docker", &app.commands.docker),
-            ("orbstack", &app.commands.orbstack),
-            ("k8s", &app.commands.k8s),
-        ];
-
-        for (env_key, env_cmds_opt) in env_maps {
-            if let Some(env_cmds) = env_cmds_opt {
+        // Every environment: docker-compose and ci commands used to be left
+        // out, so they could not be run from the TUI at all.
+        for env in crate::config::models::Environment::all() {
+            let env_key = env.as_str();
+            if let Some(env_cmds) = app.commands.get(env_key) {
                 let mut cmd_list: Vec<CommandInfo> = env_cmds
                     .iter()
                     .map(|(name, cmd)| CommandInfo {
@@ -732,5 +726,23 @@ mod selection_tests {
         let a = state.projects.iter().position(|p| p.name == "a").unwrap();
         assert!(!state.projects[a].expanded);
         assert_eq!(state.view_history.len(), 1);
+    }
+
+    #[test]
+    fn commands_of_every_environment_reach_the_tui() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+        let mut app = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm start")
+            .build();
+        app.commands.docker_compose =
+            Some([("up".to_string(), "docker compose up".to_string())].into());
+        app.commands.ci = Some([("test".to_string(), "npm test".to_string())].into());
+        let config = ConfigBuilder::new().with_app("p", "api", app).build();
+
+        let state = AppState::from_config_with_store(&config, &store).unwrap();
+        let commands = &state.projects[0].apps[0].commands;
+        assert!(commands.contains_key("docker-compose"), "{commands:?}");
+        assert!(commands.contains_key("ci"), "{commands:?}");
     }
 }

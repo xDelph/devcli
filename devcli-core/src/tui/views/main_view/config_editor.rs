@@ -49,55 +49,20 @@ impl MainView {
             if let Some(app) = proj.apps.get(app_name) {
                 let mut global_idx = 0;
 
-                // Check local commands
-                if let Some(local) = &app.commands.local {
-                    let mut sorted: Vec<_> = local.iter().collect();
+                // Same order as the config panel renders them.
+                for env in crate::config::models::Environment::all() {
+                    let Some(commands) = app.commands.get(env.as_str()) else {
+                        continue;
+                    };
+                    let mut sorted: Vec<_> = commands.iter().collect();
                     sorted.sort_by_key(|(name, _)| *name);
                     if self.selected_config_command_idx < global_idx + sorted.len() {
                         let idx = self.selected_config_command_idx - global_idx;
                         let (name, cmd) = sorted[idx];
-                        self.load_command_into_form_helper("local", name, cmd);
+                        self.load_command_into_form_helper(env.as_str(), name, cmd);
                         return Ok(());
                     }
                     global_idx += sorted.len();
-                }
-
-                // Check docker commands
-                if let Some(docker) = &app.commands.docker {
-                    let mut sorted: Vec<_> = docker.iter().collect();
-                    sorted.sort_by_key(|(name, _)| *name);
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        let (name, cmd) = sorted[idx];
-                        self.load_command_into_form_helper("docker", name, cmd);
-                        return Ok(());
-                    }
-                    global_idx += sorted.len();
-                }
-
-                // Check orbstack commands
-                if let Some(orbstack) = &app.commands.orbstack {
-                    let mut sorted: Vec<_> = orbstack.iter().collect();
-                    sorted.sort_by_key(|(name, _)| *name);
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        let (name, cmd) = sorted[idx];
-                        self.load_command_into_form_helper("orbstack", name, cmd);
-                        return Ok(());
-                    }
-                    global_idx += sorted.len();
-                }
-
-                // Check k8s commands
-                if let Some(k8s) = &app.commands.k8s {
-                    let mut sorted: Vec<_> = k8s.iter().collect();
-                    sorted.sort_by_key(|(name, _)| *name);
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        let (name, cmd) = sorted[idx];
-                        self.load_command_into_form_helper("k8s", name, cmd);
-                        return Ok(());
-                    }
                 }
             }
         }
@@ -174,40 +139,15 @@ impl MainView {
                 let command_name = self.config_form.edit_command_name.content().to_string();
                 let command_value = self.config_form.edit_command_value.content().to_string();
 
-                match self.config_form.edit_command_env.as_str() {
-                    "local" => {
-                        let local = app.commands.local.get_or_insert_with(HashMap::new);
-                        let is_first = local.is_empty();
-                        local.insert(command_name.clone(), command_value);
-                        if is_first {
-                            app.defaults.local = Some(command_name);
-                        }
+                if let Some(env) = crate::config::models::Environment::from_string(
+                    self.config_form.edit_command_env.as_str(),
+                ) {
+                    let commands = app.commands.entry(env);
+                    let is_first = commands.is_empty();
+                    commands.insert(command_name.clone(), command_value);
+                    if is_first {
+                        *app.defaults.slot_mut(env) = Some(command_name);
                     }
-                    "docker" => {
-                        let docker = app.commands.docker.get_or_insert_with(HashMap::new);
-                        let is_first = docker.is_empty();
-                        docker.insert(command_name.clone(), command_value);
-                        if is_first {
-                            app.defaults.docker = Some(command_name);
-                        }
-                    }
-                    "orbstack" => {
-                        let orbstack = app.commands.orbstack.get_or_insert_with(HashMap::new);
-                        let is_first = orbstack.is_empty();
-                        orbstack.insert(command_name.clone(), command_value);
-                        if is_first {
-                            app.defaults.orbstack = Some(command_name);
-                        }
-                    }
-                    "k8s" => {
-                        let k8s = app.commands.k8s.get_or_insert_with(HashMap::new);
-                        let is_first = k8s.is_empty();
-                        k8s.insert(command_name.clone(), command_value);
-                        if is_first {
-                            app.defaults.k8s = Some(command_name);
-                        }
-                    }
-                    _ => {}
                 }
 
                 save_config(&config)?;
@@ -226,40 +166,15 @@ impl MainView {
 
         if let Some(proj) = config.projects.get_mut(project) {
             if let Some(app) = proj.apps.get_mut(app_name) {
-                match self.config_form.edit_command_env.as_str() {
-                    "local" => {
-                        if let Some(local) = &mut app.commands.local {
-                            local.insert(
-                                self.config_form.edit_command_name.content().to_string(),
-                                self.config_form.edit_command_value.content().to_string(),
-                            );
-                        }
-                    }
-                    "docker" => {
-                        if let Some(docker) = &mut app.commands.docker {
-                            docker.insert(
-                                self.config_form.edit_command_name.content().to_string(),
-                                self.config_form.edit_command_value.content().to_string(),
-                            );
-                        }
-                    }
-                    "orbstack" => {
-                        if let Some(orbstack) = &mut app.commands.orbstack {
-                            orbstack.insert(
-                                self.config_form.edit_command_name.content().to_string(),
-                                self.config_form.edit_command_value.content().to_string(),
-                            );
-                        }
-                    }
-                    "k8s" => {
-                        if let Some(k8s) = &mut app.commands.k8s {
-                            k8s.insert(
-                                self.config_form.edit_command_name.content().to_string(),
-                                self.config_form.edit_command_value.content().to_string(),
-                            );
-                        }
-                    }
-                    _ => {}
+                if let Some(commands) = crate::config::models::Environment::from_string(
+                    self.config_form.edit_command_env.as_str(),
+                )
+                .and_then(|env| app.commands.slot_mut(env).as_mut())
+                {
+                    commands.insert(
+                        self.config_form.edit_command_name.content().to_string(),
+                        self.config_form.edit_command_value.content().to_string(),
+                    );
                 }
 
                 save_config(&config)?;
@@ -498,40 +413,14 @@ impl MainView {
 
         if let Some(proj) = config.projects.get_mut(project) {
             if let Some(app) = proj.apps.get_mut(app_name) {
-                match env {
-                    "local" => {
-                        if let Some(local) = &mut app.commands.local {
-                            local.remove(command_name);
-                            if local.is_empty() {
-                                app.commands.local = None;
-                            }
+                if let Some(env) = crate::config::models::Environment::from_string(env) {
+                    let slot = app.commands.slot_mut(env);
+                    if let Some(commands) = slot.as_mut() {
+                        commands.remove(command_name);
+                        if commands.is_empty() {
+                            *slot = None;
                         }
                     }
-                    "docker" => {
-                        if let Some(docker) = &mut app.commands.docker {
-                            docker.remove(command_name);
-                            if docker.is_empty() {
-                                app.commands.docker = None;
-                            }
-                        }
-                    }
-                    "orbstack" => {
-                        if let Some(orbstack) = &mut app.commands.orbstack {
-                            orbstack.remove(command_name);
-                            if orbstack.is_empty() {
-                                app.commands.orbstack = None;
-                            }
-                        }
-                    }
-                    "k8s" => {
-                        if let Some(k8s) = &mut app.commands.k8s {
-                            k8s.remove(command_name);
-                            if k8s.is_empty() {
-                                app.commands.k8s = None;
-                            }
-                        }
-                    }
-                    _ => {}
                 }
 
                 save_config(&config)?;
