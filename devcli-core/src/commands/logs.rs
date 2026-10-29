@@ -112,10 +112,6 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
 /// Find the most recently modified log file for an app.
 fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Result<Option<PathBuf>> {
     let dir = logs_dir()?;
-    let prefix = match environment {
-        Some(env) => format!("{project}_{app}_{env}_"),
-        None => format!("{project}_{app}_"),
-    };
 
     let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(&dir).context("Failed to read log directory")? {
@@ -124,11 +120,11 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
         if !path.is_file() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.starts_with(&prefix) || !name.ends_with(".log") {
-            continue;
+        // Parse the name instead of matching a prefix: `proj_api_` is also a
+        // prefix of app `api_worker`'s logs.
+        match environment_from_log_name(&path, project, app) {
+            Some(env) if environment.is_none_or(|wanted| wanted == env) => {}
+            _ => continue,
         }
         let modified = entry
             .metadata()
@@ -148,7 +144,13 @@ fn environment_from_log_name(path: &Path, project: &str, app: &str) -> Option<St
         .strip_prefix(&format!("{project}_{app}_"))?
         .strip_suffix(".log")?;
     let (env, date) = rest.rsplit_once('_')?;
-    (!env.is_empty() && date.chars().all(|c| c.is_ascii_digit())).then(|| env.to_string())
+    // Environment names never contain `_`; if one does, the "app" part we
+    // stripped was only a prefix of a longer app name (`api` vs `api_worker`).
+    let valid = !env.is_empty()
+        && !env.contains('_')
+        && date.len() == 8
+        && date.chars().all(|c| c.is_ascii_digit());
+    valid.then(|| env.to_string())
 }
 
 /// Read the last `n` lines of a file without loading it entirely.
@@ -166,8 +168,12 @@ fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
     let start = len.saturating_sub(CHUNK);
     file.seek(SeekFrom::Start(start))?;
 
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
+    // Bytes, not a String: the 1 MiB window can start inside a multi-byte
+    // character, and apps write whatever bytes they like. `read_to_string` made
+    // the whole command fail on either.
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    let buf = String::from_utf8_lossy(&raw);
 
     let mut lines: Vec<String> = buf.lines().map(str::to_string).collect();
     // Drop a partial first line when we started mid-file.
@@ -237,5 +243,18 @@ mod tests {
         );
         assert_eq!(env("other_api_local_20240101.log"), None);
         assert_eq!(env("proj_api_local.log"), None);
+        // Another app whose name starts with `api_`.
+        assert_eq!(env("proj_api_worker_local_20240101.log"), None);
+    }
+
+    #[test]
+    fn test_tail_lines_survives_invalid_utf8() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("proj_app_local_20240101.log");
+        std::fs::write(&path, b"ok\nbad \xff byte\nlast\n").unwrap();
+
+        let lines = tail_lines(&path, 10).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[2], "last");
     }
 }
