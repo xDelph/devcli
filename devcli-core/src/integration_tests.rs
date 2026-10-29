@@ -62,6 +62,7 @@ mod tests {
         projects.insert(
             "test-project".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },
@@ -217,6 +218,7 @@ mod tests {
         config.projects.insert(
             "test".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },
@@ -377,6 +379,7 @@ CMD ["node", "server.js"]
             config.projects.insert(
                 format!("project-{}", i),
                 Project {
+                    extra: Default::default(),
                     apps,
                     alternative_name: None,
                 },

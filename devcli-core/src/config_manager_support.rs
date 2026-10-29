@@ -391,8 +391,16 @@ impl Validator<Config> for DevCliConfigValidator {
         let mut seen_app_names: HashSet<String> = HashSet::new();
 
         for (project_name, project) in &config.projects {
+            warn_unknown_fields(
+                &mut result,
+                project_name,
+                &project.extra,
+                KNOWN_PROJECT_KEYS,
+            );
+
             for (app_name, app) in &project.apps {
                 let field = format!("{project_name}/{app_name}");
+                warn_unknown_fields(&mut result, &field, &app.extra, KNOWN_APP_KEYS);
 
                 if seen_app_names.contains(app_name) {
                     result.add_warning(ValidationWarning::new(
@@ -436,6 +444,43 @@ impl Validator<Config> for DevCliConfigValidator {
         }
 
         result
+    }
+}
+
+/// Keys of a project object that devcli understands.
+const KNOWN_PROJECT_KEYS: &[&str] = &["apps", "alternative_name"];
+
+/// Keys of an app object that devcli understands.
+const KNOWN_APP_KEYS: &[&str] = &[
+    "type",
+    "alternative_name",
+    "path",
+    "commands",
+    "dependencies",
+    "defaults",
+    "dockerfile_path",
+    "env_files",
+    "default_stages",
+    "health_check",
+    "restart_policy",
+];
+
+/// Warn about keys devcli does not know: they are kept on save, but are most
+/// often a typo (`"dependecies"`) whose setting then silently has no effect.
+fn warn_unknown_fields(
+    result: &mut ValidationResult,
+    field: &str,
+    extra: &crate::config::models::UnknownFields,
+    known: &[&str],
+) {
+    for key in extra.keys() {
+        let hint = config_manager::utils::find_closest_match(key, known, 3)
+            .map(|k| format!(" Did you mean '{k}'?"))
+            .unwrap_or_default();
+        result.add_warning(ValidationWarning::new(
+            field,
+            format!("Unknown field '{key}' is ignored.{hint}"),
+        ));
     }
 }
 

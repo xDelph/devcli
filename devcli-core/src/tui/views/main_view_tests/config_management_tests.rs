@@ -58,6 +58,7 @@ fn create_test_config() -> Config {
     apps.insert(
         "test-app".to_string(),
         App {
+            extra: Default::default(),
             app_type: "nodejs".to_string(),
             alternative_name: None,
             path: "/test/path".to_string(),
@@ -87,6 +88,7 @@ fn create_test_config() -> Config {
     projects.insert(
         "test-project".to_string(),
         Project {
+            extra: Default::default(),
             apps,
             alternative_name: None,
         },

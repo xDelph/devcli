@@ -121,6 +121,7 @@ impl AppBuilder {
     /// Build the App
     pub fn build(self) -> App {
         App {
+            extra: Default::default(),
             app_type: self.app_type,
             path: self.path,
             commands: Commands {
@@ -207,6 +208,7 @@ impl ConfigBuilder {
                     (
                         name,
                         Project {
+                            extra: Default::default(),
                             apps,
                             alternative_name: None,
                         },

@@ -105,6 +105,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
 
         // Build the App struct from detected data
         let app = App {
+            extra: Default::default(),
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -139,6 +140,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             .projects
             .entry(project_name.clone())
             .or_insert_with(|| Project {
+                extra: Default::default(),
                 apps: Default::default(),
                 alternative_name: None,
             })

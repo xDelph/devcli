@@ -570,6 +570,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 
         // Build the App struct from detected data
         let app = App {
+            extra: Default::default(),
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -603,6 +604,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             .projects
             .entry(project_name.clone())
             .or_insert_with(|| Project {
+                extra: Default::default(),
                 apps: Default::default(),
                 alternative_name: None,
             })
@@ -717,6 +719,7 @@ fn add_to_config(
 
     // Build the App struct from detection results
     let app = App {
+        extra: Default::default(),
         app_type: detected.app_type,
         path: detected.path,
         commands: Commands {
@@ -751,6 +754,7 @@ fn add_to_config(
         .projects
         .entry(project_name)
         .or_insert_with(|| Project {
+            extra: Default::default(),
             apps: Default::default(),
             alternative_name: None,
         })

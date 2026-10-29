@@ -74,6 +74,7 @@ mod tests {
             apps.insert(
                 "api".to_string(),
                 App {
+                    extra: Default::default(),
                     app_type: "nodejs".to_string(),
                     path: "/tmp/api".to_string(),
                     commands: Commands {
@@ -106,6 +107,7 @@ mod tests {
             config.projects.insert(
                 project_name.to_string(),
                 Project {
+                    extra: Default::default(),
                     apps,
                     alternative_name: None,
                 },
@@ -144,6 +146,7 @@ mod tests {
         projects.insert(
             "p1".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },

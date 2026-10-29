@@ -220,6 +220,7 @@ mod tests {
         config.projects.insert(
             "test".to_string(),
             Project {
+                extra: Default::default(),
                 apps: {
                     let mut apps = crate::config::models::AppMap::new();
                     apps.insert("my-app".to_string(), app);
@@ -333,5 +334,45 @@ mod tests {
         );
         assert!(pos("\"web\"") < pos("\"api\""), "apps reordered:\n{saved}");
         assert!(pos("\"b\"") < pos("\"a\""), "apps reordered:\n{saved}");
+    }
+
+    /// Unknown keys survive a save and are reported by validation.
+    #[test]
+    fn test_unknown_fields_are_kept_and_reported() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        let path = dir.path().join("config.json");
+        let raw = r#"{"projects":{"p":{"owner":"me","apps":{"api":{
+            "type":"nodejs","path":"/tmp","commands":{"local":{"start":"x"}},
+            "defaults":{"local":"start"},
+            "dependecies":[{"project":"p","app":"db"}],
+            "future_setting":{"a":1}}}}}}"#;
+        std::fs::write(&path, raw).unwrap();
+
+        let config = crate::config::load_config().unwrap();
+        crate::config::save_config(&config).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["projects"]["p"]["owner"], "me");
+        assert_eq!(
+            saved["projects"]["p"]["apps"]["api"]["future_setting"]["a"],
+            1
+        );
+        assert!(saved["projects"]["p"]["apps"]["api"]["dependecies"].is_array());
+
+        use config_manager::validation::Validator;
+        let report = crate::config_manager_support::DevCliConfigValidator::new().validate(&config);
+        let warnings: Vec<String> = report
+            .warnings()
+            .iter()
+            .map(|w| w.message().to_string())
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("'dependecies'") && w.contains("Did you mean 'dependencies'?")),
+            "{warnings:?}"
+        );
+        assert!(warnings.iter().any(|w| w.contains("'future_setting'")));
+        assert!(warnings.iter().any(|w| w.contains("'owner'")));
     }
 }

@@ -164,6 +164,10 @@ pub struct Project {
     // OPTIONAL: If not set, the actual project name is used
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alternative_name: Option<String>,
+
+    /// Unknown keys, preserved on save (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // App configuration for a single application
@@ -227,7 +231,17 @@ pub struct App {
     // OPTIONAL: If not set, no automatic restarts occur
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_policy: Option<RestartPolicy>,
+
+    /// Keys devcli does not know (a newer version's field, or a typo).
+    ///
+    /// Kept so that a save does not silently delete them, and reported by
+    /// `config validate` so a misspelled `"dependecies"` does not go unnoticed.
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
+
+/// Unrecognised keys of a config object, preserved verbatim.
+pub type UnknownFields = serde_json::Map<String, serde_json::Value>;
 
 // Commands for different environments
 // Example: { "local": { "start": "npm start" }, "docker": {...}, "orbstack": {...}, "k8s": {...} }

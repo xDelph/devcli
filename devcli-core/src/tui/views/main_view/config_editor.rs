@@ -138,6 +138,7 @@ impl MainView {
             .projects
             .entry(self.config_form.project_name.content().to_string())
             .or_insert_with(|| Project {
+                extra: Default::default(),
                 apps: Default::default(),
                 alternative_name: None,
             });
@@ -300,6 +301,7 @@ impl MainView {
         }
 
         App {
+            extra: Default::default(),
             app_type: self.config_form.app_type.content().to_string(),
             path: self.config_form.path.content().to_string(),
             commands: Commands {
