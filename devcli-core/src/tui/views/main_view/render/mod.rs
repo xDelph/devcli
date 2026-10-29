@@ -5,7 +5,6 @@ pub mod footer;
 
 pub mod status_panel;
 pub mod tab_bar;
-pub mod utils;
 
 use super::{MainTab, MainView};
 use crate::tui::state::AppState;

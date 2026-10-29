@@ -328,12 +328,18 @@ impl CommandPopup {
 
         // Create popup area - smaller for stop, larger for start/restart with logs
         let popup_area = match &self.state {
-            PopupState::Error(_) if has_logs => Self::centered_rect(90, 80, size), // Large for errors with logs
-            PopupState::Success(_) if has_logs => Self::centered_rect(90, 80, size), // Large for success with logs
-            PopupState::Error(_) => Self::centered_rect(70, 40, size), // Medium for simple errors
-            PopupState::Executing if is_stop => Self::centered_rect(50, 30, size), // Small for stop
-            PopupState::Executing => Self::centered_rect(90, 80, size), // Large for start/restart with logs
-            _ => Self::centered_rect(50, 30, size),                     // Compact for other states
+            PopupState::Error(_) if has_logs => {
+                crate::tui::utils::layout::centered_rect(90, 80, size)
+            } // Large for errors with logs
+            PopupState::Success(_) if has_logs => {
+                crate::tui::utils::layout::centered_rect(90, 80, size)
+            } // Large for success with logs
+            PopupState::Error(_) => crate::tui::utils::layout::centered_rect(70, 40, size), // Medium for simple errors
+            PopupState::Executing if is_stop => {
+                crate::tui::utils::layout::centered_rect(50, 30, size)
+            } // Small for stop
+            PopupState::Executing => crate::tui::utils::layout::centered_rect(90, 80, size), // Large for start/restart with logs
+            _ => crate::tui::utils::layout::centered_rect(50, 30, size), // Compact for other states
         };
 
         // Clear the area behind the popup for proper modal effect
@@ -830,35 +836,6 @@ impl CommandPopup {
             );
 
         frame.render_widget(paragraph, area);
-    }
-
-    /// Helper function to create a centered rectangle
-    /// Used for positioning the popup in the middle of the screen
-    ///
-    /// # Arguments
-    /// * `percent_x` - Width as percentage of screen (0-100)
-    /// * `percent_y` - Height as percentage of screen (0-100)
-    /// * `r` - The full screen area
-    fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-        // Create vertical layout: top margin, content, bottom margin
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ])
-            .split(r);
-
-        // Create horizontal layout within the middle section
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ])
-            .split(popup_layout[1])[1]
     }
 
     /// One line of command output, ANSI-styled and with app names coloured.

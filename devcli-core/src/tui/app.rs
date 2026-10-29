@@ -132,9 +132,6 @@ pub struct TuiApp {
     pub(crate) last_render: Instant,
     /// Flag to clear terminal on next render (for view transitions)
     pub(crate) needs_clear: bool,
-    /// Channel for sending command execution requests to background task
-    #[allow(dead_code)] // Used by spawned background task
-    pub(crate) command_tx: mpsc::UnboundedSender<CommandRequest>,
     /// Channel for receiving command execution results
     pub(crate) command_rx: mpsc::UnboundedReceiver<CommandResult>,
     /// Keeps a test app's private state directory alive.
@@ -242,7 +239,6 @@ impl TuiApp {
             needs_redraw: true, // Initial render needed
             last_render: Instant::now(),
             needs_clear: false,
-            command_tx: req_tx,
             command_rx: result_rx,
             #[cfg(test)]
             _test_dir: None,
@@ -409,7 +405,6 @@ impl TuiApp {
             needs_redraw: false,
             last_render: Instant::now(),
             needs_clear: false,
-            command_tx: req_tx,
             command_rx: result_rx,
             _test_dir: Some(test_dir),
         }

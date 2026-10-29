@@ -2,8 +2,6 @@
 pub struct ViewportState {
     /// Current cursor position (which line is highlighted)
     pub cursor_line: usize,
-    /// Current horizontal scroll offset (character index)
-    pub horizontal_offset: usize,
     /// First logical line shown at the top of the panel.
     ///
     /// Together with `top_offset` this is the persistent scroll position: the
@@ -21,7 +19,6 @@ impl ViewportState {
         Self {
             // Start at the bottom of the file (most recent logs)
             cursor_line: total_lines.saturating_sub(1),
-            horizontal_offset: 0,
             top_line: 0,
             top_offset: 0,
         }

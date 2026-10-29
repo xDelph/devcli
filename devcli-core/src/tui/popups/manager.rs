@@ -58,31 +58,8 @@ impl PopupManager {
         redraw |= self.check_env_selection_request(state)?;
         redraw |= self.check_command_results(command_rx)?;
 
-        // Check for status updates in active popup
-        // This corresponds to app.rs check_status_update part that updates popup
-        {
-            let (status_updated, app_status) = {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                let updated = state.status_updated;
-
-                let app_status = if self.active_popup.is_some() {
-                    state.selected_app().map(|app| app.status.display_label())
-                } else {
-                    None
-                };
-                (updated, app_status)
-            };
-
-            if status_updated {
-                if let (Some(popup), Some(status)) = (&mut self.active_popup, app_status) {
-                    popup.update_status(status);
-                    redraw = true;
-                }
-            }
-        }
-
+        // The popup's status line is refreshed by `TuiApp::check_status_update`,
+        // which also clears the flag (this used to do the same work first).
         Ok(redraw)
     }
 

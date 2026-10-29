@@ -17,7 +17,7 @@ impl MainView {
         current_project: Option<&str>,
         current_app: Option<&str>,
     ) {
-        let area = Self::centered_rect(70, 60, frame.area());
+        let area = crate::tui::utils::layout::centered_rect(70, 60, frame.area());
 
         frame.render_widget(ratatui::widgets::Clear, area);
 

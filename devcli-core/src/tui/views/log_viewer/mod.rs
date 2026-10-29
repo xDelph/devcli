@@ -563,7 +563,6 @@ impl SingleLogView {
             .constraints([
                 Constraint::Length(3), // Header
                 Constraint::Min(0),    // Content
-                                       // Footer removed from here, handled by parent
             ])
             .split(area);
 
@@ -580,27 +579,15 @@ impl SingleLogView {
                 ])
                 .split(chunks[1]);
 
-            // Viewport adjustment disabled - render_content handles scroll with wrapping
-            // let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
-            // self.viewport
-            //     .adjust_viewport(visible_height, self.total_lines);
-
             // Render log content on left
             self.render_content(frame, content_chunks[0], is_active);
 
             // Render JSON panel on right
             self.render_json_panel(frame, content_chunks[1]);
         } else {
-            // Viewport adjustment disabled - render_content handles scroll with wrapping
-            // let visible_height = chunks[1].height.saturating_sub(2) as usize;
-            // self.viewport
-            //     .adjust_viewport(visible_height, self.total_lines);
-
             // Render log content full width
             self.render_content(frame, chunks[1], is_active);
         }
-
-        // Footer rendering removed from here
     }
 
     /// Renders the header showing file name and current position with colored app name

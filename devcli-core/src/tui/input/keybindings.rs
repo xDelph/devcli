@@ -4,23 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub struct KeyBindings;
 
 impl KeyBindings {
-    /// Check if the key event triggers a quit action
-    pub fn is_quit(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Char('q'))
-            || (matches!(key.code, KeyCode::Char('c'))
-                && key.modifiers.contains(KeyModifiers::CONTROL))
-    }
-
-    /// Check if the key event triggers the help overlay
-    pub fn is_help(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Char('?'))
-    }
-
-    /// Check if the key event triggers a back action (Esc)
-    pub fn is_back(key: KeyEvent) -> bool {
-        matches!(key.code, KeyCode::Esc)
-    }
-
     /// Check if the key event triggers tab switching to Status (1)
     pub fn is_tab_status(key: KeyEvent) -> bool {
         matches!(key.code, KeyCode::Char('1') | KeyCode::Char('&'))
