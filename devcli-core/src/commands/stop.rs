@@ -112,8 +112,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
                     })
                 })
                 .collect();
+            // Same keys as a real stop (nothing was stopped), plus the target set.
             crate::output::print_json(&serde_json::json!({
                 "dry_run": true,
+                "stopped": 0,
+                "failed": 0,
+                "errors": [],
                 "count": entries.len(),
                 "processes": entries,
             }))?;
