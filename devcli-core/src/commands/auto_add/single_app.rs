@@ -29,6 +29,9 @@ pub struct AutoAddArgs {
     pub name: Option<String>,
     /// App type override (non-interactive)
     pub app_type: Option<String>,
+    /// Replace an app that already exists (its dependencies, health check,
+    /// restart policy and alternative name are kept)
+    pub force: bool,
 }
 
 impl AutoAddArgs {
@@ -80,7 +83,7 @@ pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
                 target_path.display()
             );
         }
-        super::nx_monorepo::handle_nx_monorepo(&target_path).await
+        super::nx_monorepo::handle_nx_monorepo(&target_path, args.force).await
     } else {
         handle_single_app(&target_path, &args).await
     }
@@ -101,7 +104,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
             );
         }
         // Multiple apps found, let user choose
-        return handle_multiple_apps(discovered_apps).await;
+        return handle_multiple_apps(discovered_apps, args.force).await;
     }
 
     // Single app case - use the first (and only) discovered app
@@ -170,6 +173,22 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         (project_name, app_name)
     };
 
+    let exists = config
+        .projects
+        .get(&project_name)
+        .is_some_and(|p| p.apps.contains_key(&app_name));
+    let mut force = args.force;
+    if exists && !force && !args.is_non_interactive() {
+        force = super::interactive::confirm_default_no(&format!(
+            "'{project_name}/{app_name}' already exists. Replace its detected settings \
+             (dependencies, health check, restart policy and alternative name are kept)?"
+        ))?;
+        if !force {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
     if !args.is_non_interactive() {
         // Show preview of what will be added
         show_preview(&project_name, &app_name, &detected);
@@ -196,6 +215,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         app_name.clone(),
         detected,
         non_interactive,
+        force,
     )?;
 
     if json {
@@ -463,7 +483,10 @@ fn create_traefik_app_from_config(
 }
 
 // Handle multiple discovered apps - let user select which ones to add
-async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp>) -> Result<()> {
+async fn handle_multiple_apps(
+    discovered_apps: Vec<crate::detection::DetectedApp>,
+    force: bool,
+) -> Result<()> {
     println!("✓ Discovered {} potential apps:\n", discovered_apps.len());
 
     // Display all discovered apps with their details
@@ -492,6 +515,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 
     // Load existing config or create a new empty one
     let mut config = crate::config::loader::load_config_or_new()?;
+    let mut added_this_run: std::collections::HashSet<String> = Default::default();
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
@@ -595,19 +619,15 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             restart_policy: None,
         };
 
-        // Insert the app into the config
-        config
-            .projects
-            .entry(project_name.clone())
-            .or_insert_with(|| Project {
-                extra: Default::default(),
-                apps: Default::default(),
-                alternative_name: None,
-            })
-            .apps
-            .insert(app_name.clone(), app);
-
-        println!("✓ Added {}\n", app_name);
+        if !added_this_run.insert(app_name.clone()) {
+            println!("⚠ Skipped {app_name}: another selected app has the same name\n");
+            continue;
+        }
+        match upsert_app(&mut config, &project_name, &app_name, app, force) {
+            Ok(true) => println!("✓ Updated {}\n", app_name),
+            Ok(false) => println!("✓ Added {}\n", app_name),
+            Err(e) => println!("⚠ Skipped {app_name}: {e}\n"),
+        }
     }
 
     // Save the updated config to disk
@@ -615,6 +635,54 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
     println!("✓ All selected apps added successfully!");
 
     Ok(())
+}
+
+/// Put `app` at `project/app_name`, creating the project if needed.
+///
+/// auto-add used to `insert` blindly: re-running it (an agent retrying, or a
+/// second app with the same folder name) silently replaced the existing entry
+/// and lost everything the user had added by hand. An existing app is now only
+/// replaced with `force`, and then keeps its user-maintained settings.
+///
+/// Returns whether an existing app was replaced.
+pub(super) fn upsert_app(
+    config: &mut crate::config::Config,
+    project: &str,
+    app_name: &str,
+    mut app: App,
+    force: bool,
+) -> Result<bool> {
+    let apps = &mut config
+        .projects
+        .entry(project.to_string())
+        .or_insert_with(|| Project {
+            extra: Default::default(),
+            apps: Default::default(),
+            alternative_name: None,
+        })
+        .apps;
+
+    let Some(existing) = apps.get(app_name) else {
+        apps.insert(app_name.to_string(), app);
+        return Ok(false);
+    };
+    if !force {
+        anyhow::bail!(
+            "app '{project}/{app_name}' already exists; re-run with --force to replace its \
+             detected settings (dependencies, health check, restart policy and alternative \
+             name are kept)"
+        );
+    }
+
+    app.dependencies = existing.dependencies.clone();
+    app.health_check = existing.health_check.clone();
+    app.restart_policy = existing.restart_policy.clone();
+    app.alternative_name = existing.alternative_name.clone();
+    app.default_stages = existing.default_stages.clone();
+    app.extra = existing.extra.clone();
+    // `insert` on an existing key keeps the app at its position in the file.
+    apps.insert(app_name.to_string(), app);
+    Ok(true)
 }
 
 // Add the detected app to the config and save it to disk
@@ -629,6 +697,7 @@ fn add_to_config(
     app_name: String,
     detected: crate::detection::DetectedApp,
     non_interactive: bool,
+    force: bool,
 ) -> Result<()> {
     // Re-detect env files with interactive prompts for unspecified contexts
     // Determine which environments are available for this app
@@ -744,18 +813,8 @@ fn add_to_config(
         restart_policy: None,
     };
 
-    // Insert the app into the config
-    // Creates the project if it doesn't exist
-    config
-        .projects
-        .entry(project_name)
-        .or_insert_with(|| Project {
-            extra: Default::default(),
-            apps: Default::default(),
-            alternative_name: None,
-        })
-        .apps
-        .insert(app_name, app);
+    // Insert the app into the config (creates the project if needed)
+    upsert_app(&mut config, &project_name, &app_name, app, force)?;
 
     // Save the updated config to ~/.devcli/config.json
     save_config(&config)?;

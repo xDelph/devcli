@@ -161,6 +161,16 @@ pub fn confirm_default_yes(prompt: &str) -> Result<bool> {
     Ok(confirmed)
 }
 
+/// Yes/no question whose safe answer (Enter) is "no".
+pub fn confirm_default_no(prompt: &str) -> Result<bool> {
+    let confirmed = Confirm::new(prompt)
+        .with_default(false)
+        .with_help_message("Press Enter to keep the existing app, or 'y' to replace it")
+        .prompt()?;
+
+    Ok(confirmed)
+}
+
 // Interactive Nx app selection using inquire for proper UI with arrow keys
 pub fn interactive_nx_app_selection(apps: &[crate::detection::DetectedApp]) -> Result<Vec<usize>> {
     // Create display options for each app with command counts

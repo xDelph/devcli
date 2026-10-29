@@ -277,6 +277,7 @@ mod tests {
             project: Some("proj".to_string()),
             name: Some(name.to_string()),
             app_type: Some("nodejs".to_string()),
+            force: false,
         }
     }
 
@@ -312,5 +313,43 @@ mod tests {
         let config = crate::config::load_config().unwrap();
         assert!(config.projects["proj"].apps.contains_key("first"));
         assert!(config_dir.path().join("config.json").exists());
+    }
+
+    /// Re-running auto-add on an existing app is refused without --force, and
+    /// --force keeps what the user configured by hand.
+    #[tokio::test]
+    async fn test_auto_add_does_not_clobber_an_existing_app() {
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "api");
+
+        crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "api"))
+            .await
+            .unwrap();
+        let mut config = crate::config::load_config().unwrap();
+        {
+            let app = config.projects["proj"].apps.get_mut("api").unwrap();
+            app.alternative_name = Some("Backend".to_string());
+            app.dependencies.push(crate::config::models::Dependency {
+                project: "infra".to_string(),
+                app: "db".to_string(),
+            });
+        }
+        crate::config::save_config(&config).unwrap();
+
+        let err = crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "api"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("--force"), "{err}");
+
+        let mut forced = add_args(app_dir.path(), "api");
+        forced.force = true;
+        crate::commands::auto_add::auto_add_command(forced)
+            .await
+            .unwrap();
+        let config = crate::config::load_config().unwrap();
+        let app = &config.projects["proj"].apps["api"];
+        assert_eq!(app.alternative_name.as_deref(), Some("Backend"));
+        assert_eq!(app.dependencies.len(), 1);
     }
 }

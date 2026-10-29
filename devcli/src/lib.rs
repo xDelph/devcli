@@ -116,6 +116,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             project,
             name,
             app_type,
+            force,
         } => {
             let args = devcli_core::commands::auto_add::AutoAddArgs {
                 path,
@@ -123,6 +124,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 project,
                 name,
                 app_type,
+                force,
             };
             auto_add_command(args).await?;
         }

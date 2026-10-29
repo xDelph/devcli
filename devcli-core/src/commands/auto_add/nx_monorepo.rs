@@ -2,7 +2,7 @@
 // Handles detection of multiple apps in Nx workspaces
 // Provides interactive selection for adding multiple apps at once
 
-use crate::config::{save_config, App, Commands, Defaults, Project};
+use crate::config::{save_config, App, Commands, Defaults};
 use crate::Result;
 
 use super::interactive::{
@@ -13,7 +13,7 @@ use super::interactive::{
 // Handle detection and addition of apps in an Nx monorepo
 // Scans apps/ and packages/ directories for Nx projects
 // Allows the user to select which apps to add interactively
-pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
+pub async fn handle_nx_monorepo(workspace_root: &std::path::Path, force: bool) -> Result<()> {
     // Use the detection module to find all apps in apps/ and packages/ directories
     let detected_apps = crate::detection::detect_nx_apps(workspace_root)?;
 
@@ -30,6 +30,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
 
     // Load existing config or create a new empty one
     let mut config = crate::config::loader::load_config_or_new()?;
+    let mut added_this_run: std::collections::HashSet<String> = Default::default();
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
@@ -132,20 +133,16 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             restart_policy: None,
         };
 
-        // Insert the app into the config
-        // This creates the project if it doesn't exist, then adds the app
-        config
-            .projects
-            .entry(project_name.clone())
-            .or_insert_with(|| Project {
-                extra: Default::default(),
-                apps: Default::default(),
-                alternative_name: None,
-            })
-            .apps
-            .insert(app_name.clone(), app);
-
-        println!("✓ Added {}\n", app_name);
+        // `apps/web` and `libs/web` both become "web": keep the first.
+        if !added_this_run.insert(app_name.clone()) {
+            println!("⚠ Skipped {app_name}: another selected app has the same name\n");
+            continue;
+        }
+        match super::single_app::upsert_app(&mut config, &project_name, &app_name, app, force) {
+            Ok(true) => println!("✓ Updated {}\n", app_name),
+            Ok(false) => println!("✓ Added {}\n", app_name),
+            Err(e) => println!("⚠ Skipped {app_name}: {e}\n"),
+        }
     }
 
     // Save the updated config to disk

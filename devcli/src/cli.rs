@@ -169,6 +169,12 @@ pub enum Commands {
 
         #[arg(long = "type", help = "App type override (e.g., nodejs, docker, rust)")]
         app_type: Option<String>,
+
+        #[arg(
+            long,
+            help = "Replace an app that already exists (keeps its dependencies, health check, restart policy and alternative name)"
+        )]
+        force: bool,
     },
 
     #[command(about = "Install devcli's agent rules into AGENTS.md so AI agents can use it")]
@@ -538,6 +544,7 @@ mod tests {
                 project: None,
                 name: None,
                 app_type: None,
+                force: false,
             }
         );
     }
