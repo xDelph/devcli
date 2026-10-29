@@ -184,9 +184,13 @@ impl AppState {
     }
 
     /// Moves selection to the next item
+    ///
+    /// A collapsed project is a single row: its apps are skipped (they used to
+    /// be walked through invisibly, so the cursor seemed stuck).
     pub fn select_next(&mut self) {
         if let Some(project) = self.projects.get(self.selected_project_idx) {
-            if self.selected_app_idx < project.apps.len().saturating_sub(1) {
+            let last_app = project.apps.len().saturating_sub(1);
+            if project.expanded && self.selected_app_idx < last_app {
                 self.selected_app_idx += 1;
             } else if self.selected_project_idx < self.projects.len().saturating_sub(1) {
                 // Move to next project
@@ -196,15 +200,23 @@ impl AppState {
         }
     }
 
-    /// Moves selection to the previous item
+    /// Moves selection to the previous item (collapsed projects: one row)
     pub fn select_previous(&mut self) {
-        if self.selected_app_idx > 0 {
+        let expanded = self
+            .projects
+            .get(self.selected_project_idx)
+            .is_some_and(|p| p.expanded);
+        if expanded && self.selected_app_idx > 0 {
             self.selected_app_idx -= 1;
         } else if self.selected_project_idx > 0 {
-            // Move to previous project
+            // Move to previous project: its last app, or its row if collapsed
             self.selected_project_idx -= 1;
             if let Some(project) = self.projects.get(self.selected_project_idx) {
-                self.selected_app_idx = project.apps.len().saturating_sub(1);
+                self.selected_app_idx = if project.expanded {
+                    project.apps.len().saturating_sub(1)
+                } else {
+                    0
+                };
             }
         }
     }
@@ -213,6 +225,10 @@ impl AppState {
     pub fn toggle_project_expansion(&mut self) {
         if let Some(project) = self.projects.get_mut(self.selected_project_idx) {
             project.expanded = !project.expanded;
+            if !project.expanded {
+                // The selection collapses onto the project row.
+                self.selected_app_idx = 0;
+            }
         }
     }
 
@@ -569,5 +585,51 @@ mod tests {
         let main1 = ViewType::Main;
         let main2 = ViewType::Main;
         assert_eq!(main1, main2);
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
+
+    fn state() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b1", app())
+            .with_app("b", "b2", app())
+            .build();
+        (
+            AppState::from_config_with_store(&config, &store).unwrap(),
+            dir,
+        )
+    }
+
+    fn at(state: &AppState) -> (String, usize) {
+        (
+            state.projects[state.selected_project_idx].name.clone(),
+            state.selected_app_idx,
+        )
+    }
+
+    #[test]
+    fn collapsed_projects_are_a_single_row() {
+        let (mut state, _dir) = state();
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        state.selected_project_idx = a;
+        state.selected_app_idx = 1;
+
+        state.toggle_project_expansion(); // collapse "a"
+        assert_eq!(at(&state), ("a".to_string(), 0));
+
+        state.select_next(); // skips a's hidden apps
+        assert_eq!(at(&state).0, "b");
+
+        state.select_previous(); // back onto a's row, not its last hidden app
+        assert_eq!(at(&state), ("a".to_string(), 0));
     }
 }

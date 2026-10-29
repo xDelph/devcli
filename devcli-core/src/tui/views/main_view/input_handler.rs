@@ -415,6 +415,12 @@ impl NavigationHandler for MainView {
                 state.select_next();
 
                 self.selected_config_command_idx = 0;
+
+                // Same as moving up: the previous app's log index is meaningless
+                // (and possibly out of range) for the newly selected app.
+                if self.active_tab == MainTab::Status {
+                    self.selected_log_idx = 0;
+                }
             }
             PanelFocus::DetailPanel => {
                 if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
