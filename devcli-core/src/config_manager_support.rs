@@ -161,13 +161,15 @@ impl ProjectAppResolver {
         project: &str,
         app_name: &str,
     ) -> std::result::Result<ResolvedApp, CmError> {
-        let proj = config
-            .projects
-            .get(project)
-            .ok_or_else(|| CmError::NotFound {
-                id: project.to_string(),
-                suggestion: None,
-            })?;
+        let proj = config.projects.get(project).ok_or_else(|| {
+            // A missing *project* used to come back as NotFound{id: project},
+            // which every caller rendered as "App '<project>' not found".
+            let names: Vec<String> = config.projects.keys().cloned().collect();
+            let hint = fuzzy_match(project, &names, 3)
+                .map(|p| format!(" Did you mean '{p}'?"))
+                .unwrap_or_default();
+            CmError::Custom(format!("Project '{project}' not found in config.{hint}"))
+        })?;
 
         // Prefer exact app key, then alternative_name within this project
         if let Some(app) = proj.apps.get(app_name) {
@@ -188,9 +190,10 @@ impl ProjectAppResolver {
             }
         }
 
+        let names: Vec<String> = proj.apps.keys().cloned().collect();
         Err(CmError::NotFound {
-            id: app_name.to_string(),
-            suggestion: self.suggest(config, app_name),
+            id: format!("{project}/{app_name}"),
+            suggestion: fuzzy_match(app_name, &names, 3),
         })
     }
 
@@ -283,6 +286,13 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
 /// Map config-manager resolution errors to the public CLI messages.
 pub fn map_resolve_error(err: CmError, app_name: &str) -> anyhow::Error {
     match err {
+        CmError::NotFound { id, suggestion } if id.contains('/') => {
+            let (project, app) = id.split_once('/').unwrap_or(("", app_name));
+            let hint = suggestion
+                .map(|s| format!(" Did you mean '{s}'?"))
+                .unwrap_or_default();
+            anyhow::anyhow!("App '{}' not found in project '{}'.{}", app, project, hint)
+        }
         CmError::NotFound { suggestion, .. } => {
             if let Some(similar) = suggestion {
                 anyhow::anyhow!(
@@ -355,7 +365,10 @@ fn map_dependency_error(err: CmError) -> anyhow::Error {
         ),
         CmError::NotFound { id, suggestion } => {
             if let Some((project, app)) = id.split_once('/') {
-                anyhow::anyhow!("App '{}' not found in project '{}'.", app, project)
+                let hint = suggestion
+                    .map(|s| format!(" Did you mean '{s}'?"))
+                    .unwrap_or_default();
+                anyhow::anyhow!("App '{}' not found in project '{}'.{}", app, project, hint)
             } else if let Some(similar) = suggestion {
                 anyhow::anyhow!(
                     "App '{}' not found in config. Did you mean '{}'?",
@@ -1041,6 +1054,44 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("Alternative name 'api' is also used by a/b/api")),
             "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn missing_dependency_project_and_app_are_reported_as_such() {
+        let app = |dep_project: &str, dep_app: &str| {
+            AppBuilder::new("nodejs", "/tmp")
+                .with_local_command("start", "npm start")
+                .with_dependency(dep_project, dep_app)
+                .build()
+        };
+        let redis = AppBuilder::new("redis", "/tmp")
+            .with_local_command("start", "redis-server")
+            .build();
+        let config = ConfigBuilder::new()
+            .with_app("infra", "redis", redis)
+            .with_app("p", "api", app("infar", "redis"))
+            .with_app("p", "web", app("infra", "rediss"))
+            .build();
+
+        let api = ProjectAppResolver::new()
+            .resolve_with_filter(&config, "api", Some("p"))
+            .unwrap();
+        let err = resolve_dependency_chain(&config, &api)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Project 'infar' not found"), "{err}");
+        assert!(err.contains("Did you mean 'infra'?"), "{err}");
+
+        let web = ProjectAppResolver::new()
+            .resolve_with_filter(&config, "web", Some("p"))
+            .unwrap();
+        let err = resolve_dependency_chain(&config, &web)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("App 'rediss' not found in project 'infra'"),
+            "{err}"
         );
     }
 }
