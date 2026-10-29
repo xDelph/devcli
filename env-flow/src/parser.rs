@@ -7,7 +7,8 @@
 /// - `URL=https://x.com#frag` — `#` without leading space is NOT a comment
 /// - Split on FIRST `=` only (`DATABASE_URL=postgres://h/db?a=1&b=2`)
 /// - Escape sequences in double-quoted values (`\n`, `\t`, `\r`, `\\`, `\"`)
-/// - Multiline double-quoted values
+/// - Multiline quoted values, and `# comment` after a closing quote
+/// - Quotes only matter at the start of a value (`PW=ab"cd` is literal)
 /// - CRLF → LF normalisation, UTF-8 BOM stripping
 /// - Strict mode: malformed lines → `Error::Parse`; lenient mode: skip with `tracing::warn!`
 use std::path::Path;
@@ -27,21 +28,33 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
     let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
     // Normalise CRLF → LF
     let normalised: String = content.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = normalised.split('\n').collect();
+
+    let malformed = |line: usize, message: String| -> Result<()> {
+        if strict {
+            Err(Error::Parse {
+                path: path.to_path_buf(),
+                line,
+                message,
+            })
+        } else {
+            tracing::warn!(path = %path.display(), line, "{}", message);
+            Ok(())
+        }
+    };
 
     let mut entries = Vec::new();
-    let mut chars = normalised.chars().peekable();
-    let mut line_number: usize = 1;
-    let mut line_start_line: usize; // line number at beginning of current statement
+    let mut next = 0usize;
 
-    while chars.peek().is_some() {
-        line_start_line = line_number;
-        // Collect one logical line (may span multiple physical lines inside "")
-        let (raw_line, lines_consumed) = collect_logical_line(&mut chars);
-        line_number += lines_consumed;
+    while next < lines.len() {
+        let line_number = next + 1;
+        let line = lines[next];
+        next += 1;
 
-        let trimmed = raw_line.trim();
+        let trimmed = line.trim();
 
-        // Skip empty lines and comments
+        // Skip empty lines and comments. A comment is never the start of a
+        // multi-line value, whatever quotes it contains.
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
@@ -53,46 +66,43 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
             .unwrap_or(trimmed);
 
         // Find first `=`
-        let eq_pos = match trimmed.find('=') {
-            Some(p) => p,
-            None => {
-                let msg = format!("missing '=' in line: {trimmed}");
-                if strict {
-                    return Err(Error::Parse {
-                        path: path.to_path_buf(),
-                        line: line_start_line,
-                        message: msg,
-                    });
-                } else {
-                    tracing::warn!(path = %path.display(), line = line_start_line, "{}", msg);
-                    continue;
-                }
-            }
+        let Some(eq_pos) = trimmed.find('=') else {
+            malformed(line_number, format!("missing '=' in line: {trimmed}"))?;
+            continue;
         };
 
         let key = trimmed[..eq_pos].trim();
         if key.is_empty() {
-            let msg = format!("empty key in line: {trimmed}");
-            if strict {
-                return Err(Error::Parse {
-                    path: path.to_path_buf(),
-                    line: line_start_line,
-                    message: msg,
-                });
-            } else {
-                tracing::warn!(path = %path.display(), line = line_start_line, "{}", msg);
-                continue;
-            }
+            malformed(line_number, format!("empty key in line: {trimmed}"))?;
+            continue;
         }
 
-        let rest = &trimmed[eq_pos + 1..];
+        let rest = trimmed[eq_pos + 1..].trim_start();
 
-        let (raw_value, interpolate) = parse_value(rest);
+        let (raw_value, interpolate) = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                match read_quoted(quote, &rest[1..], &lines, &mut next) {
+                    Some(quoted) => quoted,
+                    None => {
+                        // No closing quote anywhere: do not swallow the rest of
+                        // the file, read this line as a plain value.
+                        malformed(line_number, format!("unterminated {quote} quote"))?;
+                        let value = strip_inline_comment(&rest[1..]).trim_end().to_string();
+                        (value, quote == '"')
+                    }
+                }
+            }
+            _ => {
+                // Unquoted: strip inline comment (only ` #` counts as a marker)
+                let value = strip_inline_comment(rest);
+                (value.trim_end().to_string(), true)
+            }
+        };
 
         entries.push(ParsedEntry {
             key: key.to_string(),
             raw_value,
-            line_number: line_start_line,
+            line_number,
             interpolate,
         });
     }
@@ -100,68 +110,53 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
     Ok(ParsedFile { entries })
 }
 
-/// Collect one logical "statement" from a character iterator.
-/// Logical lines end at `\n` unless we are inside a double-quoted string.
-/// Returns (line_text, number_of_newlines_consumed).
-fn collect_logical_line(chars: &mut std::iter::Peekable<std::str::Chars>) -> (String, usize) {
-    let mut buf = String::new();
-    let mut newlines = 0usize;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-
-    while let Some(&ch) = chars.peek() {
-        chars.next();
-        match ch {
-            '\n' if !in_double_quote => {
-                newlines += 1;
-                break;
-            }
-            '\n' => {
-                newlines += 1;
-                buf.push('\n');
-            }
-            '"' if !escaped => {
-                in_double_quote = !in_double_quote;
-                buf.push('"');
-            }
-            '\\' if in_double_quote && !escaped => {
-                escaped = true;
-                buf.push('\\');
-            }
-            _ => {
-                escaped = false;
-                buf.push(ch);
-            }
+/// Read a quoted value whose opening `quote` has been consumed; `first` is the
+/// rest of the line after it. The value may continue on following lines, which
+/// are then consumed (`next` advances). Anything after the closing quote must
+/// be a comment or whitespace and is dropped.
+///
+/// Returns `(value, should_interpolate)`, or `None` (with `next` untouched) when
+/// the quote is never closed.
+fn read_quoted(
+    quote: char,
+    first: &str,
+    lines: &[&str],
+    next: &mut usize,
+) -> Option<(String, bool)> {
+    let mut body = first.to_string();
+    let mut cursor = *next;
+    loop {
+        if let Some(end) = closing_quote(&body, quote) {
+            *next = cursor;
+            let inner = &body[..end];
+            return Some(if quote == '"' {
+                (process_double_quote_escapes(inner), true)
+            } else {
+                (inner.to_string(), false)
+            });
         }
+        let line = lines.get(cursor)?;
+        cursor += 1;
+        body.push('\n');
+        body.push_str(line);
     }
-
-    (buf, newlines)
 }
 
-/// Parse the value portion (everything after the first `=`).
-/// Returns `(resolved_string, should_interpolate)`.
-fn parse_value(raw: &str) -> (String, bool) {
-    let raw = raw.trim_start();
-
-    if raw.starts_with('\'') {
-        // Single-quoted: take until matching `'`, no escapes, no interpolation
-        let inner = raw
-            .strip_prefix('\'')
-            .and_then(|s| s.strip_suffix('\''))
-            .unwrap_or_else(|| raw.trim_matches('\''));
-        (inner.to_string(), false)
-    } else if raw.starts_with('"') {
-        // Double-quoted: process escape sequences
-        let inner = raw
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .unwrap_or_else(|| raw.strip_prefix('"').unwrap_or(raw));
-        (process_double_quote_escapes(inner), true)
-    } else {
-        // Unquoted: strip inline comment (only `# ` or ` #` counts as comment marker)
-        let value = strip_inline_comment(raw);
-        (value.trim_end().to_string(), true)
+/// Byte offset of the quote closing `body`. Inside double quotes a quote
+/// preceded by a backslash is escaped; single quotes have no escapes.
+fn closing_quote(body: &str, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    for (i, ch) in body.char_indices() {
+        if quote == '"' && ch == '\\' && !escaped {
+            escaped = true;
+            continue;
+        }
+        if ch == quote && !escaped {
+            return Some(i);
+        }
+        escaped = false;
     }
+    None
 }
 
 /// Process `\n`, `\t`, `\r`, `\\`, `\"` escape sequences inside double-quoted strings.
@@ -353,5 +348,55 @@ mod tests {
         assert_eq!(pf.entries.len(), 2);
         assert!(pf.entries[0].raw_value.contains('\n'));
         assert_eq!(pf.entries[1].key, "OTHER");
+    }
+
+    fn value_of<'a>(pf: &'a ParsedFile, key: &str) -> &'a str {
+        &pf.entries
+            .iter()
+            .find(|e| e.key == key)
+            .unwrap_or_else(|| panic!("no {key}"))
+            .raw_value
+    }
+
+    #[test]
+    fn quoted_value_followed_by_inline_comment() {
+        let pf = parse_strict("A=\"hello world\" # greeting\nB='raw $X'   # literal\n");
+        assert_eq!(value_of(&pf, "A"), "hello world");
+        assert_eq!(value_of(&pf, "B"), "raw $X");
+    }
+
+    #[test]
+    fn quote_in_a_comment_does_not_swallow_following_lines() {
+        let pf = parse_strict("# a 5\" screen\nA=1\nB=2\n");
+        assert_eq!(pf.entries.len(), 2);
+        assert_eq!(value_of(&pf, "A"), "1");
+    }
+
+    #[test]
+    fn quote_inside_an_unquoted_value_is_literal() {
+        let pf = parse_strict("PW=ab\"cd\nNEXT=1\n");
+        assert_eq!(value_of(&pf, "PW"), "ab\"cd");
+        assert_eq!(value_of(&pf, "NEXT"), "1");
+    }
+
+    #[test]
+    fn escaped_quote_does_not_close_a_double_quoted_value() {
+        let pf = parse_strict("A=\"say \\\"hi\\\"\" # c\n");
+        assert_eq!(value_of(&pf, "A"), "say \"hi\"");
+    }
+
+    #[test]
+    fn multiline_single_quoted_value() {
+        let pf = parse_strict("KEY='line1\nline2'\nNEXT=1\n");
+        assert_eq!(value_of(&pf, "KEY"), "line1\nline2");
+        assert_eq!(value_of(&pf, "NEXT"), "1");
+    }
+
+    #[test]
+    fn unterminated_quote_reads_one_line_in_lenient_mode() {
+        let pf = parse_lenient("A=\"abc\nB=2\n");
+        assert_eq!(value_of(&pf, "A"), "abc");
+        assert_eq!(value_of(&pf, "B"), "2");
+        assert!(parse("A=\"abc\nB=2\n", p(), true).is_err());
     }
 }
