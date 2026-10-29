@@ -50,6 +50,21 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-features --all-targets -- -D warnings
 
+  deny:
+    name: Dependencies (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # RustSec advisories, licences, banned/duplicate crates and sources, as
+      # configured in deny.toml.
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --locked
+
   build:
     name: Build
     runs-on: ubuntu-latest
