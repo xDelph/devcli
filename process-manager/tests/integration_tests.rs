@@ -488,3 +488,39 @@ async fn test_detached_output_is_streamed_from_the_log_file() {
     assert!(lines.contains(&"first".to_string()), "got {lines:?}");
     assert!(lines.contains(&"second".to_string()), "got {lines:?}");
 }
+
+/// Invalid UTF-8 on an attached child's output must not stop log capture.
+#[tokio::test]
+#[cfg(unix)]
+async fn test_attached_output_survives_invalid_utf8() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("binary.log");
+
+    let task = Task {
+        id: "binary".to_string(),
+        command: "sh -c \"printf 'bad \\377 byte\\n'; echo AFTER\"".to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: false,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn sh");
+    let mut lines = Vec::new();
+    while let Some(msg) = running.output_rx.recv().await {
+        lines.push(msg.content);
+    }
+    if let Some(child) = running.child.as_mut() {
+        let _ = child.wait().await;
+    }
+
+    assert!(lines.iter().any(|l| l.starts_with("bad ")), "got {lines:?}");
+    assert!(lines.contains(&"AFTER".to_string()), "got {lines:?}");
+    wait_for_log_content(&log_path, "AFTER").await;
+}

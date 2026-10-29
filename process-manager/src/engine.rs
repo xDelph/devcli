@@ -328,8 +328,21 @@ fn spawn_output_handler<R>(
             None
         };
 
-        let mut reader = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
+        // Read raw bytes: `lines()` stops at the first invalid UTF-8 sequence,
+        // which closed the pipe and got the child killed by SIGPIPE as soon as it
+        // printed binary output or text in a legacy encoding.
+        let mut reader = BufReader::new(stream);
+        let mut raw = Vec::new();
+        loop {
+            raw.clear();
+            match reader.read_until(b'\n', &mut raw).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&raw)
+                .trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string();
             let msg = OutputMessage {
                 source: source.clone(),
                 content: line.clone(),
