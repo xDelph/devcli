@@ -262,9 +262,6 @@ let options = ProcessOptions {
 **Dependencies**
 - Dependency checks match `project/app` and treat a dependency as running in **any** environment (e.g. DB in Docker satisfies a local app)
 
-**Binary path**
-- Override subprocess binary location with `DEVCLI_BIN` if needed; otherwise `devcli_binary_path()` uses `current_exe()`
-
 ## Future Development
 
 Planned enhancements:

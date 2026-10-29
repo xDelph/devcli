@@ -1469,7 +1469,6 @@ version = "0.6.1"
 dependencies = [
  "anyhow",
  "app-detector",
- "base64 0.22.1",
  "chrono",
  "colored",
  "config-manager",

@@ -828,22 +828,21 @@ Tracks all managed processes:
 ```
 devcli start api
       │
-      ├─ Spawn internal-spawner (detached)
-      │      │
-      │      └─ Spawn actual app process
-      │             │
-      │             └─ Capture stdout/stderr
-      │             └─ Write to log file
+      ├─ Spawn the app in its own session (setsid)
+      │      └─ stdout/stderr = the log file itself (append mode)
+      │
+      ├─ Record it in ~/.devcli/processes/<id>.json
+      ├─ Make sure pm-daemon is running (health checks, auto-restart)
       │
       └─ Return immediately (non-blocking)
 ```
 
-**Internal Spawner**:
-- Runs as separate process
-- Captures app output
-- Writes to log files
-- Reports exit codes
-- Survives parent process exit
+- The app writes its output straight into its log file, so it keeps running
+  and logging after the CLI (or the TUI) exits.
+- Logs rotate by size (20 MiB): the file is copied to `<name>.log.1` and
+  truncated in place.
+- pm-daemon is the parent of the instances it restarts, so their exit codes
+  are recorded; the exit code of the first instance is not observable.
 
 ### Monitor Lifecycle
 

@@ -5,7 +5,6 @@ pub mod config;
 pub mod env;
 pub mod health_check;
 pub mod install_agents;
-pub mod internal_spawner;
 pub mod logs;
 pub mod metrics;
 pub mod monitor;
@@ -28,7 +27,6 @@ pub use health_check::health_check_command;
 pub use install_agents::{
     install_agents_command, uninstall_agents_command, InstallAgentsArgs, UninstallAgentsArgs,
 };
-pub use internal_spawner::internal_spawner_command;
 pub use logs::logs_command;
 pub use metrics::metrics_command;
 pub use monitor::monitor_command;

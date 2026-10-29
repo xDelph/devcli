@@ -211,12 +211,6 @@ pub enum Commands {
     #[command(about = "Display metrics from the monitor daemon")]
     Metrics,
 
-    #[command(hide = true)]
-    InternalSpawner {
-        #[arg(long, help = "Base64-encoded JSON payload")]
-        payload: String,
-    },
-
     #[command(about = "Manage configuration")]
     Config {
         #[command(subcommand)]
@@ -572,16 +566,6 @@ mod tests {
                 .command,
             Commands::Metrics
         ));
-
-        let spawner = Cli::try_parse_from(["devcli", "internal-spawner", "--payload", "dGVzdA=="])
-            .expect("parse internal-spawner")
-            .command;
-        assert_eq!(
-            spawner,
-            Commands::InternalSpawner {
-                payload: "dGVzdA==".into(),
-            }
-        );
     }
 
     #[test]

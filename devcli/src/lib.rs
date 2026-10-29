@@ -6,10 +6,9 @@ use cli::{ConfigAction, EnvAction, PrefAction};
 use devcli_core::commands::{
     add_env_file, auto_add_command, config_add_command, config_edit, config_edit_command,
     config_init, config_list, config_list_commands, config_remove_command, config_set_default,
-    config_show, config_validate, health_check_command, internal_spawner_command, list_env_files,
-    metrics_command, monitor_command, pref_reset, pref_set, pref_show, remove_env_file,
-    restart_command, run_command, set_default_stage, start_command, status_command, stop_command,
-    ui_command,
+    config_show, config_validate, health_check_command, list_env_files, metrics_command,
+    monitor_command, pref_reset, pref_set, pref_show, remove_env_file, restart_command,
+    run_command, set_default_stage, start_command, status_command, stop_command, ui_command,
 };
 use devcli_core::Result;
 use std::io::IsTerminal;
@@ -169,10 +168,6 @@ pub async fn run(cli: Cli) -> Result<()> {
 
         Commands::Metrics => {
             metrics_command().await?;
-        }
-
-        Commands::InternalSpawner { payload } => {
-            internal_spawner_command(payload).await?;
         }
 
         Commands::Config { action } => match action {

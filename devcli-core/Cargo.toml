@@ -26,7 +26,6 @@ crossterm = "0.27"
 # default feature set also pulls the YAML/plist/HTML loaders, and with them
 # the unmaintained yaml-rust (RUSTSEC-2024-0320).
 syntect = { version = "5.1", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
-base64 = "0.22.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
