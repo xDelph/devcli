@@ -34,11 +34,10 @@ impl LogManager {
     /// Creates a new LogManager
     /// Determines the log directory path but doesn't create it
     pub fn new() -> Result<Self> {
-        // Get user's home directory
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-
-        // Build the log directory path: ~/.devcli/logs/
-        let log_dir = home.join(".devcli").join("logs");
+        // The directory the apps' logs are written to. It used to be hard-coded
+        // to ~/.devcli/logs, so with DEVCLI_CONFIG_DIR (or a project-local
+        // ./.devcli) the TUI showed "No logs available" for every app.
+        let log_dir = crate::process_manager_support::logs_dir()?;
 
         Ok(Self {
             log_dir,
@@ -67,9 +66,6 @@ impl LogManager {
         // Use std::fs instead of tokio::fs since we're not in an async context
         let entries = std::fs::read_dir(&self.log_dir).context("Failed to read log directory")?;
 
-        // Pattern to match
-        let prefix = format!("{}_{}_", project_name, app_name);
-
         for entry in entries {
             let entry = entry.context("Failed to read directory entry")?;
             let path = entry.path();
@@ -85,8 +81,11 @@ impl LogManager {
                 None => continue, // Skip if filename is invalid UTF-8
             };
 
-            // Check if filename matches our pattern
-            if filename.starts_with(&prefix) && filename.ends_with(".log") {
+            // Exactly this app's logs (a prefix match also caught `api_worker`
+            // under `api`).
+            if crate::process_manager_support::LogFileName::parse(filename)
+                .is_some_and(|name| name.belongs_to(project_name, app_name))
+            {
                 // Get file metadata for size and modification time
                 let metadata = std::fs::metadata(&path).context("Failed to read file metadata")?;
 
@@ -151,21 +150,10 @@ impl LogManager {
     /// Filename format: {project}_{app}_{context}_{date}.log
     /// Output: "{context} - {Today/Yesterday/X days ago}"
     pub fn format_log_label(filename: &str) -> String {
-        // Try to extract context from filename
-        // Format: project_app_context_YYYYMMDD.log
-        let without_ext = filename.trim_end_matches(".log");
-        let parts: Vec<&str> = without_ext.split('_').collect();
-
-        // We need at least 4 parts: project, app, context, date
-        if parts.len() >= 4 {
-            // Context is the third-to-last part (before the date)
-            let context = parts[parts.len() - 2];
-            let date_str = parts.last().unwrap_or(&"unknown");
-
-            // Parse date string YYYYMMDD
-            if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
+        if let Some(name) = crate::process_manager_support::LogFileName::parse(filename) {
+            if let Ok(date) = NaiveDate::parse_from_str(&name.date, "%Y%m%d") {
                 let smart_date = Self::format_relative_date(date);
-                return format!("{} - {}", context, smart_date);
+                return format!("{} - {}", name.environment, smart_date);
             }
         }
 

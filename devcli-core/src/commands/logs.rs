@@ -144,20 +144,12 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
     Ok(candidates.into_iter().next().map(|(_, path)| path))
 }
 
-/// Environment part of `{project}_{app}_{env}_{YYYYMMDD}.log`.
+/// Environment part of `{project}_{app}_{env}_{YYYYMMDD}.log`, if the file is a
+/// log of exactly `project/app`.
 fn environment_from_log_name(path: &Path, project: &str, app: &str) -> Option<String> {
-    let name = path.file_name()?.to_str()?;
-    let rest = name
-        .strip_prefix(&format!("{project}_{app}_"))?
-        .strip_suffix(".log")?;
-    let (env, date) = rest.rsplit_once('_')?;
-    // Environment names never contain `_`; if one does, the "app" part we
-    // stripped was only a prefix of a longer app name (`api` vs `api_worker`).
-    let valid = !env.is_empty()
-        && !env.contains('_')
-        && date.len() == 8
-        && date.chars().all(|c| c.is_ascii_digit());
-    valid.then(|| env.to_string())
+    crate::process_manager_support::LogFileName::from_path(path)
+        .filter(|name| name.belongs_to(project, app))
+        .map(|name| name.environment)
 }
 
 /// Read the last `n` lines of a file without loading it entirely.

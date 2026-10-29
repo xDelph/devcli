@@ -603,16 +603,14 @@ impl SingleLogView {
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown");
 
-        // Parse filename: {project}_{app}_{context}_{date}.log
-        let parts: Vec<&str> = filename.splitn(4, '_').collect();
-        let (project, context_date) = if parts.len() >= 4 {
-            let proj = parts[0];
-            let context = parts[2];
-            let date = parts[3].replace(".log", "");
-            (proj.to_string(), format!("{} [{}]", context, date))
-        } else {
-            ("Unknown".to_string(), filename.replace(".log", ""))
-        };
+        let (project, context_date) =
+            match crate::process_manager_support::LogFileName::parse(filename) {
+                Some(name) => (
+                    name.guess_project_app().0,
+                    format!("{} [{}]", name.environment, name.date),
+                ),
+                None => ("Unknown".to_string(), filename.replace(".log", "")),
+            };
 
         let current_line = self.viewport.cursor_line + 1;
 

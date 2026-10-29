@@ -87,22 +87,8 @@ impl AppColorManager {
     /// // Returns: "redis"
     /// ```
     pub fn extract_app_name_from_path(log_path: &std::path::Path) -> String {
-        log_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|filename| {
-                // Remove .log extension
-                let name_without_ext = filename.strip_suffix(".log").unwrap_or(filename);
-
-                // Split by underscore and get the second part (app name)
-                // We need at least 4 parts for the expected format: project_app_context_date
-                let parts: Vec<&str> = name_without_ext.split('_').collect();
-                if parts.len() >= 4 {
-                    Some(parts[1].to_string())
-                } else {
-                    None
-                }
-            })
+        crate::process_manager_support::LogFileName::from_path(log_path)
+            .map(|name| name.guess_project_app().1)
             .unwrap_or_else(|| "unknown".to_string())
     }
 

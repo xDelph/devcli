@@ -26,6 +26,61 @@ pub fn logs_dir() -> Result<PathBuf> {
     Ok(log_dir)
 }
 
+/// The parts of a log file name, `{project}_{app}_{environment}_{YYYYMMDD}.log`.
+///
+/// Parsed from the right: environment names never contain `_` and the date is
+/// eight digits, so those are unambiguous even when the project or app name
+/// contains underscores (`proj_api_worker_local_20260101.log`). Splitting on
+/// `_` from the left, as four call sites used to, read app `api_worker` as
+/// `api`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogFileName {
+    /// `{project}_{app}`
+    pub stem: String,
+    pub environment: String,
+    /// `YYYYMMDD`
+    pub date: String,
+}
+
+impl LogFileName {
+    pub fn parse(file_name: &str) -> Option<Self> {
+        let rest = file_name.strip_suffix(".log")?;
+        let (rest, date) = rest.rsplit_once('_')?;
+        let (stem, environment) = rest.rsplit_once('_')?;
+        let date_ok = date.len() == 8 && date.chars().all(|c| c.is_ascii_digit());
+        if !date_ok || environment.is_empty() || stem.is_empty() {
+            return None;
+        }
+        Some(Self {
+            stem: stem.to_string(),
+            environment: environment.to_string(),
+            date: date.to_string(),
+        })
+    }
+
+    pub fn from_path(path: &std::path::Path) -> Option<Self> {
+        Self::parse(path.file_name()?.to_str()?)
+    }
+
+    /// Whether this is a log of `project/app` (exact, not a prefix match:
+    /// `proj_api_` is also the start of app `api_worker`'s logs).
+    pub fn belongs_to(&self, project: &str, app: &str) -> bool {
+        self.stem.len() == project.len() + 1 + app.len()
+            && self.stem.starts_with(project)
+            && self.stem[project.len()..].starts_with('_')
+            && self.stem.ends_with(app)
+    }
+
+    /// `(project, app)` when only the file name is known: split at the first
+    /// `_`. Exact for project names without underscores.
+    pub fn guess_project_app(&self) -> (String, String) {
+        match self.stem.split_once('_') {
+            Some((project, app)) => (project.to_string(), app.to_string()),
+            None => (String::new(), self.stem.clone()),
+        }
+    }
+}
+
 pub fn log_file_path(project: &str, app_name: &str, environment: &str) -> Result<PathBuf> {
     let log_dir = logs_dir()?;
     let date = Utc::now().format("%Y%m%d");
@@ -161,5 +216,28 @@ pub fn to_pm_restart_policy(
             enabled: false,
             ..RestartPolicy::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_file_names_parse_from_the_right() {
+        let name = LogFileName::parse("proj_api_worker_docker-compose_20260101.log").unwrap();
+        assert_eq!(name.stem, "proj_api_worker");
+        assert_eq!(name.environment, "docker-compose");
+        assert_eq!(name.date, "20260101");
+        assert!(name.belongs_to("proj", "api_worker"));
+        assert!(!name.belongs_to("proj", "api"));
+        assert_eq!(
+            name.guess_project_app(),
+            ("proj".to_string(), "api_worker".to_string())
+        );
+
+        assert!(LogFileName::parse("proj_api_local.log").is_none());
+        assert!(LogFileName::parse("proj_api_local_20260101.log.1").is_none());
+        assert!(LogFileName::parse("notes.txt").is_none());
     }
 }

@@ -481,22 +481,12 @@ impl TuiApp {
                             {
                                 for log in logs {
                                     if !current_paths.contains(&log.path) {
-                                        let filename_str = log
-                                            .path
-                                            .file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy();
-                                        let clean_name = filename_str
-                                            .strip_suffix(".log")
-                                            .unwrap_or(&filename_str);
-                                        let parts: Vec<&str> = clean_name.split('_').collect();
-
-                                        // Parse env and date
-                                        let (env, date) = if parts.len() >= 4 {
-                                            (parts[2].to_string(), parts[3].to_string())
-                                        } else {
-                                            ("?".to_string(), "?".to_string())
-                                        };
+                                        let (env, date) =
+                                            crate::process_manager_support::LogFileName::from_path(
+                                                &log.path,
+                                            )
+                                            .map(|name| (name.environment, name.date))
+                                            .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
 
                                         grouped_logs
                                             .entry(app.project.clone())
