@@ -393,4 +393,25 @@ mod tests {
         store.delete("gone").unwrap();
         assert!(store.load("gone").unwrap().is_none());
     }
+
+    /// State entries and their directory are private to the user.
+    #[test]
+    #[cfg(unix)]
+    fn test_state_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().join("processes");
+        let store = StateStore::new(dir.clone()).unwrap();
+        store.save(&create_test_process("secret-app", 1)).unwrap();
+
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let file_mode = std::fs::metadata(dir.join("secret-app.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
+    }
 }

@@ -44,6 +44,14 @@ pub struct StateStore {
 impl StateStore {
     pub fn new(base_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&base_dir)?;
+        // Entries hold commands and env-file values: keep them private to the
+        // user, also for directories created by older versions.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&base_dir, fs::Permissions::from_mode(0o700))
+                .with_context(|| format!("Failed to restrict {}", base_dir.display()))?;
+        }
         Ok(Self { base_dir })
     }
 
@@ -72,9 +80,14 @@ impl StateStore {
             .join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
 
         let result = (|| -> Result<()> {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
                 .open(&tmp)
                 .with_context(|| format!("Failed to create {}", tmp.display()))?;
             file.write_all(bytes)?;

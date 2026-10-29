@@ -57,8 +57,12 @@ pub fn prepare_command(
         "Preparing command"
     );
 
-    // Start with current process environment
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    // Only the variables devcli adds or overrides. The child inherits the rest
+    // of the environment from whoever spawns it (the CLI, or pm-daemon on a
+    // restart). This map is persisted in the process state file, so copying the
+    // whole shell environment here used to write every token the user had
+    // exported (AWS keys, GITHUB_TOKEN, ...) to disk.
+    let mut env_vars: HashMap<String, String> = HashMap::new();
 
     // Inject --platform flag for docker/orbstack commands
     let mut final_command = match environment {
@@ -233,6 +237,10 @@ mod tests {
 
         assert_eq!(prepared.env_vars.get("PORT"), Some(&"3000".to_string()));
         assert_eq!(prepared.env_vars.get("DEBUG"), Some(&"true".to_string()));
+        // Only devcli's own additions: the inherited shell environment is not
+        // copied (it ends up persisted in the process state file).
+        assert_eq!(prepared.env_vars.get("PATH"), None);
+        assert_eq!(prepared.env_vars.len(), 2);
     }
 
     #[test]

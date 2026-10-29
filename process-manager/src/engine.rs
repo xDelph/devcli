@@ -238,9 +238,15 @@ fn open_log_for_child(path: &std::path::Path) -> Result<(std::fs::File, u64)> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create log directory {}", parent.display()))?;
     }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    // App output routinely contains tokens and connection strings.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
         .open(path)
         .with_context(|| format!("Failed to open log file {}", path.display()))?;
     let offset = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -317,9 +323,11 @@ fn spawn_output_handler<R>(
 {
     tokio::spawn(async move {
         let file = if let Some(path) = log_file {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
+            let mut options = tokio::fs::OpenOptions::new();
+            options.create(true).append(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            options
                 .open(path)
                 .await
                 .ok()
