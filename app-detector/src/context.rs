@@ -104,6 +104,14 @@ pub struct DetectionContext {
     ignore_patterns: Vec<String>,
 }
 
+/// Directory and file names skipped when scanning a project.
+pub fn default_ignore_patterns() -> Vec<String> {
+    [".git", "node_modules", "target", ".venv", "__pycache__"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 impl DetectionContext {
     /// Create a new detection context (root scope, default depth limit of 2)
     pub fn new(root_path: impl AsRef<Path>) -> Result<Self> {
@@ -129,14 +137,16 @@ impl DetectionContext {
             content_cache: Arc::new(RwLock::new(HashMap::new())),
             previous_results: Arc::new(RwLock::new(HashMap::new())),
             max_depth: 3,
-            ignore_patterns: vec![
-                ".git".to_string(),
-                "node_modules".to_string(),
-                "target".to_string(),
-                ".venv".to_string(),
-                "__pycache__".to_string(),
-            ],
+            ignore_patterns: default_ignore_patterns(),
         })
+    }
+
+    /// Set how deep the project file tree is scanned and which names are
+    /// skipped. Takes effect if called before the tree is first used.
+    pub fn with_tree_limits(mut self, max_depth: usize, ignore_patterns: Vec<String>) -> Self {
+        self.max_depth = max_depth;
+        self.ignore_patterns = ignore_patterns;
+        self
     }
 
     /// True if this context is running inside a monorepo workspace

@@ -249,14 +249,9 @@ fn build_detection_config(
 ) -> DetectionConfig {
     let mut config = DetectionConfig {
         max_depth,
-        ignore_patterns: vec![
-            ".git".to_string(),
-            "node_modules".to_string(),
-            "target".to_string(),
-        ],
+        ignore_patterns: app_detector::context::default_ignore_patterns(),
         enabled_categories: None,
         disabled_strategies: HashSet::new(),
-        parallel: false,
         enable_workspace_detection: true,
         max_workspace_depth: 2,
     };
