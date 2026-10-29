@@ -50,6 +50,9 @@ pub struct CommandPopup {
     color_manager: AppColorManager,
     /// All app names from config (for colorizing any app name that appears in logs)
     all_app_names: Vec<String>,
+    /// The command request this popup launched (results of other requests are
+    /// ignored).
+    pub(crate) request_id: Option<u64>,
 }
 
 /// Represents the different states of the command popup
@@ -110,6 +113,7 @@ impl CommandPopup {
             app_status: None,
             color_manager: AppColorManager::new(),
             all_app_names,
+            request_id: None,
         }
     }
 
@@ -166,6 +170,7 @@ impl CommandPopup {
             app_status: None,
             color_manager: AppColorManager::new(),
             all_app_names,
+            request_id: None,
         }
     }
 
@@ -612,35 +617,60 @@ impl CommandPopup {
         };
 
         // Render content (scrollable logs)
+        let wrap = ratatui::widgets::Wrap { trim: false };
+        let width = chunks[1].width;
+
         let mut content_lines = Vec::new();
-        if !self.output_lines.is_empty() {
-            // Clone the lines we need to avoid borrowing conflicts
-            let visible_lines: Vec<String> = self
+        let mut row_offset = 0usize;
+        let max_logical_scroll = self.output_lines.len().saturating_sub(available_height);
+        if self.output_lines.is_empty() {
+            content_lines.push(Line::from(Span::styled(
+                "Waiting for output...",
+                theme.style_text_dim(),
+            )));
+        } else if self.auto_scroll || scroll_pos >= max_logical_scroll {
+            // Following the output: fill the panel from the newest line up,
+            // measuring wrapped rows. Counting logical lines let long lines
+            // wrap the newest output below the bottom edge, out of view.
+            // At most one line per row can be visible: clone just those.
+            let tail: Vec<String> = self
+                .output_lines
+                .iter()
+                .rev()
+                .take(available_height.max(1))
+                .cloned()
+                .collect();
+            let mut used = 0usize;
+            for output_line in &tail {
+                let line = self.build_output_line(output_line);
+                used += Paragraph::new(line.clone())
+                    .wrap(wrap)
+                    .line_count(width)
+                    .max(1);
+                content_lines.push(line);
+                if used >= available_height {
+                    break;
+                }
+            }
+            content_lines.reverse();
+            row_offset = used.saturating_sub(available_height);
+        } else {
+            let visible: Vec<String> = self
                 .output_lines
                 .iter()
                 .skip(scroll_pos)
                 .take(available_height)
                 .cloned()
                 .collect();
-
-            for output_line in visible_lines {
-                // Parse ANSI codes first to get styled spans using the enhanced utils parser
-                let ansi_spans = crate::tui::utils::ansi::parse_ansi_codes(&output_line);
-
-                // Then colorize app names in the parsed spans
-                let colorized_spans = self.colorize_app_names_in_spans(ansi_spans);
-                content_lines.push(Line::from(colorized_spans));
+            for output_line in &visible {
+                content_lines.push(self.build_output_line(output_line));
             }
-        } else {
-            content_lines.push(Line::from(Span::styled(
-                "Waiting for output...",
-                theme.style_text_dim(),
-            )));
         }
 
         let content = Paragraph::new(content_lines)
             .alignment(Alignment::Left)
-            .wrap(ratatui::widgets::Wrap { trim: false });
+            .wrap(wrap)
+            .scroll((row_offset.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(content, chunks[1]);
 
         // Render scrollbar if needed
@@ -829,6 +859,12 @@ impl CommandPopup {
                 Constraint::Percentage((100 - percent_x) / 2),
             ])
             .split(popup_layout[1])[1]
+    }
+
+    /// One line of command output, ANSI-styled and with app names coloured.
+    fn build_output_line(&mut self, output_line: &str) -> Line<'static> {
+        let ansi_spans = crate::tui::utils::ansi::parse_ansi_codes(output_line);
+        Line::from(self.colorize_app_names_in_spans(ansi_spans))
     }
 
     /// Colorizes app names in log output spans

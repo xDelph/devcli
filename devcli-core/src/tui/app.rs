@@ -145,6 +145,9 @@ pub struct TuiApp {
 /// Request to execute a command in the background
 #[derive(Debug, Clone)]
 pub(crate) struct CommandRequest {
+    /// Assigned by `PopupManager::dispatch`; carried by every result so a
+    /// popup only shows output of the command it launched.
+    pub(crate) id: u64,
     pub(crate) app_name: String,
     pub(crate) project: String,
     pub(crate) environment: String,
@@ -163,9 +166,9 @@ pub(crate) enum CommandType {
 /// Result of command execution
 #[derive(Debug)]
 pub(crate) enum CommandResult {
-    Success(String),
-    Error(String),
-    LogLine(String), // New: stream log lines to popup
+    Success { id: u64, message: String },
+    Error { id: u64, message: String },
+    LogLine { id: u64, line: String }, // stream log lines to popup
 }
 
 impl TuiApp {
@@ -207,14 +210,18 @@ impl TuiApp {
             while let Some(request) = req_rx.recv().await {
                 let tx = result_tx.clone();
                 tokio::spawn(async move {
+                    let id = request.id;
                     let result = crate::tui::command_executor::execute_command_async(
                         request.clone(),
                         tx.clone(),
                     )
                     .await;
                     let _ = match result {
-                        Ok(msg) => tx.send(CommandResult::Success(msg)),
-                        Err(e) => tx.send(CommandResult::Error(format!("{:#}", e))),
+                        Ok(message) => tx.send(CommandResult::Success { id, message }),
+                        Err(e) => tx.send(CommandResult::Error {
+                            id,
+                            message: format!("{:#}", e),
+                        }),
                     };
                 });
             }

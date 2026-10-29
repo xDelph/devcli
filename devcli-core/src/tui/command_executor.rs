@@ -25,7 +25,7 @@ async fn execute_start_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    let core_output = spawn_output_bridge(output_tx.clone());
+    let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::start::StartCommandArgs {
         app_names: vec![request.app_name.clone()],
         project: Some(request.project),
@@ -55,7 +55,7 @@ async fn execute_run_command(
         ("local", request.environment.as_str())
     };
 
-    let core_output = spawn_output_bridge(output_tx.clone());
+    let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::run::RunCommandArgs {
         app_name: request.app_name.clone(),
         command_variant: command_name.to_string(),
@@ -75,7 +75,7 @@ async fn execute_stop_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    let core_output = spawn_output_bridge(output_tx.clone());
+    let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::stop::StopCommandArgs {
         app_name: Some(request.app_name.clone()),
         project: Some(request.project),
@@ -95,7 +95,7 @@ async fn execute_restart_command(
     request: CommandRequest,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> Result<String> {
-    let core_output = spawn_output_bridge(output_tx.clone());
+    let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::restart::RestartCommandArgs {
         app_name: request.app_name.clone(),
         project: Some(request.project),
@@ -115,12 +115,13 @@ async fn execute_restart_command(
 }
 
 fn spawn_output_bridge(
+    id: u64,
     output_tx: mpsc::UnboundedSender<CommandResult>,
 ) -> crate::process_manager_support::OutputChannel {
     let (core_tx, mut core_rx) = mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
         while let Some(line) = core_rx.recv().await {
-            let _ = output_tx.send(CommandResult::LogLine(line));
+            let _ = output_tx.send(CommandResult::LogLine { id, line });
         }
     });
     core_tx
