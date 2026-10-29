@@ -21,7 +21,10 @@ inquire = "0.9"
 ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }
 ratatui-widgets = "0.3.0-beta.0"
 crossterm = "0.27"
-syntect = "5.1"
+# Only the bundled syntaxes/themes are used (JSON log highlighting). The
+# default feature set also pulls the YAML/plist/HTML loaders, and with them
+# the unmaintained yaml-rust (RUSTSEC-2024-0320).
+syntect = { version = "5.1", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
 base64 = "0.22.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tracing = "0.1"
