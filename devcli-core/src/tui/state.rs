@@ -70,43 +70,13 @@ impl AppState {
             for (app_name, app_config) in &project_config.apps {
                 // Determine status and runtime details from process-manager state.
                 let process_info = find_process(store, project_name, app_name, None)?;
-                let status = process_info
-                    .as_ref()
-                    .map(|info| AppStatus::from_process(store, info))
-                    .unwrap_or(AppStatus::Stopped);
-
-                // Get the active stage from the running process (if any)
-                let active_stage = process_info
-                    .as_ref()
-                    .and_then(|info| info.metadata.get("stage").cloned());
-
-                // Extract restart count and exit code
-                let restart_count = process_info
-                    .as_ref()
-                    .map(|info| info.runtime.restart_count)
-                    .unwrap_or(0);
-                let last_exit_code = process_info
-                    .as_ref()
-                    .and_then(|info| info.runtime.last_exit_code);
-
-                // Determine health status
-                let health_status = if let Some(info) = process_info.as_ref() {
-                    if info.runtime.health_failures > 0 {
-                        HealthStatus::Unhealthy {
-                            failures: info.runtime.health_failures,
-                            last_check: info.runtime.last_health_check.unwrap_or_else(Utc::now),
-                        }
-                    } else if info.runtime.last_health_check.is_some() {
-                        // Health check has run and is passing
-                        HealthStatus::Healthy
-                    } else {
-                        // No health check has run yet
-                        HealthStatus::Unknown
-                    }
-                } else {
-                    // No process info available
-                    HealthStatus::Unknown
-                };
+                let RuntimeSnapshot {
+                    status,
+                    active_stage,
+                    restart_count,
+                    last_exit_code,
+                    health_status,
+                } = RuntimeSnapshot::from_process(store, process_info.as_ref());
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
@@ -289,6 +259,67 @@ impl AppState {
     }
 }
 
+/// Everything about an app that changes while it runs, read from its
+/// process-manager entry. Shared by the initial state and the status poller,
+/// which used to refresh only `status` and left restarts, exit code, health
+/// and active stage frozen at their values when the TUI started.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeSnapshot {
+    pub status: AppStatus,
+    pub active_stage: Option<String>,
+    pub restart_count: u32,
+    pub last_exit_code: Option<i32>,
+    pub health_status: HealthStatus,
+}
+
+impl RuntimeSnapshot {
+    pub fn from_process(
+        store: &StateStore,
+        process: Option<&process_manager::state::ManagedProcess>,
+    ) -> Self {
+        let Some(info) = process else {
+            return Self {
+                status: AppStatus::Stopped,
+                active_stage: None,
+                restart_count: 0,
+                last_exit_code: None,
+                health_status: HealthStatus::Unknown,
+            };
+        };
+
+        let health_status = if info.runtime.health_failures > 0 {
+            HealthStatus::Unhealthy {
+                failures: info.runtime.health_failures,
+                last_check: info.runtime.last_health_check.unwrap_or_else(Utc::now),
+            }
+        } else if info.runtime.last_health_check.is_some() {
+            // Health check has run and is passing
+            HealthStatus::Healthy
+        } else {
+            // No health check has run yet
+            HealthStatus::Unknown
+        };
+
+        Self {
+            status: AppStatus::from_process(store, info),
+            active_stage: info.metadata.get("stage").cloned(),
+            restart_count: info.runtime.restart_count,
+            last_exit_code: info.runtime.last_exit_code,
+            health_status,
+        }
+    }
+
+    /// Equal apart from the running time, which differs on every poll and
+    /// would otherwise make each poll look like a change.
+    pub fn same_state(&self, other: &Self) -> bool {
+        self.status.same_state(&other.status)
+            && self.active_stage == other.active_stage
+            && self.restart_count == other.restart_count
+            && self.last_exit_code == other.last_exit_code
+            && self.health_status == other.health_status
+    }
+}
+
 /// Health status of an application
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealthStatus {
@@ -420,6 +451,34 @@ impl AppStatus {
             start_time: process.start_time,
             environment: process.metadata.get("environment").cloned(),
             command_variant: process.metadata.get("command_variant").cloned(),
+        }
+    }
+
+    /// Same status, ignoring `uptime`.
+    pub fn same_state(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                AppStatus::Running {
+                    pid,
+                    start_time,
+                    environment,
+                    command_variant,
+                    ..
+                },
+                AppStatus::Running {
+                    pid: other_pid,
+                    start_time: other_start,
+                    environment: other_env,
+                    command_variant: other_variant,
+                    ..
+                },
+            ) => {
+                pid == other_pid
+                    && start_time == other_start
+                    && environment == other_env
+                    && command_variant == other_variant
+            }
+            _ => self == other,
         }
     }
 

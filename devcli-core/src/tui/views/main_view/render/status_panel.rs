@@ -194,12 +194,15 @@ impl MainView {
 
         if let crate::tui::state::AppStatus::Running {
             pid,
-            uptime,
+            start_time,
             environment,
             command_variant,
             ..
         } = &app.status
         {
+            // Computed at render time: the stored uptime is only as fresh as
+            // the last poll.
+            let uptime = &chrono::Utc::now().signed_duration_since(*start_time);
             lines.push(Line::from(vec![
                 Span::styled("PID:         ", theme.style_text_dim()),
                 Span::styled(pid.to_string(), theme.style_text()),

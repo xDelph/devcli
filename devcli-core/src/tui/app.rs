@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::config::loader::load_config;
-use crate::process_manager_support::{find_process, state_store};
+use crate::process_manager_support::state_store;
 
 use anyhow::{Context, Result};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyEvent};
@@ -297,11 +297,26 @@ impl TuiApp {
         // Check if status was updated by background polling
         self.check_status_update()?;
 
+        // The status panel shows a live uptime: redraw about once a second
+        // while something runs (polls no longer count uptime as a change).
+        if self.last_render.elapsed() >= Duration::from_secs(1) && self.any_app_running() {
+            needs_redraw = true;
+        }
+
         if needs_redraw {
             self.needs_redraw = true;
         }
 
         Ok(())
+    }
+
+    fn any_app_running(&self) -> bool {
+        self.state.try_lock().is_ok_and(|state| {
+            state
+                .projects
+                .iter()
+                .any(|p| p.apps.iter().any(|a| a.status.is_running()))
+        })
     }
 
     pub(crate) fn needs_clear(&self) -> bool {
@@ -688,46 +703,71 @@ impl TuiApp {
         state: &Arc<Mutex<AppState>>,
         state_store: &Arc<process_manager::StateStore>,
     ) {
-        // Try to acquire the state lock with a non-blocking approach
-        // If we can't get it immediately, skip this update cycle
-        // This prevents blocking if the main thread is using the state
-        // Performance optimization: Avoids contention on the state lock
-        if let Ok(mut state) = state.try_lock() {
-            let mut any_changed = false;
+        // Which apps to look at - a brief lock. If the UI holds it, skip.
+        let keys: Vec<(String, String)> = match state.try_lock() {
+            Ok(state) => state
+                .projects
+                .iter()
+                .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
+                .collect(),
+            Err(_) => return,
+        };
 
-            // Update status for all apps in all projects
-            for project in &mut state.projects {
-                for app in &mut project.apps {
-                    let old_status = app.status.clone();
-                    // Check if the app is currently running
-                    app.status = Self::check_app_status(&project.name, &app.name, state_store);
+        // Read the store once and probe processes on a blocking thread, with
+        // no lock held. This used to run `find_process` (a full directory read
+        // and parse) per app, with its process probes, while holding the
+        // AppState mutex on a runtime worker - the UI thread blocked on the
+        // lock in tick/render meanwhile.
+        let store = Arc::clone(state_store);
+        let Ok(snapshots) = tokio::task::spawn_blocking(move || {
+            let processes = store.list().unwrap_or_default();
+            keys.into_iter()
+                .map(|(project, app)| {
+                    let process = processes.iter().find(|p| {
+                        p.metadata.get("project") == Some(&project)
+                            && p.metadata.get("app_config_name") == Some(&app)
+                    });
+                    let snapshot =
+                        crate::tui::state::RuntimeSnapshot::from_process(&store, process);
+                    ((project, app), snapshot)
+                })
+                .collect::<std::collections::HashMap<_, _>>()
+        })
+        .await
+        else {
+            return;
+        };
 
-                    // Track if any status changed
-                    if old_status != app.status {
-                        any_changed = true;
-                    }
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let mut any_changed = false;
+        for project in &mut state.projects {
+            for app in &mut project.apps {
+                let Some(new) = snapshots.get(&(app.project.clone(), app.name.clone())) else {
+                    continue;
+                };
+                let old = crate::tui::state::RuntimeSnapshot {
+                    status: app.status.clone(),
+                    active_stage: app.active_stage.clone(),
+                    restart_count: app.restart_count,
+                    last_exit_code: app.last_exit_code,
+                    health_status: app.health_status.clone(),
+                };
+                if !old.same_state(new) {
+                    any_changed = true;
                 }
-            }
-
-            // Set flag to trigger UI redraw if status changed
-            if any_changed {
-                state.status_updated = true;
+                app.status = new.status.clone();
+                app.active_stage = new.active_stage.clone();
+                app.restart_count = new.restart_count;
+                app.last_exit_code = new.last_exit_code;
+                app.health_status = new.health_status.clone();
             }
         }
-    }
 
-    /// Checks the current status of an app by querying process-manager state.
-    fn check_app_status(
-        project_name: &str,
-        app_name: &str,
-        state_store: &process_manager::StateStore,
-    ) -> crate::tui::state::AppStatus {
-        use crate::tui::state::AppStatus;
-
-        match find_process(state_store, project_name, app_name, None) {
-            Ok(Some(process_info)) => AppStatus::from_process(state_store, &process_info),
-            Ok(None) => AppStatus::Stopped,
-            Err(_) => AppStatus::Unknown,
+        // Set flag to trigger UI redraw if something actually changed
+        if any_changed {
+            state.status_updated = true;
         }
     }
 
@@ -835,5 +875,70 @@ impl TuiApp {
                 .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
             frame.render_widget(placeholder, size);
         }
+    }
+}
+
+#[cfg(test)]
+mod status_polling_tests {
+    use super::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
+    use process_manager::state::{ManagedProcess, ProcessRuntime};
+    use std::collections::HashMap;
+
+    fn tracked(restart_count: u32) -> ManagedProcess {
+        let mut metadata = HashMap::new();
+        metadata.insert("project".to_string(), "p".to_string());
+        metadata.insert("app_config_name".to_string(), "api".to_string());
+        ManagedProcess {
+            id: "p.api.local".to_string(),
+            // This test process: alive for the whole test.
+            pid: std::process::id(),
+            pgid: None,
+            task: process_manager::Task {
+                id: "p.api.local".to_string(),
+                command: "x".to_string(),
+                args: vec![],
+                working_dir: "/tmp".into(),
+                env: HashMap::new(),
+                is_detached: true,
+                log_file: None,
+                health_check: process_manager::HealthCheck::Process {},
+                restart_policy: process_manager::RestartPolicy::default(),
+            },
+            start_time: chrono::Utc::now(),
+            metadata,
+            runtime: ProcessRuntime {
+                restart_count,
+                ..ProcessRuntime::default()
+            },
+        }
+    }
+
+    /// The poller refreshes every runtime field, and an unchanged app (only
+    /// its uptime grew) is not reported as a change.
+    #[tokio::test]
+    async fn polling_refreshes_runtime_fields_and_ignores_uptime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = Arc::new(process_manager::StateStore::new(dir.path().to_path_buf()).unwrap());
+        store.save(&tracked(1)).unwrap();
+
+        let config = ConfigBuilder::new()
+            .with_app("p", "api", AppBuilder::new("nodejs", "/tmp").build())
+            .build();
+        let state = Arc::new(Mutex::new(
+            AppState::from_config_with_store(&config, &store).unwrap(),
+        ));
+
+        TuiApp::update_all_app_statuses(&state, &store).await;
+        assert!(
+            !state.lock().unwrap().status_updated,
+            "uptime alone is not a change"
+        );
+
+        store.save(&tracked(2)).unwrap();
+        TuiApp::update_all_app_statuses(&state, &store).await;
+        let state = state.lock().unwrap();
+        assert!(state.status_updated);
+        assert_eq!(state.projects[0].apps[0].restart_count, 2);
     }
 }
