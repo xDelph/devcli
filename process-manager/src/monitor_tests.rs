@@ -279,4 +279,51 @@ mod tests {
 
         assert!(!monitor.tick().await.unwrap());
     }
+
+    /// An app stopped (entry removed) while its restart waits out the backoff
+    /// must not be respawned behind the user's back.
+    #[tokio::test]
+    async fn test_restart_is_abandoned_when_entry_removed_during_backoff() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let marker = temp_dir.path().join("respawned");
+
+        let mut task = sleep_task("stopped-during-backoff", 120);
+        task.restart_policy.initial_backoff_secs = 1;
+        task.command = format!("sh -c 'touch {}; sleep 120'", marker.display());
+        let running = spawn_and_track(&store, task).await;
+        wait_until(|| marker.exists(), Duration::from_secs(10)).await;
+        std::fs::remove_file(&marker).unwrap();
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        // The restart task is now sleeping through its 1s backoff.
+        store.delete("stopped-during-backoff").unwrap();
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+
+        assert!(!marker.exists(), "the stopped app was respawned");
+        assert!(store.load("stopped-during-backoff").unwrap().is_none());
+    }
+
+    /// An entry flagged by `stop` is not treated as a crash.
+    #[tokio::test]
+    async fn test_tick_leaves_stopping_entries_alone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let running = spawn_and_track(&store, sleep_task("being-stopped", 120)).await;
+        store.mark_stopping("being-stopped").unwrap().unwrap();
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let entry = store.load("being-stopped").unwrap().unwrap();
+        assert_eq!(entry.pid, running.pid, "a stopping app was restarted");
+        assert_eq!(entry.runtime.restart_count, 0);
+    }
 }

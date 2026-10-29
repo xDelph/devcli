@@ -414,4 +414,48 @@ mod tests {
         assert_eq!(dir_mode, 0o700);
         assert_eq!(file_mode, 0o600);
     }
+
+    /// `mark_stopping` flags the entry and hands back its current content.
+    #[test]
+    fn test_mark_stopping_returns_current_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        assert!(store.mark_stopping("missing").unwrap().is_none());
+
+        store.save(&create_test_process("app", 111)).unwrap();
+        // Someone (pm-daemon) restarted it meanwhile.
+        store.save(&create_test_process("app", 222)).unwrap();
+
+        let current = store.mark_stopping("app").unwrap().unwrap();
+        assert_eq!(current.pid, 222);
+        assert!(current.is_stopping());
+        assert!(store.load("app").unwrap().unwrap().is_stopping());
+    }
+
+    /// While a daemon runs, a crashed app it will restart is left to it.
+    #[test]
+    fn test_cleanup_dead_leaves_restartable_entries_to_the_daemon() {
+        use fs2::FileExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        let mut dead = create_test_process("crashed", 2_000_000_000);
+        dead.task.restart_policy.enabled = true;
+        store.save(&dead).unwrap();
+
+        // Pretend to be the daemon.
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(temp_dir.path().join(".daemon.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        assert!(store.cleanup_dead().unwrap().is_empty());
+        assert!(store.load("crashed").unwrap().is_some());
+
+        // No daemon: nothing will restart it, so it is cleaned up.
+        FileExt::unlock(&lock).unwrap();
+        assert_eq!(store.cleanup_dead().unwrap(), vec!["crashed".to_string()]);
+    }
 }

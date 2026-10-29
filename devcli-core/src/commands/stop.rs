@@ -278,6 +278,14 @@ async fn stop_single_process(
     silent: bool,
     output_tx: Option<&OutputChannel>,
 ) -> Result<()> {
+    // Flag the entry first so pm-daemon does not restart the app while we take
+    // it down, and act on the entry as it is now: the daemon may have restarted
+    // the app (new PID) since the caller looked it up.
+    let Some(current) = store.mark_stopping(&process.id)? else {
+        return Ok(());
+    };
+    let process = &current;
+
     let display_name = process
         .metadata
         .get("app_config_name")

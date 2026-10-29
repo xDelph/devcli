@@ -41,6 +41,26 @@ pub struct StateStore {
     base_dir: PathBuf,
 }
 
+/// Metadata key set by `stop` before it signals a process. pm-daemon leaves such
+/// an entry alone: a process that dies because the user stopped it is not a
+/// crash to recover from.
+pub const STOPPING_KEY: &str = "stopping";
+
+/// Exclusive hold on one state entry; released on drop.
+///
+/// Serialises the read-modify-write sequences of `stop` and of pm-daemon's
+/// automatic restart, which otherwise interleave: the daemon could respawn an
+/// app the user had just stopped and leave the new process running untracked.
+pub struct EntryLock {
+    file: fs::File,
+}
+
+impl Drop for EntryLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 impl StateStore {
     pub fn new(base_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&base_dir)?;
@@ -190,6 +210,66 @@ impl StateStore {
         }
     }
 
+    /// Block until no one else is modifying entry `id`.
+    ///
+    /// Hold it only around short load/update/save sequences.
+    pub fn lock_entry(&self, id: &str) -> Result<EntryLock> {
+        let dir = self.base_dir.join("locks");
+        fs::create_dir_all(&dir)?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join(format!("{id}.entry.lock")))
+            .context("Failed to open state entry lock")?;
+        file.lock_exclusive()
+            .context("Failed to lock state entry")?;
+        Ok(EntryLock { file })
+    }
+
+    /// Flag entry `id` as being stopped and return its current content.
+    ///
+    /// Callers must signal the PID of the returned entry, not of an earlier
+    /// snapshot: pm-daemon may have restarted the app in the meantime.
+    pub fn mark_stopping(&self, id: &str) -> Result<Option<ManagedProcess>> {
+        let _guard = self.lock_entry(id)?;
+        let Some(mut process) = self.load(id)? else {
+            return Ok(None);
+        };
+        process
+            .metadata
+            .insert(STOPPING_KEY.to_string(), "true".to_string());
+        self.save(&process)?;
+        Ok(Some(process))
+    }
+
+    /// Whether a pm-daemon currently holds this store's singleton lock.
+    pub fn daemon_running(&self) -> bool {
+        let Ok(file) = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.base_dir.join(".daemon.lock"))
+        else {
+            return false;
+        };
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                false
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Whether pm-daemon will pick this dead entry up and restart it.
+    fn awaiting_restart(&self, process: &ManagedProcess) -> bool {
+        !process.is_stopping()
+            && process.should_restart(&process.task.restart_policy)
+            && self.daemon_running()
+    }
+
     /// Path to the mtime-based notification file used by TUI status polling.
     pub fn status_changed_path(&self) -> PathBuf {
         self.base_dir.join(".status_changed")
@@ -218,7 +298,10 @@ impl StateStore {
     pub fn cleanup_dead(&self) -> Result<Vec<String>> {
         let mut cleaned = Vec::new();
         for proc in self.list()? {
-            if !self.is_running(&proc) {
+            // Every CLI command runs this first. Deleting a crashed app that the
+            // daemon is about to restart (it checks every few seconds, then waits
+            // out the backoff) silently disabled auto-restart.
+            if !self.is_running(&proc) && !self.awaiting_restart(&proc) {
                 self.delete(&proc.id)?;
                 cleaned.push(proc.id);
             }
@@ -366,6 +449,11 @@ impl ManagedProcess {
     /// Without this, `stop` (or `stop --all` on stale state) would signal an
     /// unrelated process of the user's that happened to receive the PID. When
     /// the age cannot be read the PID is assumed to be ours.
+    /// Whether `stop` is taking this process down.
+    pub fn is_stopping(&self) -> bool {
+        self.metadata.contains_key(STOPPING_KEY)
+    }
+
     pub fn pid_was_reused(&self) -> bool {
         let Some(age) = crate::engine::process_age(self.pid) else {
             return false;

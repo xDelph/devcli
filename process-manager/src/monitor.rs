@@ -51,6 +51,11 @@ impl Monitor {
         }
 
         for mut proc in processes {
+            if proc.is_stopping() {
+                // `stop` owns this entry until it deletes it.
+                continue;
+            }
+
             let is_alive = self.state.is_running(&proc);
 
             if !is_alive {
@@ -100,40 +105,53 @@ impl Monitor {
 
             tokio::spawn(async move {
                 let _ = coordinator.execute_if_allowed(&id, backoff, || async {
+                    // Re-check under the entry lock: the backoff can last a minute,
+                    // and `stop` takes the same lock before it signals anything.
+                    let _guard = state.lock_entry(&id)?;
+                    let Some(current) = state.load(&id)? else {
+                        tracing::info!(id = %id, "Entry removed during backoff, not restarting");
+                        return Ok(());
+                    };
+                    if current.is_stopping() || current.pid != old_pid {
+                        tracing::info!(id = %id, "Entry stopped or already restarted, not restarting");
+                        return Ok(());
+                    }
+
                     tracing::info!(id = %id, reason = %reason, "Executing automatic restart...");
 
-                    let result = engine::restart(
-                        &task,
-                        old_pid,
-                        old_pgid,
-                        Duration::from_secs(0),
-                    )
-                    .await?;
+                    // Only an unhealthy-but-alive process needs killing, and only if
+                    // its PID still belongs to it: after a crash plus a long backoff
+                    // the OS may have handed `old_pid` to an unrelated process.
+                    if state.is_running(&current) {
+                        let _ = engine::terminate(old_pid, old_pgid, true).await;
+                    }
 
-                    // For background restarts, we drop the output_rx as logs are already being written to file
+                    let result = engine::spawn(&task).await?;
+                    // Output goes straight to the log file; nobody reads the channel.
                     drop(result.output_rx);
 
-                    if let Some(mut updated_proc) = state.load(&id)? {
-                        updated_proc.pid = result.pid;
-                        updated_proc.pgid = result.pgid;
-                        // A new process: uptime and PID-reuse detection are
-                        // measured from here.
-                        updated_proc.start_time = Utc::now();
-                        updated_proc.runtime.restart_count += 1;
-                        updated_proc.runtime.health_failures = 0;
-                        updated_proc.runtime.history.push(crate::state::RestartEvent {
-                            timestamp: Utc::now(),
-                            reason: format!("Auto-restart due to {}", reason),
-                        });
-                        state.save(&updated_proc)?;
-                    }
+                    let mut updated_proc = current;
+                    updated_proc.pid = result.pid;
+                    updated_proc.pgid = result.pgid;
+                    // A new process: uptime and PID-reuse detection are measured
+                    // from here.
+                    updated_proc.start_time = Utc::now();
+                    updated_proc.runtime.restart_count += 1;
+                    updated_proc.runtime.health_failures = 0;
+                    updated_proc.runtime.history.push(crate::state::RestartEvent {
+                        timestamp: Utc::now(),
+                        reason: format!("Auto-restart due to {}", reason),
+                    });
+                    state.save(&updated_proc)?;
                     Ok(())
                 })
                 .await;
             });
         } else {
             tracing::error!(id = %proc.id, "Max restarts reached or policy prevents restart. Deleting state.");
-            let _ = engine::terminate(proc.pid, proc.pgid, true).await;
+            if self.state.is_running(proc) {
+                let _ = engine::terminate(proc.pid, proc.pgid, true).await;
+            }
             self.state.delete(&proc.id)?;
         }
 
