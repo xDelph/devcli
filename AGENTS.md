@@ -40,7 +40,8 @@ Colors are automatically disabled when stdout is not a TTY.
 | everything else | success           | error (message on stderr) | —        |
 
 On error with `--json`, a JSON object `{"error": "..."}` is written to stderr
-and the process exits `1`.
+and the process exits `1`. This includes command-line usage errors (unknown
+subcommand or flag).
 
 ## Commands and JSON output
 
@@ -82,6 +83,24 @@ devcli --json stop --all --dry-run           # report only, no signals
 
 ```json
 { "dry_run": false, "stopped": 1, "failed": 0, "errors": [] }
+```
+
+`--dry-run` answers with the same keys (`"dry_run": true`, nothing stopped)
+plus `count` and `processes` (`[{ "app", "project", "pid", "command" }]`).
+
+### `run`
+
+```bash
+devcli --json run api build --project proj --env local
+```
+
+Runs a named command variant in the background and returns after a short
+check (`running: false` means it already finished; read `log_file`):
+
+```json
+{ "project": "proj", "app": "api", "environment": "local",
+  "command_variant": "build", "pid": 1234, "running": true,
+  "log_file": "/Users/me/.devcli/logs/proj_api_local_20260101.log" }
 ```
 
 ### `logs`
