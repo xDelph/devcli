@@ -30,6 +30,9 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
     let normalised: String = content.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalised.split('\n').collect();
 
+    // Diagnostics name the file and line, never the line's text: a malformed
+    // line is often a secret pasted without its `KEY=`, and warnings end up in
+    // devcli's log file.
     let malformed = |line: usize, message: String| -> Result<()> {
         if strict {
             Err(Error::Parse {
@@ -67,13 +70,13 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
 
         // Find first `=`
         let Some(eq_pos) = trimmed.find('=') else {
-            malformed(line_number, format!("missing '=' in line: {trimmed}"))?;
+            malformed(line_number, "missing '='".to_string())?;
             continue;
         };
 
         let key = trimmed[..eq_pos].trim();
         if key.is_empty() {
-            malformed(line_number, format!("empty key in line: {trimmed}"))?;
+            malformed(line_number, "empty key".to_string())?;
             continue;
         }
 
@@ -400,5 +403,15 @@ mod tests {
         assert_eq!(value_of(&pf, "A"), "abc");
         assert_eq!(value_of(&pf, "B"), "2");
         assert!(parse("A=\"abc\nB=2\n", p(), true).is_err());
+    }
+
+    #[test]
+    fn diagnostics_do_not_include_the_line_text() {
+        let err = parse("sk_live_SECRET_VALUE\n", p(), true)
+            .err()
+            .expect("strict error");
+        let message = err.to_string();
+        assert!(!message.contains("SECRET"), "{message}");
+        assert!(message.contains("missing '='"), "{message}");
     }
 }
