@@ -54,6 +54,7 @@ mod tests {
             Arc::new(HealthCheckEngine::new()),
             Arc::new(RestartCoordinator::new(base_dir)),
         )
+        .with_health_grace(Duration::ZERO)
     }
 
     /// Reap an exited child so the kernel stops listing it as a zombie.
@@ -325,5 +326,26 @@ mod tests {
         let entry = store.load("being-stopped").unwrap().unwrap();
         assert_eq!(entry.pid, running.pid, "a stopping app was restarted");
         assert_eq!(entry.runtime.restart_count, 0);
+    }
+
+    /// Health failures are not counted while the app is still starting up.
+    #[tokio::test]
+    async fn test_health_failures_ignored_during_startup_grace() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"))
+            .with_health_grace(Duration::from_secs(60));
+
+        let running = spawn_and_track(&store, failing_health_task("slow-boot", 120)).await;
+        for _ in 0..4 {
+            monitor.tick().await.unwrap();
+        }
+
+        let entry = store.load("slow-boot").unwrap().unwrap();
+        assert_eq!(entry.runtime.health_failures, 0);
+        assert_eq!(entry.pid, running.pid, "restarted during its grace period");
+
+        kill_and_reap(&running).await;
+        store.delete("slow-boot").unwrap();
     }
 }

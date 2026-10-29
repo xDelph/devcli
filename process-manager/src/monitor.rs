@@ -7,10 +7,18 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// How long after a (re)start health-check failures are not counted.
+///
+/// A dev server routinely needs longer than three 3-second ticks to start
+/// listening; without a grace period an app with an HTTP check was restarted
+/// over and over, then SIGKILLed for good once `max_restarts` was reached.
+pub const DEFAULT_HEALTH_GRACE: Duration = Duration::from_secs(30);
+
 pub struct Monitor {
     state: Arc<StateStore>,
     health_engine: Arc<HealthCheckEngine>,
     restart_coordinator: Arc<RestartCoordinator>,
+    health_grace: Duration,
 }
 
 impl Monitor {
@@ -23,15 +31,30 @@ impl Monitor {
             state,
             health_engine,
             restart_coordinator,
+            health_grace: DEFAULT_HEALTH_GRACE,
         }
+    }
+
+    /// Override the start-up grace period for health checks.
+    pub fn with_health_grace(mut self, grace: Duration) -> Self {
+        self.health_grace = grace;
+        self
     }
 
     pub async fn run(&self) -> Result<()> {
         tracing::info!("Starting process monitor loop");
 
         loop {
-            if !self.tick().await? {
-                break;
+            match self.tick().await {
+                Ok(true) => {}
+                Ok(false) => break,
+                // A transient failure (a file mid-replace, a full disk, a lock
+                // error) used to end the daemon and with it all monitoring. Only
+                // give up when the state directory itself is gone.
+                Err(e) if self.state.base_dir().exists() => {
+                    tracing::warn!(error = %e, "Monitor tick failed, retrying");
+                }
+                Err(e) => return Err(e),
             }
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
@@ -56,34 +79,45 @@ impl Monitor {
                 continue;
             }
 
-            let is_alive = self.state.is_running(&proc);
-
-            if !is_alive {
-                tracing::warn!(id = %proc.id, "Process detected as dead");
-                self.handle_failure(&mut proc, "crash".to_string()).await?;
-                continue;
-            }
-
-            let health_passed = self.health_engine.check(&proc.task.health_check).await?;
-
-            if !health_passed {
-                proc.runtime.health_failures += 1;
-                proc.runtime.last_health_check = Some(Utc::now());
-                self.state.save(&proc)?;
-
-                if proc.runtime.health_failures >= 3 {
-                    tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
-                    self.handle_failure(&mut proc, "health_check".to_string())
-                        .await?;
-                }
-            } else if proc.runtime.health_failures > 0 {
-                proc.runtime.health_failures = 0;
-                proc.runtime.last_health_check = Some(Utc::now());
-                self.state.save(&proc)?;
+            // One misbehaving entry must not stop the others from being checked.
+            if let Err(e) = self.check_process(&mut proc).await {
+                tracing::warn!(id = %proc.id, error = %e, "Failed to check process");
             }
         }
 
         Ok(true)
+    }
+
+    async fn check_process(&self, proc: &mut crate::state::ManagedProcess) -> Result<()> {
+        if !self.state.is_running(proc) {
+            tracing::warn!(id = %proc.id, "Process detected as dead");
+            return self.handle_failure(proc, "crash".to_string()).await;
+        }
+
+        let age = (Utc::now() - proc.start_time).to_std().unwrap_or_default();
+        if age < self.health_grace {
+            return Ok(());
+        }
+
+        let health_passed = self.health_engine.check(&proc.task.health_check).await?;
+
+        if !health_passed {
+            proc.runtime.health_failures += 1;
+            proc.runtime.last_health_check = Some(Utc::now());
+            self.state.save(proc)?;
+
+            if proc.runtime.health_failures >= 3 {
+                tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
+                self.handle_failure(proc, "health_check".to_string())
+                    .await?;
+            }
+        } else if proc.runtime.health_failures > 0 {
+            proc.runtime.health_failures = 0;
+            proc.runtime.last_health_check = Some(Utc::now());
+            self.state.save(proc)?;
+        }
+
+        Ok(())
     }
 
     async fn handle_failure(

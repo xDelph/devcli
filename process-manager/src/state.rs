@@ -75,6 +75,11 @@ impl StateStore {
         Ok(Self { base_dir })
     }
 
+    /// Directory holding the state entries.
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
+    }
+
     pub fn save(&self, process: &ManagedProcess) -> Result<()> {
         let path = self.base_dir.join(format!("{}.json", process.id));
         let json = serde_json::to_string_pretty(process)?;
