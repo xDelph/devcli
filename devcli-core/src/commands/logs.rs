@@ -90,8 +90,8 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
             .clone()
             .or_else(|| environment_from_log_name(&path, &resolved.project, &resolved.app_name));
         output::print_json(&LogsOutput {
-            project: resolved.project,
-            app: resolved.app_name,
+            project: resolved.project.clone(),
+            app: resolved.app_name.clone(),
             environment,
             file: Some(path.display().to_string()),
             lines: tail,
@@ -103,7 +103,14 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
     }
 
     if args.follow {
-        follow(&path, json)?;
+        follow(
+            &path,
+            &resolved.project,
+            &resolved.app_name,
+            args.environment.as_deref(),
+            json,
+        )
+        .await?;
     }
 
     Ok(())
@@ -187,30 +194,81 @@ fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
 }
 
 /// Stream appended lines until the process is interrupted.
-fn follow(path: &Path, json: bool) -> Result<()> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("Failed to open log file {}", path.display()))?;
-    file.seek(SeekFrom::End(0))?;
-    let mut reader = BufReader::new(file);
+///
+/// Keeps following across the two ways the file can change under us: a size
+/// rotation truncates it in place (start again from the top), and a restart on
+/// a later day writes to a new dated file (switch to it).
+async fn follow(
+    path: &Path,
+    project: &str,
+    app: &str,
+    environment: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    const POLL: Duration = Duration::from_millis(250);
+    const POLLS_BETWEEN_FILE_CHECKS: u32 = 8;
 
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let open = |path: &Path| -> Result<BufReader<std::fs::File>> {
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open log file {}", path.display()))?;
+        Ok(BufReader::new(file))
+    };
+
+    let mut current = path.to_path_buf();
+    let mut reader = open(&current)?;
+    let mut position = reader.seek(SeekFrom::End(0))?;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut idle_polls = 0u32;
 
     loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            std::thread::sleep(Duration::from_millis(250));
+        let read = reader.read_until(b'\n', &mut pending)?;
+        if read > 0 {
+            position += read as u64;
+            if pending.ends_with(b"\n") {
+                emit_followed_line(&pending, json)?;
+                pending.clear();
+            }
+            idle_polls = 0;
             continue;
         }
-        if json {
-            let value = serde_json::json!({ "line": line.trim_end_matches(['\n', '\r']) });
-            output::print_json_line(&value)?;
-        } else {
-            out.write_all(line.as_bytes())?;
+
+        let len = std::fs::metadata(&current).map(|m| m.len()).unwrap_or(0);
+        if len < position {
+            reader.seek(SeekFrom::Start(0))?;
+            position = 0;
+            pending.clear();
+            continue;
         }
+
+        idle_polls += 1;
+        if idle_polls.is_multiple_of(POLLS_BETWEEN_FILE_CHECKS) {
+            if let Some(latest) = find_latest_log(project, app, environment)? {
+                if latest != current {
+                    reader = open(&latest)?;
+                    current = latest;
+                    position = 0;
+                    pending.clear();
+                    continue;
+                }
+            }
+        }
+
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+fn emit_followed_line(raw: &[u8], json: bool) -> Result<()> {
+    let line = String::from_utf8_lossy(raw);
+    let line = line.trim_end_matches(['\n', '\r']);
+    if json {
+        output::print_json_line(&serde_json::json!({ "line": line }))?;
+    } else {
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        writeln!(out, "{line}")?;
         out.flush()?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
