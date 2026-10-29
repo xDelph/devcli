@@ -118,7 +118,9 @@ impl SearchState {
 
     /// Checks if a line index is in the search results
     pub fn is_match(&self, line_idx: usize) -> bool {
-        self.results.contains(&line_idx)
+        // O(1): called for every rendered line, `results.contains` made each
+        // frame O(lines x matches).
+        self.match_ranges.contains_key(&line_idx)
     }
 
     /// Gets the match ranges for a specific line (for highlighting)
