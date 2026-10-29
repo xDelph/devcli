@@ -29,13 +29,62 @@ fn detected_app_type(ctx: &DetectionContext) -> Option<&'static str> {
     None
 }
 
+/// Compose file names Docker Compose looks for (`compose.yaml` is the
+/// canonical one since Compose v2).
+const COMPOSE_FILES: &[&str] = &[
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+];
+
+/// Image / container name derived from the folder name.
+///
+/// Docker image names must be lowercase `[a-z0-9._-]` and start with a letter
+/// or digit: a folder called `MyApp` or `my app` produced `-t MyApp`, which
+/// docker rejects ("repository name must be lowercase"), and an unquoted space
+/// split the command.
 fn app_name(ctx: &DetectionContext) -> String {
-    ctx.root_path
+    let raw = ctx
+        .root_path
         .file_name()
         .and_then(|n| n.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("app")
-        .to_string()
+        .unwrap_or("app");
+    docker_name(raw)
+}
+
+fn docker_name(raw: &str) -> String {
+    let mut name: String = raw
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    name = name
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string();
+    if name.is_empty() {
+        "app".to_string()
+    } else {
+        name
+    }
+}
+
+/// Quote a path for a shell-split command when it needs it.
+fn shell_arg(arg: &str) -> String {
+    if arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
+    {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
 }
 
 fn run_port_mapping(app_type: Option<&str>) -> Option<String> {
@@ -68,16 +117,13 @@ impl DetectionStrategy for DockerStrategy {
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
         // At monorepo root, only detect root-level files (not recursive into workspaces).
         // Each workspace will be detected independently via hierarchical detection.
+        let root_files =
+            ctx.file_exists("Dockerfile") || COMPOSE_FILES.iter().any(|name| ctx.file_exists(name));
         if ctx.get_result("nx").is_some() && !ctx.is_workspace() {
-            return ctx.file_exists("Dockerfile")
-                || ctx.file_exists("docker-compose.yml")
-                || ctx.file_exists("docker-compose.yaml");
+            return root_files;
         }
 
-        ctx.file_exists("Dockerfile")
-            || ctx.file_exists("docker-compose.yml")
-            || ctx.file_exists("docker-compose.yaml")
-            || !ctx.glob("**/Dockerfile*").is_empty()
+        root_files || !ctx.glob("**/Dockerfile*").is_empty()
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
@@ -96,9 +142,13 @@ impl DetectionStrategy for DockerStrategy {
             dockerfiles.push(std::path::PathBuf::from("Dockerfile"));
         }
 
-        // Find in subdirectories (skip at monorepo root)
+        // Find in subdirectories (skip at monorepo root). Sorted, so which
+        // Dockerfile is "the" one (the first) no longer depends on directory
+        // listing order.
         if !monorepo_root {
-            for path in ctx.glob("**/Dockerfile*") {
+            let mut nested = ctx.glob("**/Dockerfile*");
+            nested.sort();
+            for path in nested {
                 if !dockerfiles.contains(&path) {
                     dockerfiles.push(path);
                 }
@@ -106,17 +156,21 @@ impl DetectionStrategy for DockerStrategy {
         }
 
         // Find compose files
-        for compose_name in &["docker-compose.yml", "docker-compose.yaml", "compose.yml"] {
+        for compose_name in COMPOSE_FILES {
             if ctx.file_exists(compose_name) {
                 compose_files.push(std::path::PathBuf::from(compose_name));
             }
         }
 
-        // Parse Dockerfiles
-        for dockerfile_path in &dockerfiles {
+        // Parse Dockerfiles. Build stages come from the primary Dockerfile only:
+        // the generated `--target` commands build that file, and a stage that
+        // only exists in another Dockerfile made them fail.
+        for (index, dockerfile_path) in dockerfiles.iter().enumerate() {
             if let Ok(content) = ctx.read_file(dockerfile_path) {
                 let parsed = parse_dockerfile(&content);
-                stages.extend(parsed.stages);
+                if index == 0 {
+                    stages.extend(parsed.stages);
+                }
                 base_images.extend(parsed.base_images);
                 exposed_ports.extend(parsed.exposed_ports);
             }
@@ -142,7 +196,7 @@ impl DetectionStrategy for DockerStrategy {
             let dockerfile_flag = if dockerfile_path == "Dockerfile" {
                 String::new()
             } else {
-                format!("-f {} ", dockerfile_path)
+                format!("-f {} ", shell_arg(&dockerfile_path))
             };
 
             let app = app_name(ctx);
@@ -448,5 +502,30 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
             }
             _ => panic!("Expected DockerEnv data"),
         }
+    }
+
+    #[test]
+    fn docker_names_are_valid_image_names() {
+        assert_eq!(docker_name("MyApp"), "myapp");
+        assert_eq!(docker_name("my app"), "my-app");
+        assert_eq!(docker_name("_internal"), "internal");
+        assert_eq!(docker_name("@@@"), "app");
+    }
+
+    #[test]
+    fn compose_yaml_is_recognised() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("compose.yaml"), "services: {}\n").unwrap();
+        let ctx = DetectionContext::new(temp.path()).unwrap();
+        assert!(DockerStrategy.can_apply(&ctx));
+        let result = DockerStrategy.detect(&ctx).unwrap();
+        let DetectionData::DockerEnv(info) = result.data else {
+            panic!("expected docker env");
+        };
+        assert_eq!(
+            info.compose_files,
+            vec![std::path::PathBuf::from("compose.yaml")]
+        );
+        assert!(info.commands.contains_key("up"));
     }
 }

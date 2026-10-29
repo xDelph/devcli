@@ -316,21 +316,38 @@ fn find_dockerfile(path: &Path) -> Result<Option<PathBuf>> {
         return Ok(Some(path.join("Dockerfile")));
     }
 
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                let subdir_dockerfile = entry.path().join("Dockerfile");
-                if subdir_dockerfile.exists() {
-                    return Ok(Some(subdir_dockerfile));
-                }
+    // Dependency and build directories ship Dockerfiles of their own
+    // (node_modules/<pkg>/Dockerfile), which are not this app's.
+    let skip = |entry: &fs::DirEntry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "vendor" | "dist" | "build" | "venv" | "__pycache__"
+            )
+    };
 
-                if let Ok(subentries) = fs::read_dir(entry.path()) {
-                    for subentry in subentries.flatten() {
-                        if subentry.path().is_dir() {
-                            let nested = subentry.path().join("Dockerfile");
-                            if nested.exists() {
-                                return Ok(Some(nested));
-                            }
+    let mut entries: Vec<fs::DirEntry> = fs::read_dir(path)
+        .map(|entries| entries.flatten().filter(|e| !skip(e)).collect())
+        .unwrap_or_default();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        if entry.path().is_dir() {
+            let subdir_dockerfile = entry.path().join("Dockerfile");
+            if subdir_dockerfile.exists() {
+                return Ok(Some(subdir_dockerfile));
+            }
+
+            if let Ok(subentries) = fs::read_dir(entry.path()) {
+                let mut subentries: Vec<fs::DirEntry> =
+                    subentries.flatten().filter(|e| !skip(e)).collect();
+                subentries.sort_by_key(|e| e.file_name());
+                for subentry in subentries {
+                    if subentry.path().is_dir() {
+                        let nested = subentry.path().join("Dockerfile");
+                        if nested.exists() {
+                            return Ok(Some(nested));
                         }
                     }
                 }
