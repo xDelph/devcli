@@ -137,6 +137,9 @@ pub struct TuiApp {
     pub(crate) command_tx: mpsc::UnboundedSender<CommandRequest>,
     /// Channel for receiving command execution results
     pub(crate) command_rx: mpsc::UnboundedReceiver<CommandResult>,
+    /// Keeps a test app's private state directory alive.
+    #[cfg(test)]
+    _test_dir: Option<tempfile::TempDir>,
 }
 
 /// Request to execute a command in the background
@@ -234,6 +237,8 @@ impl TuiApp {
             needs_clear: false,
             command_tx: req_tx,
             command_rx: result_rx,
+            #[cfg(test)]
+            _test_dir: None,
         })
     }
 
@@ -370,11 +375,14 @@ impl TuiApp {
             status_updated: false,
         }));
 
-        // We might fail to create directory in some test envs, but usually it's fine.
-        // If it fails, tests will panic.
-        let state_store = Arc::new(state_store().unwrap_or_else(|_| {
-            panic!("Failed to create StateStore for test");
-        }));
+        // A private store: `state_store()` follows DEVCLI_CONFIG_DIR, which other
+        // tests point at temp dirs they then delete (and which is the user's
+        // real ~/.devcli when unset).
+        let test_dir = tempfile::TempDir::new().expect("temp dir for test state store");
+        let state_store = Arc::new(
+            process_manager::StateStore::new(test_dir.path().join("processes"))
+                .expect("Failed to create StateStore for test"),
+        );
 
         let (req_tx, _req_rx) = mpsc::unbounded_channel();
         let (_result_tx, result_rx) = mpsc::unbounded_channel();
@@ -396,6 +404,7 @@ impl TuiApp {
             needs_clear: false,
             command_tx: req_tx,
             command_rx: result_rx,
+            _test_dir: Some(test_dir),
         }
     }
 
