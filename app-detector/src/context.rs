@@ -305,18 +305,39 @@ impl FileTree {
             return Ok(());
         }
 
-        for entry in fs::read_dir(current)? {
-            let entry = entry?;
+        // An unreadable directory below the root (a root-owned Docker volume, a
+        // 0700 data dir) is skipped. Propagating the error used to throw the
+        // whole tree away, which silently disabled every glob-based strategy.
+        let entries = match fs::read_dir(current) {
+            Ok(entries) => entries,
+            Err(e) if depth > 0 => {
+                tracing::debug!(dir = %current.display(), error = %e, "skipping unreadable directory");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        for entry in entries.flatten() {
             let path = entry.path();
 
-            // Check ignore patterns
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if ignore_patterns.iter().any(|pattern| name.contains(pattern)) {
-                    continue;
-                }
+            // Ignore patterns name directories/files exactly: matching them as
+            // substrings made `.git` also hide `.github/` and `.gitlab-ci.yml`,
+            // and `target` hide `retarget-svc/`.
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if ignore_patterns.iter().any(|pattern| *pattern == name) {
+                continue;
             }
 
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // Do not follow symlinked directories: a link back to an ancestor
+            // would be walked again and again down to `max_depth`.
+            let is_dir = file_type.is_dir();
+            let is_file = file_type.is_file() || (file_type.is_symlink() && path.is_file());
+
+            if is_dir {
                 if let Ok(rel_path) = path.strip_prefix(root) {
                     directories.push(rel_path.to_path_buf());
                 }
@@ -329,7 +350,7 @@ impl FileTree {
                     files,
                     directories,
                 )?;
-            } else if path.is_file() {
+            } else if is_file {
                 if let Ok(rel_path) = path.strip_prefix(root) {
                     files.push(rel_path.to_path_buf());
                 }
@@ -429,5 +450,58 @@ mod tests {
         assert!(result_strs.iter().any(|s| s.contains("docker/Dockerfile")));
         assert!(result_strs.iter().any(|s| s.contains("Dockerfile.dev")));
         assert!(result_strs.iter().any(|s| s.contains("Dockerfile.prod")));
+    }
+
+    #[test]
+    fn test_ignore_patterns_match_whole_names() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir_all(temp_dir.path().join(".github/workflows")).unwrap();
+        fs::write(temp_dir.path().join(".github/workflows/ci.yml"), "x").unwrap();
+        fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
+        fs::write(temp_dir.path().join(".git/config"), "x").unwrap();
+        fs::write(temp_dir.path().join("target-api.yaml"), "x").unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let files = ctx.list_files();
+        assert!(files.iter().any(|f| f.ends_with("ci.yml")), "{files:?}");
+        assert!(
+            files.iter().any(|f| f.ends_with("target-api.yaml")),
+            "{files:?}"
+        );
+        assert!(!files.iter().any(|f| f.starts_with(".git/")), "{files:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_unreadable_subdirectory_does_not_hide_the_rest() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("main.py"), "print(1)").unwrap();
+        let locked = temp_dir.path().join("data/postgres");
+        fs::create_dir_all(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let files = ctx.list_files();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(files.iter().any(|f| f.ends_with("main.py")), "{files:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_symlinked_directory_loops_are_not_followed() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir_all(temp_dir.path().join("src")).unwrap();
+        fs::write(temp_dir.path().join("src/lib.rs"), "").unwrap();
+        std::os::unix::fs::symlink(temp_dir.path(), temp_dir.path().join("src/loop")).unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        let files = ctx.list_files();
+        assert_eq!(
+            files.iter().filter(|f| f.ends_with("lib.rs")).count(),
+            1,
+            "{files:?}"
+        );
     }
 }
