@@ -458,4 +458,26 @@ mod tests {
         FileExt::unlock(&lock).unwrap();
         assert_eq!(store.cleanup_dead().unwrap(), vec!["crashed".to_string()]);
     }
+
+    /// Only one monitor lock can be held per state directory.
+    #[test]
+    fn test_daemon_lock_is_exclusive() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let first = store.try_lock_daemon().unwrap();
+        assert!(first.is_some());
+        assert!(store.daemon_running());
+        assert!(store.try_lock_daemon().unwrap().is_none());
+
+        drop(first);
+        // Other tests in this binary fork concurrently; a child holds a copy of
+        // the lock descriptor until it execs, so allow the release a moment.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while store.daemon_running() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!store.daemon_running());
+        assert!(store.try_lock_daemon().unwrap().is_some());
+    }
 }

@@ -17,7 +17,6 @@
 //!   - `.daemon.lock`   — daemon singleton lock (held for daemon lifetime)
 //!   - `.status_changed`— mtime-based change notification for TUI polling
 
-use fs2::FileExt;
 use process_manager::{HealthCheckEngine, Monitor, RestartCoordinator, StateStore};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,22 +27,15 @@ async fn main() -> anyhow::Result<()> {
 
     let state_dir = parse_state_dir()?;
 
-    // Acquire exclusive lock for daemon singleton guarantee.
-    // The lock is held for the entire daemon lifetime and released on exit.
-    let lock_path = state_dir.join(".daemon.lock");
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)?;
-
-    if lock_file.try_lock_exclusive().is_err() {
-        // Another daemon is already running for this state dir — exit silently.
-        return Ok(());
-    }
-
     // Everything the daemon needs lives under state_dir.
     let state = Arc::new(StateStore::new(state_dir.clone())?);
+
+    // Acquire exclusive lock for daemon singleton guarantee.
+    // The lock is held for the entire daemon lifetime and released on exit.
+    let Some(_lock) = state.try_lock_daemon()? else {
+        // Another monitor is already running for this state dir — exit silently.
+        return Ok(());
+    };
     let locks_dir = state_dir.join("locks");
     let health_engine = Arc::new(HealthCheckEngine::new());
     let restart_coordinator = Arc::new(RestartCoordinator::new(locks_dir));
@@ -53,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     // Blocks until the state store is empty (all processes stopped/removed).
     monitor.run().await?;
 
-    // lock_file drops here → OS releases the exclusive lock automatically.
+    // _lock drops here → OS releases the exclusive lock automatically.
     Ok(())
 }
 

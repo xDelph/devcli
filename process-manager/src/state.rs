@@ -55,6 +55,11 @@ pub struct EntryLock {
     file: fs::File,
 }
 
+/// The monitor singleton lock; released when dropped (or the process exits).
+pub struct DaemonLock {
+    _file: fs::File,
+}
+
 impl Drop for EntryLock {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
@@ -246,6 +251,23 @@ impl StateStore {
             .insert(STOPPING_KEY.to_string(), "true".to_string());
         self.save(&process)?;
         Ok(Some(process))
+    }
+
+    /// Take the monitor singleton lock, or `None` if a monitor already holds it.
+    ///
+    /// Exactly one monitor loop may run per state directory; two would both
+    /// restart a crashed app.
+    pub fn try_lock_daemon(&self) -> Result<Option<DaemonLock>> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(self.base_dir.join(".daemon.lock"))
+            .context("Failed to open daemon lock file")?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(DaemonLock { _file: file })),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Whether a pm-daemon currently holds this store's singleton lock.

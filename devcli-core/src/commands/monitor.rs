@@ -27,6 +27,18 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
         return Ok(());
     }
 
+    let base_dir = state_dir()?;
+    let state = Arc::new(StateStore::new(base_dir.clone())?);
+
+    // pm-daemon (spawned by `start`) holds the same lock. A second monitor loop
+    // next to it would restart every crashed app twice.
+    let Some(_lock) = state.try_lock_daemon()? else {
+        anyhow::bail!(
+            "A monitor (pm-daemon) is already running for {}",
+            base_dir.display()
+        );
+    };
+
     let metrics = Arc::new(MetricsCollector::new());
     let metrics_clone = metrics.clone();
     tokio::spawn(async move {
@@ -35,8 +47,6 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
         }
     });
 
-    let base_dir = state_dir()?;
-    let state = Arc::new(StateStore::new(base_dir.clone())?);
     let _ = state.cleanup_dead();
 
     let monitor = Monitor::new(
