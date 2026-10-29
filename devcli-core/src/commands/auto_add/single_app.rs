@@ -153,7 +153,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
 
     // Load existing config or create empty one
     let config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
+        projects: Default::default(),
     });
 
     let (project_name, app_name) = if args.is_non_interactive() {
@@ -494,7 +494,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 
     // Load existing config or create a new empty one
     let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
+        projects: Default::default(),
     });
 
     // Ask which project to add apps to (or create a new one)
@@ -603,7 +603,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             .projects
             .entry(project_name.clone())
             .or_insert_with(|| Project {
-                apps: HashMap::new(),
+                apps: Default::default(),
                 alternative_name: None,
             })
             .apps
@@ -751,7 +751,7 @@ fn add_to_config(
         .projects
         .entry(project_name)
         .or_insert_with(|| Project {
-            apps: HashMap::new(),
+            apps: Default::default(),
             alternative_name: None,
         })
         .apps

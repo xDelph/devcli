@@ -47,8 +47,8 @@ mod tests {
 
     // Helper: Create a test config
     fn create_test_config_with_app(app_name: &str, app_path: &str) -> Config {
-        let mut projects = HashMap::new();
-        let mut apps = HashMap::new();
+        let mut projects = crate::config::models::ProjectMap::new();
+        let mut apps = crate::config::models::AppMap::new();
 
         apps.insert(
             app_name.to_string(),
@@ -180,10 +180,10 @@ mod tests {
     #[test]
     fn test_integration_dependency_chain() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
-        let mut apps = HashMap::new();
+        let mut apps = crate::config::models::AppMap::new();
 
         // Create database (no deps)
         apps.insert(
@@ -359,12 +359,12 @@ CMD ["node", "server.js"]
     #[test]
     fn test_integration_list_all_apps() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         // Create 3 projects with multiple apps each
         for i in 1..=3 {
-            let mut apps = HashMap::new();
+            let mut apps = crate::config::models::AppMap::new();
             for j in 1..=2 {
                 apps.insert(
                     format!("app-{}-{}", i, j),

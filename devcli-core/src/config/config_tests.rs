@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_empty_config() {
         let config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_config_with_special_paths() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         let app = AppBuilder::new("nodejs", "~/Projects/my app/with spaces")
@@ -221,7 +221,7 @@ mod tests {
             "test".to_string(),
             Project {
                 apps: {
-                    let mut apps = HashMap::new();
+                    let mut apps = crate::config::models::AppMap::new();
                     apps.insert("my-app".to_string(), app);
                     apps
                 },
@@ -301,5 +301,37 @@ mod tests {
         // Re-serialize and verify stage field is omitted
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("\"stage\""));
+    }
+
+    /// A load/save round-trip keeps projects and apps in file order.
+    #[test]
+    fn test_save_keeps_project_and_app_order() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        let path = dir.path().join("config.json");
+        let app = |cmd: &str| {
+            format!(
+                r#"{{"type":"nodejs","path":"/tmp","commands":{{"local":{{"start":"{cmd}"}}}},"defaults":{{}}}}"#
+            )
+        };
+        let raw = format!(
+            r#"{{"projects":{{"zeta":{{"apps":{{"web":{},"api":{}}}}},"alpha":{{"apps":{{"b":{},"a":{}}}}}}}}}"#,
+            app("1"),
+            app("2"),
+            app("3"),
+            app("4")
+        );
+        std::fs::write(&path, raw).unwrap();
+
+        let config = crate::config::load_config().unwrap();
+        crate::config::save_config(&config).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+
+        let pos = |needle: &str| saved.find(needle).unwrap();
+        assert!(
+            pos("\"zeta\"") < pos("\"alpha\""),
+            "projects reordered:\n{saved}"
+        );
+        assert!(pos("\"web\"") < pos("\"api\""), "apps reordered:\n{saved}");
+        assert!(pos("\"b\"") < pos("\"a\""), "apps reordered:\n{saved}");
     }
 }

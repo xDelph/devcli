@@ -136,11 +136,20 @@ impl Environment {
 // - Debug: Allows printing with {:?} for debugging
 // - Clone: Allows making copies with .clone()
 // - Serialize/Deserialize: Convert to/from JSON
+/// Projects by name, in the order they appear in config.json.
+///
+/// An insertion-ordered map so that a load/save round-trip keeps the file the
+/// way the user wrote it; with a `HashMap` every save reshuffled projects and
+/// apps at random, which made the config impossible to diff or version.
+pub type ProjectMap = indexmap::IndexMap<String, Project>;
+
+/// Apps of a project by name, in file order (see [`ProjectMap`]).
+pub type AppMap = indexmap::IndexMap<String, App>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    // HashMap allows dynamic keys (project names can be anything)
     // String = project name, Project = project data
-    pub projects: HashMap<String, Project>,
+    pub projects: ProjectMap,
 }
 
 // Project groups related apps together
@@ -148,7 +157,7 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     // String = app name, App = app configuration
-    pub apps: HashMap<String, App>,
+    pub apps: AppMap,
 
     // Alternative display name for privacy in screenshots or logs
     // When present, this name is shown in TUI and config commands

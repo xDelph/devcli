@@ -4,7 +4,6 @@
 mod prompts_tests {
     use crate::config::Config;
     use crate::test_utils::{AppBuilder, ConfigBuilder};
-    use std::collections::HashMap;
 
     /// Helper to create a test config
     fn create_test_config() -> Config {
@@ -69,7 +68,7 @@ mod prompts_tests {
     #[test]
     fn test_empty_config_handling() {
         let empty_config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         // Test that empty config is handled properly

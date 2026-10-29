@@ -138,7 +138,7 @@ impl MainView {
             .projects
             .entry(self.config_form.project_name.content().to_string())
             .or_insert_with(|| Project {
-                apps: HashMap::new(),
+                apps: Default::default(),
                 alternative_name: None,
             });
 
@@ -347,10 +347,10 @@ impl MainView {
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
-            proj.apps.remove(app);
+            proj.apps.shift_remove(app);
 
             if proj.apps.is_empty() {
-                config.projects.remove(project);
+                config.projects.shift_remove(project);
             }
         }
 

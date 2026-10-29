@@ -177,14 +177,14 @@ impl AppBuilder {
 ///     .build();
 /// ```
 pub struct ConfigBuilder {
-    projects: HashMap<String, HashMap<String, App>>,
+    projects: indexmap::IndexMap<String, crate::config::models::AppMap>,
 }
 
 impl ConfigBuilder {
     /// Create a new ConfigBuilder
     pub fn new() -> Self {
         Self {
-            projects: HashMap::new(),
+            projects: Default::default(),
         }
     }
 

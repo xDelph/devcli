@@ -4,7 +4,6 @@
 
 use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
 use crate::Result;
-use std::collections::HashMap;
 
 use super::interactive::{
     confirm_default_yes, interactive_nx_app_selection, prompt_app_name, prompt_project_selection,
@@ -31,7 +30,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
 
     // Load existing config or create a new empty one
     let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
+        projects: Default::default(),
     });
 
     // Ask which project to add apps to (or create a new one)
@@ -140,7 +139,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             .projects
             .entry(project_name.clone())
             .or_insert_with(|| Project {
-                apps: HashMap::new(),
+                apps: Default::default(),
                 alternative_name: None,
             })
             .apps

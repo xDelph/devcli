@@ -49,8 +49,8 @@ fn setup_test_config_dir() -> TestConfigGuard {
 }
 
 fn create_test_config() -> Config {
-    let mut projects = HashMap::new();
-    let mut apps = HashMap::new();
+    let mut projects = crate::config::models::ProjectMap::new();
+    let mut apps = crate::config::models::AppMap::new();
 
     let mut local_cmds = HashMap::new();
     local_cmds.insert("start".to_string(), "npm start".to_string());
