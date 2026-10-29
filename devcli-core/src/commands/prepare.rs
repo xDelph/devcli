@@ -175,6 +175,7 @@ fn apply_container_env_file(
         stage,
         environment,
         resolved_app.app.dockerfile_path.as_deref(),
+        &format!("{}_{}", resolved_app.project, resolved_app.app_name),
     )? {
         let env_file_path = prepared
             .path
@@ -315,6 +316,8 @@ mod tests {
 
     #[test]
     fn docker_prepare_injects_merged_env_file() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
         fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
@@ -347,6 +350,8 @@ mod tests {
 
     #[test]
     fn docker_prepare_injects_env_file_from_docker_dir() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
         fs::write(dir.path().join("docker/.env"), "PORT=3000\n").unwrap();
@@ -374,11 +379,16 @@ mod tests {
         .unwrap();
 
         assert!(prepared.final_command.contains("--env-file"));
-        assert!(prepared.final_command.contains("docker/.env"));
+        // The single docker/.env layer is rendered into the private env file.
+        let env_file = _config_dir.path().join("env-files/test_app_docker.env");
+        assert!(prepared.final_command.contains(env_file.to_str().unwrap()));
+        assert_eq!(fs::read_to_string(env_file).unwrap(), "PORT=3000\n");
     }
 
     #[test]
     fn orbstack_prepare_injects_env_file() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("orbstack")).unwrap();
         fs::write(dir.path().join("orbstack/.env"), "PORT=8080\n").unwrap();
@@ -405,7 +415,8 @@ mod tests {
         .unwrap();
 
         assert!(prepared.final_command.contains("--env-file"));
-        assert!(prepared.final_command.contains("orbstack/.env"));
+        let env_file = _config_dir.path().join("env-files/test_app_orbstack.env");
+        assert!(prepared.final_command.contains(env_file.to_str().unwrap()));
         assert_eq!(
             prepared.env_vars.get("DOCKER_CONTEXT"),
             Some(&"orbstack".to_string())

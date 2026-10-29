@@ -3,8 +3,8 @@
 use crate::Result;
 use env_flow::{EnvFlow, EnvVars, ResolvedLayer, RuntimeContext, Stage};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One resolved env layer for display / introspection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,13 +194,23 @@ pub fn load_process_runtime(
     }))
 }
 
-/// Prepare a container `--env-file` path (single file or merged cascade temp file).
+/// Prepare a container `--env-file` path: the file pinned in the config, or the
+/// env cascade merged into a private file named after `scratch_name`
+/// (`<project>_<app>`).
+///
+/// The merged file used to be `$TMPDIR/devcli-env-<nanos>.env`: created with
+/// the default umask (0644 on Linux /tmp, readable by every local user), never
+/// deleted, one more per start. It now lives in the devcli directory
+/// (`env-files/`, 0700) with mode 0600 and is overwritten on every start.
+/// It is also generated when only one layer exists, so values reach the
+/// container the same way whatever the number of layers.
 pub fn prepare_container_env_file(
     working_dir: &Path,
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
     environment: &str,
     dockerfile_path: Option<&str>,
+    scratch_name: &str,
 ) -> Result<Option<ContainerEnvFile>> {
     if let Some(path) = resolve_config_env_path(env_files_map, stage, environment)? {
         return Ok(Some(ContainerEnvFile {
@@ -215,30 +225,78 @@ pub fn prepare_container_env_file(
         return Ok(None);
     }
 
-    let summary = cascade_summary(&existing);
+    let summary = if existing.len() == 1 {
+        existing[0].relative_path.clone()
+    } else {
+        cascade_summary(&existing)
+    };
 
-    if existing.len() == 1 {
-        return Ok(Some(ContainerEnvFile {
-            path: existing[0].path.clone(),
-            summary: if summary.contains("cascade") {
-                existing[0].relative_path.clone()
+    let dir = crate::config::loader::config_home().join("env-files");
+    let path = dir.join(format!("{scratch_name}_{environment}.env"));
+    write_private(
+        &dir,
+        &path,
+        &container_env_file_contents(&vars, environment),
+    )?;
+
+    Ok(Some(ContainerEnvFile { path, summary }))
+}
+
+/// Render env vars in the dialect of the tool reading `--env-file`.
+///
+/// `docker run --env-file` takes every line literally - no quotes, escapes or
+/// multi-line values - so a dotenv-quoted `"a b"` reached the container with
+/// its quote characters. Docker Compose parses dotenv syntax and interpolates
+/// `$` in unquoted and double-quoted values, so values are single-quoted there.
+fn container_env_file_contents(vars: &EnvVars, environment: &str) -> String {
+    let compose = environment == "docker-compose";
+    let mut out = String::new();
+    for (key, value) in vars.iter() {
+        if compose {
+            if value.contains('\'') {
+                let escaped = value
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('$', "$$");
+                out.push_str(&format!("{key}=\"{escaped}\"\n"));
             } else {
-                summary
-            },
-        }));
+                out.push_str(&format!("{key}='{value}'\n"));
+            }
+        } else if value.contains('\n') {
+            tracing::warn!(
+                key = %key,
+                "multi-line value cannot be passed through `docker --env-file`, skipped"
+            );
+        } else {
+            out.push_str(&format!("{key}={value}\n"));
+        }
     }
+    out
+}
 
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let temp_path = std::env::temp_dir().join(format!("devcli-env-{stamp}.env"));
-    vars.write_dotenv(&temp_path).map_err(map_error)?;
+/// Write `contents` to `path` readable by the owner only, in a 0700 `dir`.
+fn write_private(dir: &Path, path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write;
 
-    Ok(Some(ContainerEnvFile {
-        path: temp_path,
-        summary,
-    }))
+    fs::create_dir_all(dir)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    // An older devcli may have created it with looser permissions.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents.as_bytes())?;
+    Ok(())
 }
 
 /// Resolve the env file path for container runtimes (`--env-file`) — highest layer only.
@@ -562,34 +620,73 @@ line2"
     }
 
     #[test]
-    fn prepare_container_env_file_merges_cascade_to_temp() {
+    fn prepare_container_env_file_merges_cascade_into_a_private_file() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
         fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
         fs::write(dir.path().join("docker/.env"), "PORT=8080\n").unwrap();
 
-        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None)
+        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None, "p_api")
             .unwrap()
             .expect("expected merged env file");
 
-        assert!(prepared.path.exists());
+        assert_eq!(
+            prepared.path,
+            config_dir.path().join("env-files/p_api_docker.env")
+        );
         assert_eq!(prepared.summary, "cascade (2 files)");
         let contents = fs::read_to_string(&prepared.path).unwrap();
         assert!(contents.contains("PORT=8080"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&prepared.path), 0o600);
+            assert_eq!(mode(&config_dir.path().join("env-files")), 0o700);
+        }
     }
 
     #[test]
-    fn prepare_container_env_file_single_layer_uses_disk_path() {
+    fn prepare_container_env_file_single_layer_is_normalised_too() {
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
-        fs::write(dir.path().join("docker/.env"), "PORT=8080\n").unwrap();
+        fs::write(dir.path().join("docker/.env"), "GREETING=\"hello world\"\n").unwrap();
 
-        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None)
+        let prepared = prepare_container_env_file(dir.path(), None, None, "docker", None, "p_api")
             .unwrap()
             .expect("expected docker env file");
 
-        assert_eq!(prepared.path, dir.path().join("docker/.env"));
         assert_eq!(prepared.summary, "docker/.env");
+        // `docker run --env-file` keeps quotes literally: write the bare value.
+        let contents = fs::read_to_string(&prepared.path).unwrap();
+        assert!(contents.contains("GREETING=hello world\n"), "{contents}");
+    }
+
+    #[test]
+    fn container_env_file_dialects() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(".env"),
+            "PLAIN=a b\nCOST='$5'\nQUOTE=\"it's\"\nMULTI=\"l1\\nl2\"\n",
+        )
+        .unwrap();
+        let ordered = EnvFlow::from_file(dir.path().join(".env")).load().unwrap();
+
+        let docker = container_env_file_contents(&ordered, "docker");
+        assert!(docker.contains("PLAIN=a b\n"));
+        assert!(docker.contains("COST=$5\n"));
+        assert!(
+            !docker.contains("MULTI"),
+            "multi-line values cannot be passed"
+        );
+
+        let compose = container_env_file_contents(&ordered, "docker-compose");
+        assert!(compose.contains("PLAIN='a b'\n"));
+        assert!(compose.contains("COST='$5'\n"));
+        assert!(compose.contains("QUOTE=\"it's\"\n"));
     }
 
     #[test]
