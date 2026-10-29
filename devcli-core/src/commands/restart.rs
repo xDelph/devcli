@@ -23,6 +23,9 @@ pub struct RestartCommandArgs {
 #[tracing::instrument(skip(args), fields(app_name = %args.app_name, project = ?args.project, env = ?args.env, skip_deps = args.skip_deps))]
 pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let silent = args.silent;
+    // In JSON mode the inner stop/start/run must not print their own documents:
+    // `restart` emits exactly one, below.
+    let inner_silent = silent || crate::output::json_enabled();
     let store = state_store()?;
     store.cleanup_dead()?;
 
@@ -86,7 +89,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         all: false,
         force: false,
         dry_run: false,
-        silent,
+        silent: inner_silent,
         output_tx: args.output_tx.clone(),
     };
     crate::commands::stop::stop_command(stop_args).await?;
@@ -108,9 +111,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             app_name: args.app_name.clone(),
             command_variant: command_variant.unwrap_or_else(|| "start".to_string()),
             project,
-            env: Some(environment),
+            env: Some(environment.clone()),
             skip_deps: args.skip_deps,
-            silent,
+            silent: inner_silent,
             output_tx: args.output_tx.clone(),
         };
 
@@ -119,9 +122,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         let start_args = crate::commands::start::StartCommandArgs {
             app_names: vec![args.app_name.clone()],
             project,
-            env: Some(environment),
+            env: Some(environment.clone()),
             skip_deps: args.skip_deps,
-            silent,
+            silent: inner_silent,
             stage: process.metadata.get("stage").cloned(),
             detached: false,
             output_tx: args.output_tx.clone(),
@@ -135,6 +138,14 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         args.output_tx.as_ref(),
         format!("✓ Process '{}' restarted successfully", args.app_name),
     );
+
+    if crate::output::json_enabled() && !silent {
+        crate::output::print_json(&serde_json::json!({
+            "started": [actual_app_name],
+            "environment": environment,
+            "detached": true,
+        }))?;
+    }
 
     Ok(())
 }
