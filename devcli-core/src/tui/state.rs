@@ -60,6 +60,70 @@ impl AppState {
     /// Callers that want the cleanup do it explicitly; the TUI already does,
     /// just before building the state.
     pub fn from_config_with_store(config: &Config, store: &StateStore) -> Result<Self> {
+        Self::build(config, |project, app| {
+            let process = find_process(store, project, app, None)?;
+            Ok(RuntimeSnapshot::from_process(store, process.as_ref()))
+        })
+    }
+
+    /// Re-read the app list after a config edit, keeping what the user sees.
+    ///
+    /// The config editor used to replace the whole state with a fresh one:
+    /// collapsed projects expanded again, view history and messages were lost,
+    /// the selection jumped when apps were added or removed (it was kept by
+    /// index), and every process was probed again while the UI lock was held.
+    /// Now only the app list is rebuilt; runtime data of apps that still exist
+    /// is carried over (new apps get theirs at the next status poll), and the
+    /// selection follows the selected app by name.
+    pub fn refresh_from_config(&mut self, config: &Config) -> Result<()> {
+        let fresh = Self::build(config, |_, _| Ok(RuntimeSnapshot::stopped()))?;
+        let selected_project = self.selected_project().map(|p| p.name.clone());
+        let selected_app = self.selected_app().map(|a| a.name.clone());
+
+        let mut projects = fresh.projects;
+        for project in &mut projects {
+            let Some(old_project) = self.projects.iter().find(|p| p.name == project.name) else {
+                continue;
+            };
+            project.expanded = old_project.expanded;
+            for app in &mut project.apps {
+                if let Some(old) = old_project.apps.iter().find(|a| a.name == app.name) {
+                    app.status = old.status.clone();
+                    app.active_stage = old.active_stage.clone();
+                    app.restart_count = old.restart_count;
+                    app.last_exit_code = old.last_exit_code;
+                    app.health_status = old.health_status.clone();
+                }
+            }
+        }
+        self.projects = projects;
+
+        let project_idx = selected_project
+            .and_then(|name| self.projects.iter().position(|p| p.name == name))
+            .unwrap_or(self.selected_project_idx)
+            .min(self.projects.len().saturating_sub(1));
+        let app_idx = self
+            .projects
+            .get(project_idx)
+            .map(|p| {
+                selected_app
+                    .and_then(|name| p.apps.iter().position(|a| a.name == name))
+                    .unwrap_or(self.selected_app_idx)
+                    .min(p.apps.len().saturating_sub(1))
+            })
+            .unwrap_or(0);
+        self.selected_project_idx = project_idx;
+        self.selected_app_idx = app_idx;
+        self.status_updated = true;
+        Ok(())
+    }
+
+    /// Build the projects/apps from `config`, asking `runtime` for each app's
+    /// runtime data.
+    fn build(
+        config: &Config,
+        mut runtime: impl FnMut(&str, &str) -> Result<RuntimeSnapshot>,
+    ) -> Result<Self> {
         let mut projects: Vec<ProjectState> = Vec::new();
 
         // Iterate through each project in the config
@@ -68,15 +132,14 @@ impl AppState {
 
             // Iterate through each app in the project
             for (app_name, app_config) in &project_config.apps {
-                // Determine status and runtime details from process-manager state.
-                let process_info = find_process(store, project_name, app_name, None)?;
+                // Status and runtime details (from process-manager state).
                 let RuntimeSnapshot {
                     status,
                     active_stage,
                     restart_count,
                     last_exit_code,
                     health_status,
-                } = RuntimeSnapshot::from_process(store, process_info.as_ref());
+                } = runtime(project_name, app_name)?;
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
@@ -289,18 +352,23 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    /// Runtime data of an app with no process.
+    pub fn stopped() -> Self {
+        Self {
+            status: AppStatus::Stopped,
+            active_stage: None,
+            restart_count: 0,
+            last_exit_code: None,
+            health_status: HealthStatus::Unknown,
+        }
+    }
+
     pub fn from_process(
         store: &StateStore,
         process: Option<&process_manager::state::ManagedProcess>,
     ) -> Self {
         let Some(info) = process else {
-            return Self {
-                status: AppStatus::Stopped,
-                active_stage: None,
-                restart_count: 0,
-                last_exit_code: None,
-                health_status: HealthStatus::Unknown,
-            };
+            return Self::stopped();
         };
 
         let health_status = if info.runtime.health_failures > 0 {
@@ -631,5 +699,38 @@ mod selection_tests {
 
         state.select_previous(); // back onto a's row, not its last hidden app
         assert_eq!(at(&state), ("a".to_string(), 0));
+    }
+
+    #[test]
+    fn config_refresh_keeps_ui_state_and_follows_the_selection() {
+        let (mut state, _dir) = state();
+        let b = state.projects.iter().position(|p| p.name == "b").unwrap();
+        state.selected_project_idx = b;
+        state.selected_app_idx = 1; // b2
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        state.projects[a].expanded = false;
+        state.view_history.push(ViewType::Main);
+        state.projects[b].apps[1].restart_count = 7;
+
+        // b gains an app sorted before b2.
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b0", app())
+            .with_app("b", "b1", app())
+            .with_app("b", "b2", app())
+            .build();
+        state.refresh_from_config(&config).unwrap();
+
+        let selected = state.selected_app().unwrap();
+        assert_eq!(
+            (selected.project.as_str(), selected.name.as_str()),
+            ("b", "b2")
+        );
+        assert_eq!(selected.restart_count, 7);
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        assert!(!state.projects[a].expanded);
+        assert_eq!(state.view_history.len(), 1);
     }
 }

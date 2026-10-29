@@ -158,19 +158,7 @@ impl MainView {
         state: &mut std::sync::MutexGuard<AppState>,
     ) -> Result<()> {
         let config = load_config()?;
-        let new_state = AppState::from_config(&config)?;
-
-        let selected_project_idx = state.selected_project_idx;
-        let selected_app_idx = state.selected_app_idx;
-
-        **state = new_state;
-
-        if selected_project_idx < state.projects.len() {
-            state.selected_project_idx = selected_project_idx;
-            if selected_app_idx < state.projects[selected_project_idx].apps.len() {
-                state.selected_app_idx = selected_app_idx;
-            }
-        }
+        state.refresh_from_config(&config)?;
 
         Ok(())
     }
