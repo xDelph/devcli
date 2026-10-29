@@ -6,6 +6,7 @@ pub mod app_color_manager;
 pub mod file_loader;
 pub mod json_formatter;
 pub mod search;
+pub mod selector;
 mod single_view;
 pub mod syntax_highlighter;
 pub mod viewport;

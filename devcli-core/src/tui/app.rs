@@ -33,15 +33,11 @@
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
 use super::views::{
-    log_viewer::{LogInputResult, SelectionItem, SelectionMode},
+    log_viewer::{LogInputResult, SelectionMode},
     LogViewerView, MainView,
 };
 use super::widgets::help_overlay::HelpOverlay;
 use crate::tui::popups::PopupManager;
-
-use chrono::NaiveDate;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use crate::config::loader::load_config;
 use crate::process_manager_support::state_store;
@@ -490,80 +486,16 @@ impl TuiApp {
             Vec::new()
         };
 
+        let candidates = match self.state.lock() {
+            Ok(state) => crate::tui::views::log_viewer::selector::selector_candidates(
+                &state,
+                &self.main_view.log_manager,
+                &current_paths,
+            ),
+            Err(_) => return,
+        };
         if let Some(viewer) = &mut self.log_viewer {
-            // Map<Project, Map<App, Vec<(PathBuf, Env, DateStr)>>>
-            type LogEntry = (PathBuf, String, String); // Path, Env, Date
-            let mut grouped_logs: BTreeMap<String, BTreeMap<String, Vec<LogEntry>>> =
-                BTreeMap::new();
-
-            if let Ok(state) = self.state.lock() {
-                for proj in &state.projects {
-                    for app in &proj.apps {
-                        if app.status.is_running() {
-                            if let Ok(logs) = self
-                                .main_view
-                                .log_manager
-                                .list_logs_for_app(&app.project, &app.name)
-                            {
-                                for log in logs {
-                                    if !current_paths.contains(&log.path) {
-                                        let (env, date) =
-                                            crate::process_manager_support::LogFileName::from_path(
-                                                &log.path,
-                                            )
-                                            .map(|name| (name.environment, name.date))
-                                            .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
-
-                                        grouped_logs
-                                            .entry(app.project.clone())
-                                            .or_default()
-                                            .entry(app.name.clone())
-                                            .or_default()
-                                            .push((log.path, env, date));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let mut candidates = Vec::new();
-            for (project, apps) in grouped_logs {
-                if apps.values().all(|v| v.is_empty()) {
-                    continue;
-                }
-
-                candidates.push(SelectionItem::Header(project));
-
-                for (app_name, logs) in apps {
-                    if logs.is_empty() {
-                        continue;
-                    }
-                    candidates.push(SelectionItem::SubHeader(app_name));
-
-                    for (path, env, date_str) in logs {
-                        let formatted_date = Self::format_smart_date(&date_str);
-                        let label = format!("{} - {}", env, formatted_date);
-                        candidates.push(SelectionItem::Option { label, path });
-                    }
-                }
-            }
             viewer.start_log_selection(candidates, mode);
-        }
-    }
-
-    /// Helper to format date sensibly
-    fn format_smart_date(date_str: &str) -> String {
-        if date_str.len() != 8 {
-            return date_str.to_string();
-        }
-
-        if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
-            // One formatter (local "today") for the log list and the selector.
-            crate::tui::log_manager::LogManager::format_relative_date(date)
-        } else {
-            date_str.to_string()
         }
     }
 
