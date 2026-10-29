@@ -619,7 +619,11 @@ async fn handle_multiple_apps(
         }
 
         let env_files = if !available_envs.is_empty() {
-            let app_path = std::path::Path::new(&detected.path);
+            // `detected.path` is stored tilde-contracted (`~/code/app`): expand it,
+            // or env-file discovery looks for a literal `~` directory and finds
+            // nothing.
+            let expanded_path = crate::utils::path::expand_path(&detected.path);
+            let app_path = expanded_path.as_path();
             if let Ok(detected_env_files) =
                 crate::detection::detect_env_files(app_path, detected.dockerfile_path.as_deref())
             {
