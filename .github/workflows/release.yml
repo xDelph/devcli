@@ -176,7 +176,9 @@ jobs:
 
   publish:
     name: Publish release
-    needs: build
+    # `needs.<job>` only exposes *direct* dependencies, so `prepare` must be
+    # listed here for its tag output to be visible below.
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
@@ -207,7 +209,7 @@ jobs:
 
   homebrew:
     name: Update Homebrew tap
-    needs: publish
+    needs: [prepare, publish]
     runs-on: ubuntu-latest
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
