@@ -1,42 +1,19 @@
 // Debug logging utility for TUI
-// Writes debug messages to tui-debug.log to help troubleshoot issues
+//
+// Forwards to `tracing` at debug level, i.e. to devcli's regular log file and
+// filtered by LOG_LEVEL. It used to create `tui-debug.log` in whatever
+// directory the TUI was started from and write (and flush) to it on every
+// frame, growing without bound inside the user's repositories.
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::sync::Mutex;
-
-static DEBUG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
-
-/// Initialize debug logging
+/// Kept for call sites; logging is configured globally by `init_tracing`.
 pub fn init_debug_log() {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("tui-debug.log")
-        .ok();
-
-    if let Ok(mut debug_file) = DEBUG_FILE.lock() {
-        *debug_file = file;
-    }
-
-    debug_log("=== TUI Debug Log Started ===");
+    tracing::debug!(target: "devcli::tui", "TUI started");
 }
 
-/// Write a debug message to the log file
-pub fn debug_log(msg: &str) {
-    if let Ok(mut guard) = DEBUG_FILE.lock() {
-        if let Some(file) = guard.as_mut() {
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(file, "[{}] {}", timestamp, msg);
-            let _ = file.flush();
-        }
-    }
-}
-
-/// Macro for easier debug logging
+/// Macro for easier debug logging (formatting only happens when enabled)
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => {
-        $crate::tui::debug::debug_log(&format!($($arg)*))
+        ::tracing::debug!(target: "devcli::tui", $($arg)*)
     };
 }
