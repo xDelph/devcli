@@ -121,7 +121,9 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     // Create log file path
-    let log_path = log_file_path(&resolved_app.project, &args.app_name, &environment)?;
+    // The real app key, not the alias the user typed: `logs` and the TUI look
+    // log files up by app key.
+    let log_path = log_file_path(&resolved_app.project, &resolved_app.app_name, &environment)?;
 
     // Determine which stage to use for env file resolution
     let stage = resolved_app
