@@ -171,7 +171,9 @@ fn process_double_quote_escapes(s: &str) -> String {
                 Some('r') => out.push('\r'),
                 Some('\\') => out.push('\\'),
                 Some('"') => out.push('"'),
-                Some('$') => out.push('$'),
+                // Keep `\$` escaped: the interpolator turns it into a literal `$`.
+                // Unescaping here made `"\${X}"` expand like `"${X}"`.
+                Some('$') => out.push_str("\\$"),
                 Some(other) => {
                     out.push('\\');
                     out.push(other);
