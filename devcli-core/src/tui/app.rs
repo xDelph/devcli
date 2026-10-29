@@ -39,7 +39,7 @@ use super::views::{
 use super::widgets::help_overlay::HelpOverlay;
 use crate::tui::popups::PopupManager;
 
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -565,15 +565,8 @@ impl TuiApp {
         }
 
         if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
-            let today = Utc::now().naive_utc().date();
-            let diff = today.signed_duration_since(date).num_days();
-
-            match diff {
-                0 => "Today".to_string(), // Bold handling is done in render if needed, but here we just return text
-                1 => "Yesterday".to_string(),
-                2..=3 => format!("{} days ago", diff),
-                _ => date.format("%Y-%m-%d").to_string(),
-            }
+            // One formatter (local "today") for the log list and the selector.
+            crate::tui::log_manager::LogManager::format_relative_date(date)
         } else {
             date_str.to_string()
         }

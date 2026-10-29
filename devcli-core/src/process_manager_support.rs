@@ -1,6 +1,5 @@
 use crate::Result;
 use anyhow::Context;
-use chrono::Utc;
 use process_manager::engine::OutputReceiver;
 use process_manager::state::ManagedProcess;
 use process_manager::{HealthCheck, RestartPolicy, StateStore};
@@ -83,7 +82,10 @@ impl LogFileName {
 
 pub fn log_file_path(project: &str, app_name: &str, environment: &str) -> Result<PathBuf> {
     let log_dir = logs_dir()?;
-    let date = Utc::now().format("%Y%m%d");
+    // The user's local day: the TUI labels files "Today"/"Yesterday" against
+    // the local date, so a UTC date put the wrong label on files written
+    // around midnight.
+    let date = chrono::Local::now().format("%Y%m%d");
     let filename = format!("{}_{}_{}_{}.log", project, app_name, environment, date);
     Ok(log_dir.join(filename))
 }
