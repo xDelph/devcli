@@ -1,5 +1,7 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use ratatui::{backend::Backend, Terminal};
 use std::time::{Duration, Instant};
 
@@ -65,7 +67,10 @@ impl Runtime {
             if event::poll(Duration::from_millis(100))? {
                 let now = Instant::now();
                 match event::read()? {
-                    Event::Key(key) => {
+                    // Presses (and auto-repeat) only: terminals that report
+                    // key releases (Windows, kitty keyboard protocol) made
+                    // every keystroke act twice.
+                    Event::Key(key) if key.kind != KeyEventKind::Release => {
                         app.handle_key_event(key)?;
                         app.set_needs_redraw(true);
                     }
