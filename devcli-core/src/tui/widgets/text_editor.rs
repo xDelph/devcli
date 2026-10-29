@@ -8,7 +8,12 @@ use ratatui::{
 pub struct TextEditor {
     /// The text content
     content: String,
-    /// Current cursor position (character index)
+    /// Current cursor position, in characters (not bytes).
+    ///
+    /// It used to be a byte offset moved by ±1 and handed to `String::insert`
+    /// / `remove`, which panic off a char boundary: typing `é` then any other
+    /// key, or Backspace in a path such as `/Users/x/Développement`, crashed
+    /// the TUI. The renderers already read it as a character count.
     cursor_position: usize,
 }
 
@@ -20,27 +25,40 @@ impl TextEditor {
 
     /// Creates a new text editor with initial content
     pub fn with_content(content: String) -> Self {
-        let cursor_position = content.len();
+        let cursor_position = content.chars().count();
         Self {
             content,
             cursor_position,
         }
     }
 
+    fn char_len(&self) -> usize {
+        self.content.chars().count()
+    }
+
+    /// Byte offset of the character at `char_index` (or the end).
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.content
+            .char_indices()
+            .nth(char_index)
+            .map(|(byte, _)| byte)
+            .unwrap_or(self.content.len())
+    }
+
     /// Inserts a character at the current cursor position
     pub fn insert_char(&mut self, c: char) {
-        if self.cursor_position > self.content.len() {
-            self.cursor_position = self.content.len();
-        }
-        self.content.insert(self.cursor_position, c);
+        self.cursor_position = self.cursor_position.min(self.char_len());
+        let at = self.byte_index(self.cursor_position);
+        self.content.insert(at, c);
         self.cursor_position += 1;
     }
 
     /// Deletes the character before the cursor (backspace)
     pub fn delete_char(&mut self) {
-        if self.cursor_position > 0 && self.cursor_position <= self.content.len() {
+        if self.cursor_position > 0 && self.cursor_position <= self.char_len() {
             self.cursor_position -= 1;
-            self.content.remove(self.cursor_position);
+            let at = self.byte_index(self.cursor_position);
+            self.content.remove(at);
         }
     }
 
@@ -51,14 +69,14 @@ impl TextEditor {
 
     /// Moves the cursor right
     pub fn move_cursor_right(&mut self) {
-        if self.cursor_position < self.content.len() {
+        if self.cursor_position < self.char_len() {
             self.cursor_position += 1;
         }
     }
 
     /// Sets the cursor to the end of the text
     pub fn move_cursor_to_end(&mut self) {
-        self.cursor_position = self.content.len();
+        self.cursor_position = self.char_len();
     }
 
     /// Sets the cursor to the beginning of the text
@@ -79,7 +97,7 @@ impl TextEditor {
     /// Sets the content and moves cursor to end
     pub fn set_content(&mut self, content: String) {
         self.content = content;
-        self.cursor_position = self.content.len();
+        self.cursor_position = self.char_len();
     }
 
     /// Clears the content and resets cursor
@@ -150,5 +168,29 @@ mod tests {
 
         editor.move_cursor_right(); // Should not go past end
         assert_eq!(editor.cursor_position(), 3);
+    }
+
+    #[test]
+    fn test_non_ascii_editing_does_not_panic() {
+        let mut editor = TextEditor::new();
+        editor.insert_char('é');
+        editor.insert_char('x');
+        editor.insert_char('🚀');
+        assert_eq!(editor.content(), "éx🚀");
+        assert_eq!(editor.cursor_position(), 3);
+
+        editor.move_cursor_left();
+        editor.delete_char();
+        assert_eq!(editor.content(), "é🚀");
+
+        let mut path = TextEditor::with_content("/Users/x/Développement".to_string());
+        assert_eq!(path.cursor_position(), 22);
+        // Step back to just after the `é` and replace it.
+        for _ in 0..11 {
+            path.move_cursor_left();
+        }
+        path.delete_char();
+        path.insert_char('E');
+        assert_eq!(path.content(), "/Users/x/DEveloppement");
     }
 }
