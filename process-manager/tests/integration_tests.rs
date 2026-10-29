@@ -398,3 +398,93 @@ fn daemon_lock_held(lock_path: &Path) -> bool {
         Err(_) => true,
     }
 }
+
+/// A detached child must keep running and logging after the process that
+/// spawned it goes away. Dropping the spawning runtime closes everything it
+/// owned, exactly like the CLI exiting after `devcli start`: with piped output
+/// the child died of SIGPIPE on its next write.
+#[test]
+#[cfg(unix)]
+fn test_detached_output_survives_the_spawner() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("ticker.log");
+
+    let task = Task {
+        id: "ticker".to_string(),
+        command: "sh -c 'i=0; while [ $i -lt 20 ]; do echo tick $i; i=$((i+1)); sleep 0.05; done'"
+            .to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let pid = {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let running = rt.block_on(engine::spawn(&task)).expect("spawn ticker");
+        running.pid
+    };
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if content.contains("tick 19") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child stopped logging once the spawner was gone; log was:\n{content}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let _ = std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status();
+}
+
+/// While the caller keeps the receiver, output of a detached child is still
+/// delivered through `output_rx`, and the channel closes once the child exits.
+#[tokio::test]
+#[cfg(unix)]
+async fn test_detached_output_is_streamed_from_the_log_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("stream.log");
+
+    let task = Task {
+        id: "stream".to_string(),
+        command: "sh -c 'echo first; echo second >&2'".to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn sh");
+    let mut lines = Vec::new();
+    let collected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(msg) = running.output_rx.recv().await {
+            lines.push(msg.content);
+        }
+    })
+    .await;
+
+    assert!(
+        collected.is_ok(),
+        "channel never closed after the child exited"
+    );
+    assert!(lines.contains(&"first".to_string()), "got {lines:?}");
+    assert!(lines.contains(&"second".to_string()), "got {lines:?}");
+}

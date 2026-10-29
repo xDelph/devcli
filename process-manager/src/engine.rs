@@ -57,7 +57,30 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
     cmd.current_dir(&task.working_dir);
     cmd.envs(&task.env);
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // A detached child must outlive the process that spawned it (the CLI exits
+    // right after `start`, the TUI when the user quits). If its stdout/stderr
+    // were pipes read by *this* process, the next write after we exit would hit
+    // a closed pipe: SIGPIPE kills most programs and Node crashes on EPIPE. So a
+    // detached child writes straight into its log file and the kernel keeps that
+    // descriptor valid for as long as the child lives.
+    let detached_log = match (&task.log_file, task.is_detached) {
+        (Some(path), true) => Some(open_log_for_child(path)?),
+        _ => None,
+    };
+
+    match &detached_log {
+        Some((file, _)) => {
+            cmd.stdout(Stdio::from(
+                file.try_clone().context("Failed to share log file")?,
+            ))
+            .stderr(Stdio::from(
+                file.try_clone().context("Failed to share log file")?,
+            ));
+        }
+        None => {
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+    }
 
     if task.is_detached {
         cmd.stdin(Stdio::null());
@@ -86,7 +109,11 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    if let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) {
+    if let (Some((_, start_offset)), Some(path)) = (&detached_log, &task.log_file) {
+        // Keep `output_rx` working for callers that stream output while they are
+        // alive (attached `start`, `run`, the TUI) by following the log file.
+        spawn_log_follower(path.clone(), *start_offset, pid, tx);
+    } else if let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) {
         spawn_output_handler(
             stdout,
             OutputSource::Stdout,
@@ -157,6 +184,25 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
     }
 }
 
+/// Signal-0 probe without spawning a process (cheap enough to poll).
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: kill(2) with signal 0 performs no action beyond permission and
+        // existence checks.
+        let rc = unsafe { libc::kill(pid, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 /// Whether the OS still knows about this PID.
 fn process_exists(pid: u32) -> bool {
     std::process::Command::new("kill")
@@ -181,6 +227,84 @@ pub async fn restart(
     }
 
     spawn(task).await
+}
+
+/// Open (creating if needed) a log file in append mode for a child to inherit.
+///
+/// Returns the file and its length before the child writes anything, which is
+/// where a follower starts reading.
+fn open_log_for_child(path: &std::path::Path) -> Result<(std::fs::File, u64)> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create log directory {}", parent.display()))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("Failed to open log file {}", path.display()))?;
+    let offset = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok((file, offset))
+}
+
+/// Forward lines appended to `path` after `offset` into `tx`.
+///
+/// Stops as soon as the receiver is dropped, so a caller that is not interested
+/// in output (detached `start`) costs nothing beyond one short-lived task. Once
+/// the child is gone and the file is drained the sender is dropped, which closes
+/// the channel exactly like the end of a pipe would.
+fn spawn_log_follower(path: PathBuf, offset: u64, pid: u32, tx: OutputSender) {
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let Ok(mut file) = tokio::fs::File::open(&path).await else {
+            return;
+        };
+        if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
+            return;
+        }
+
+        let mut pending: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 8192];
+        loop {
+            if tx.is_closed() {
+                return;
+            }
+            match file.read(&mut buf).await {
+                Ok(0) => {
+                    if !pid_alive(pid) {
+                        if !pending.is_empty() {
+                            let _ = tx.send(OutputMessage {
+                                source: OutputSource::Stdout,
+                                content: String::from_utf8_lossy(&pending).to_string(),
+                                timestamp: chrono::Utc::now(),
+                            });
+                        }
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Ok(n) => {
+                    pending.extend_from_slice(&buf[..n]);
+                    while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = pending.drain(..=pos).collect();
+                        let content = String::from_utf8_lossy(&line[..line.len() - 1])
+                            .trim_end_matches('\r')
+                            .to_string();
+                        let msg = OutputMessage {
+                            source: OutputSource::Stdout,
+                            content,
+                            timestamp: chrono::Utc::now(),
+                        };
+                        if tx.send(msg).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(_) => return,
+            }
+        }
+    });
 }
 
 fn spawn_output_handler<R>(
