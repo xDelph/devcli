@@ -4,6 +4,7 @@
 //! It provides the `devcli config list`, `config show`, and `config list-commands`
 //! command functionality.
 
+use crate::config::models::Environment;
 use crate::config::{list_all_apps, load_config, resolve_app};
 use crate::utils::path::expand_tilde;
 use crate::Result;
@@ -89,13 +90,7 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
                 }
 
                 // Show default commands (if configured)
-                let local_default = app.defaults.local.as_deref().unwrap_or("none");
-                let docker_default = app.defaults.docker.as_deref().unwrap_or("none");
-                let k8s_default = app.defaults.k8s.as_deref().unwrap_or("none");
-                println!(
-                    "    Defaults: local='{}', docker='{}', k8s='{}'",
-                    local_default, docker_default, k8s_default
-                );
+                println!("    Defaults: {}", defaults_summary(app));
 
                 // Show environment files for each configured environment
                 // Expand the path to resolve ~ and check for env files
@@ -183,11 +178,7 @@ fn config_list_json(
                     "type": app.app_type,
                     "path": app.path,
                     "default_stages": app.default_stages,
-                    "defaults": {
-                        "local": app.defaults.local,
-                        "docker": app.defaults.docker,
-                        "k8s": app.defaults.k8s,
-                    },
+                    "defaults": defaults_json(app),
                     "dependencies": app.dependencies.iter().map(|d| json!({
                         "project": d.project,
                         "app": d.app,
@@ -263,17 +254,7 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     }
 
     // Display defaults (if configured)
-    println!("\nDefaults:");
-    if let Some(default_local) = &resolved.app.defaults.local {
-        println!("  Local: {}", default_local);
-    } else {
-        println!("  Local: none");
-    }
-    if let Some(default_docker) = &resolved.app.defaults.docker {
-        println!("  Docker: {}", default_docker);
-    } else {
-        println!("  Docker: none");
-    }
+    println!("\nDefaults: {}", defaults_summary(&resolved.app));
 
     // Display dependencies if any
     if !resolved.app.dependencies.is_empty() {
@@ -283,24 +264,18 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
         }
     }
 
-    // Display all local commands (if configured)
-    println!("\nLocal Commands:");
-    if let Some(local_commands) = &resolved.app.commands.local {
-        for (name, cmd) in local_commands {
+    // Display the commands of every configured environment
+    for env in Environment::all() {
+        let Some(commands) = resolved.app.commands.get(env.as_str()) else {
+            continue;
+        };
+        println!("\n{} Commands:", env.display_name());
+        for (name, cmd) in sorted(commands) {
             println!("  {}: {}", name, cmd);
         }
-    } else {
-        println!("  (none configured)");
     }
-
-    // Display all docker commands (if configured)
-    println!("\nDocker Commands:");
-    if let Some(docker_commands) = &resolved.app.commands.docker {
-        for (name, cmd) in docker_commands {
-            println!("  {}: {}", name, cmd);
-        }
-    } else {
-        println!("  (none configured)");
+    if resolved.app.commands.available_envs().is_empty() {
+        println!("\nCommands: (none configured)");
     }
 
     // Display environment files for each configured environment
@@ -357,20 +332,12 @@ fn config_show_json(
         "type": resolved.app.app_type,
         "path": resolved.app.path,
         "default_stages": resolved.app.default_stages,
-        "defaults": {
-            "local": resolved.app.defaults.local,
-            "docker": resolved.app.defaults.docker,
-            "k8s": resolved.app.defaults.k8s,
-        },
+        "defaults": defaults_json(&resolved.app),
         "dependencies": resolved.app.dependencies.iter().map(|d| json!({
             "project": d.project,
             "app": d.app,
         })).collect::<Vec<_>>(),
-        "commands": {
-            "local": resolved.app.commands.local,
-            "docker": resolved.app.commands.docker,
-            "k8s": resolved.app.commands.k8s,
-        },
+        "commands": commands_json(&resolved.app),
         "env_files": resolved.app.env_files,
         "dockerfile_path": resolved.app.dockerfile_path,
     }))
@@ -405,17 +372,17 @@ pub async fn config_list_commands(
         crate::commands::config::prompt_for_app(&config, project.as_deref())?
     };
 
-    // Validate environment filter if provided
-    if let Some(ref env) = environment {
-        use crate::config::models::Environment;
-        if Environment::from_string(env.as_str()).is_none() {
-            anyhow::bail!(
+    // Validate (and canonicalise: `compose`, `kubernetes`) the filter
+    let filter = match environment {
+        Some(ref env) => Some(Environment::from_string(env.as_str()).ok_or_else(|| {
+            anyhow::anyhow!(
                 "Invalid environment '{}'. Must be one of: {}.",
                 env,
                 Environment::all_names()
-            );
-        }
-    }
+            )
+        })?),
+        None => None,
+    };
 
     // Get the project and app
     let project_config = config
@@ -445,40 +412,111 @@ pub async fn config_list_commands(
         resolved_app_name.clone()
     };
 
+    let envs: Vec<Environment> = Environment::all()
+        .iter()
+        .copied()
+        .filter(|env| filter.is_none_or(|f| f == *env))
+        .collect();
+
+    if crate::output::json_enabled() {
+        let mut environments = serde_json::Map::new();
+        for env in &envs {
+            environments.insert(
+                env.as_str().to_string(),
+                json!({
+                    "default": app.defaults.get(env.as_str()),
+                    "commands": app.commands.get(env.as_str()),
+                }),
+            );
+        }
+        return crate::output::print_json(&json!({
+            "project": resolved_project,
+            "app": resolved_app_name,
+            "environments": environments,
+        }));
+    }
+
     println!("Commands for {}/{}", project_display_name, app_display_name);
 
-    // Helper function to display commands for an environment
-    let display_env_commands =
-        |env_name: &str, commands: &Option<HashMap<String, String>>, default: &Option<String>| {
-            if let Some(ref filter) = environment {
-                if filter != env_name {
-                    return; // Skip this environment if filtering
+    // Every environment (or the one asked for): orbstack, docker-compose and ci
+    // used to be skipped, so `--env orbstack` printed nothing at all.
+    for env in envs {
+        let default = app.defaults.get(env.as_str());
+        let commands = app.commands.get(env.as_str());
+        if filter.is_none() && commands.is_none() && default.is_none() {
+            continue;
+        }
+
+        println!("\n{} environment:", env.display_name());
+        match commands {
+            Some(commands) if commands.is_empty() => println!("  (no commands defined)"),
+            Some(commands) => {
+                for (name, cmd) in sorted(commands) {
+                    let marker = if default == Some(name) {
+                        " (default)"
+                    } else {
+                        ""
+                    };
+                    println!("  {}: {}{}", name, cmd, marker);
                 }
             }
-
-            println!("\n{} environment:", env_name.to_uppercase());
-
-            if let Some(commands) = commands {
-                if commands.is_empty() {
-                    println!("  (no commands defined)");
-                } else {
-                    for (name, cmd) in commands {
-                        let is_default = default.as_ref() == Some(name);
-                        let marker = if is_default { " (default)" } else { "" };
-                        println!("  {}: {}{}", name, cmd, marker);
-                    }
-                }
-            } else {
-                println!("  (not configured)");
-            }
-        };
-
-    // Display commands for each environment
-    display_env_commands("local", &app.commands.local, &app.defaults.local);
-    display_env_commands("docker", &app.commands.docker, &app.defaults.docker);
-    display_env_commands("k8s", &app.commands.k8s, &app.defaults.k8s);
+            None => println!("  (not configured)"),
+        }
+    }
 
     Ok(())
+}
+
+/// `{environment: default command or null}` for every environment.
+fn defaults_json(app: &crate::config::models::App) -> serde_json::Value {
+    Environment::all()
+        .iter()
+        .map(|env| {
+            (
+                env.as_str().to_string(),
+                json!(app.defaults.get(env.as_str())),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// `{environment: {name: command} or null}` for every environment.
+fn commands_json(app: &crate::config::models::App) -> serde_json::Value {
+    Environment::all()
+        .iter()
+        .map(|env| {
+            (
+                env.as_str().to_string(),
+                json!(app.commands.get(env.as_str())),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// `local='start', orbstack='run'` (or `none`) for the human views.
+fn defaults_summary(app: &crate::config::models::App) -> String {
+    let set: Vec<String> = Environment::all()
+        .iter()
+        .filter_map(|env| {
+            app.defaults
+                .get(env.as_str())
+                .map(|d| format!("{}='{}'", env.as_str(), d))
+        })
+        .collect();
+    if set.is_empty() {
+        "none".to_string()
+    } else {
+        set.join(", ")
+    }
+}
+
+/// Commands sorted by name: the map's own order is arbitrary.
+fn sorted(commands: &HashMap<String, String>) -> Vec<(&String, &String)> {
+    let mut entries: Vec<_> = commands.iter().collect();
+    entries.sort();
+    entries
 }
 
 #[cfg(test)]
