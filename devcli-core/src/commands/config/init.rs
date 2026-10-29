@@ -10,7 +10,7 @@ use std::fs;
 ///
 /// Example: `devcli config init`
 ///
-/// Creates config.json (in `devcli_CONFIG_DIR`, ./.devcli or ~/.devcli, like every
+/// Creates config.json (in `DEVCLI_CONFIG_DIR`, ./.devcli or ~/.devcli, like every
 /// other command) with an empty projects structure.
 /// Displays an example project configuration in the console for reference.
 /// The user can then edit the file to add their own projects and apps.
@@ -22,7 +22,7 @@ use std::fs;
 /// - Cannot create the ~/.devcli directory
 /// - Cannot write the template file
 pub async fn config_init() -> Result<()> {
-    // Create the file the other commands will read: with devcli_CONFIG_DIR set
+    // Create the file the other commands will read: with DEVCLI_CONFIG_DIR set
     // (or a project-local ./.devcli), a hard-coded ~/.devcli/config.json was
     // created - or refused because it existed - while `load` kept reporting
     // "run devcli config init".

@@ -335,7 +335,7 @@ pub fn mock_app_with_deps(path: &str, deps: Vec<(&str, &str)>) -> App {
 
 /// Serialises tests that mutate process-global state.
 ///
-/// `devcli_CONFIG_DIR` and the current working directory are global to the
+/// `DEVCLI_CONFIG_DIR` and the current working directory are global to the
 /// process, and cargo runs test functions on parallel threads. Two tests
 /// overriding them at once interleave: one clears the override while the other
 /// is mid-test, and the second then silently resolves the *real* `~/.devcli`
@@ -351,7 +351,7 @@ pub fn env_guard() -> std::sync::MutexGuard<'static, ()> {
 
 /// A throwaway config directory for the duration of a test.
 ///
-/// Holds [`env_guard`], points `devcli_CONFIG_DIR` at a fresh temp dir and
+/// Holds [`env_guard`], points `DEVCLI_CONFIG_DIR` at a fresh temp dir and
 /// restores the previous value on drop, so code under test that loads and
 /// saves the config can never reach the user's real `~/.devcli`.
 #[cfg(test)]
@@ -365,9 +365,9 @@ pub struct TempConfigDir {
 impl TempConfigDir {
     pub fn new() -> Self {
         let lock = env_guard();
-        let previous = std::env::var_os("devcli_CONFIG_DIR");
+        let previous = std::env::var_os("DEVCLI_CONFIG_DIR");
         let dir = tempfile::TempDir::new().expect("create temp config dir");
-        std::env::set_var("devcli_CONFIG_DIR", dir.path());
+        std::env::set_var("DEVCLI_CONFIG_DIR", dir.path());
         Self {
             dir,
             previous,
@@ -397,8 +397,8 @@ impl Default for TempConfigDir {
 impl Drop for TempConfigDir {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(previous) => std::env::set_var("devcli_CONFIG_DIR", previous),
-            None => std::env::remove_var("devcli_CONFIG_DIR"),
+            Some(previous) => std::env::set_var("DEVCLI_CONFIG_DIR", previous),
+            None => std::env::remove_var("DEVCLI_CONFIG_DIR"),
         }
     }
 }

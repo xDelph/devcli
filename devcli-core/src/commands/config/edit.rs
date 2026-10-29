@@ -24,7 +24,7 @@ use std::process::Command;
 /// - Config file doesn't exist
 /// - Editor command fails
 pub async fn config_edit() -> Result<()> {
-    // The same file every other command reads: honours devcli_CONFIG_DIR and a
+    // The same file every other command reads: honours DEVCLI_CONFIG_DIR and a
     // project-local ./.devcli, unlike a hard-coded ~/.devcli/config.json.
     let config_path = crate::config::loader::get_config_path()?;
 

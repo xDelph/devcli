@@ -12,25 +12,37 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-/// The `devcli_CONFIG_DIR` override (if set), with `~` expanded to `$HOME`.
+/// Environment variable overriding the devcli directory.
+pub const CONFIG_DIR_ENV: &str = "DEVCLI_CONFIG_DIR";
+
+/// Former, lowercase-prefixed name of [`CONFIG_DIR_ENV`], still honoured.
 ///
-/// Legacy behavior used the raw value (a `~` was treated as a literal
-/// directory name); this keeps the variable portable.
+/// Every other devcli variable is uppercase (`DEVCLI_METRICS_ADDR`,
+/// `LOG_LEVEL`, ...); users and agents exporting `DEVCLI_CONFIG_DIR` were
+/// silently ignored and wrote to their real ~/.devcli.
+pub const LEGACY_CONFIG_DIR_ENV: &str = "devcli_CONFIG_DIR";
+
+/// The config-directory override (if set), with `~` expanded to `$HOME`.
+///
+/// An empty value counts as unset: it used to resolve to the current
+/// directory, scattering config, state and logs wherever devcli ran.
 fn env_config_dir() -> Option<PathBuf> {
-    env::var("devcli_CONFIG_DIR")
-        .ok()
-        .map(|dir| expand_tilde(&dir))
+    [CONFIG_DIR_ENV, LEGACY_CONFIG_DIR_ENV]
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .find(|dir| !dir.trim().is_empty())
+        .map(|dir| expand_tilde(dir.trim()))
 }
 
 /// Root directory holding every devcli-owned file (config, preferences,
 /// process state, logs).
 ///
-/// Priority: 1) `devcli_CONFIG_DIR`, 2) `.devcli` in the current directory when
+/// Priority: 1) `DEVCLI_CONFIG_DIR` (or legacy `devcli_CONFIG_DIR`), 2) `.devcli` in the current directory when
 /// one already exists, 3) `~/.devcli`.
 ///
 /// Everything must derive from here so that a single override isolates the whole
 /// tool; the process state and log directories used to be hardcoded to
-/// `~/.devcli`, which made `devcli_CONFIG_DIR` useless for tests.
+/// `~/.devcli`, which made the override useless for tests.
 pub fn config_home() -> PathBuf {
     if let Some(config_dir) = env_config_dir() {
         return config_dir;
@@ -104,10 +116,12 @@ mod tests {
     #[test]
     fn devcli_config_dir_override_is_expanded_and_restored() {
         let _guard = crate::test_utils::env_guard();
-        let original = env::var("devcli_CONFIG_DIR").ok();
+        let original = env::var(CONFIG_DIR_ENV).ok();
+        let original_legacy = env::var(LEGACY_CONFIG_DIR_ENV).ok();
+        env::remove_var(LEGACY_CONFIG_DIR_ENV);
 
         // ~ expands to $HOME
-        env::set_var("devcli_CONFIG_DIR", "~/devcli-cfg");
+        env::set_var(CONFIG_DIR_ENV, "~/devcli-cfg");
         let home = env::var("HOME").expect("HOME must be set");
         assert_eq!(
             env_config_dir(),
@@ -115,16 +129,34 @@ mod tests {
         );
 
         // plain absolute path passes through untouched
-        env::set_var("devcli_CONFIG_DIR", "/tmp/devcli-cfg");
+        env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg");
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
 
-        // unset → None
-        env::remove_var("devcli_CONFIG_DIR");
+        // the legacy name still works, the uppercase one wins over it
+        env::remove_var(CONFIG_DIR_ENV);
+        env::set_var(LEGACY_CONFIG_DIR_ENV, "/tmp/legacy-cfg");
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
+        env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg");
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
+
+        // empty → ignored, not "the current directory"
+        env::set_var(CONFIG_DIR_ENV, "  ");
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
+        env::remove_var(LEGACY_CONFIG_DIR_ENV);
         assert_eq!(env_config_dir(), None);
 
-        match original {
-            Some(prev) => env::set_var("devcli_CONFIG_DIR", prev),
-            None => env::remove_var("devcli_CONFIG_DIR"),
+        // unset → None
+        env::remove_var(CONFIG_DIR_ENV);
+        assert_eq!(env_config_dir(), None);
+
+        for (name, value) in [
+            (CONFIG_DIR_ENV, original),
+            (LEGACY_CONFIG_DIR_ENV, original_legacy),
+        ] {
+            match value {
+                Some(prev) => env::set_var(name, prev),
+                None => env::remove_var(name),
+            }
         }
     }
 }

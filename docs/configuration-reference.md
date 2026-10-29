@@ -6,7 +6,8 @@ Complete reference for the devcli configuration file (`config.json`).
 
 DevCLI looks for configuration files in the following priority order:
 
-1. **Environment Variable**: `devcli_CONFIG_DIR` (for testing/override)
+1. **Environment Variable**: `DEVCLI_CONFIG_DIR` (for testing/override; the
+   former name `devcli_CONFIG_DIR` still works, an empty value is ignored)
 2. **Local Project Config**: `./.devcli/config.json` (current directory)
 3. **Global Config**: `~/.devcli/config.json` (home directory)
 
@@ -16,7 +17,7 @@ This allows you to have:
 
 ```bash
 # Override for testing
-export devcli_CONFIG_DIR=/tmp/test-config
+export DEVCLI_CONFIG_DIR=/tmp/test-config
 devcli start api
 
 # Or use local project config
@@ -29,7 +30,7 @@ devcli start api  # Uses ./devcli/config.json
 ### Preferences File
 
 Similarly, preferences are loaded from:
-1. `devcli_CONFIG_DIR/preferences.json` (if env var set)
+1. `DEVCLI_CONFIG_DIR/preferences.json` (if env var set)
 2. `./.devcli/preferences.json` (current directory)
 3. `~/.devcli/preferences.json` (home directory)
 

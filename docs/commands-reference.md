@@ -949,12 +949,14 @@ RUST_LOG=trace devcli start api
 RUST_LOG=devcli_core::commands::start=debug devcli start api
 ```
 
-### `devcli_CONFIG_DIR`
+### `DEVCLI_CONFIG_DIR`
 
-Override config directory location:
+Override config directory location (config, preferences, process state and
+logs all move with it). The former lowercase name `devcli_CONFIG_DIR` is still
+honoured; an empty value is ignored.
 
 ```bash
-export devcli_CONFIG_DIR=~/.devcli
+export DEVCLI_CONFIG_DIR=~/.devcli
 devcli start api
 ```
 

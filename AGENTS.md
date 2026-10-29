@@ -13,7 +13,7 @@ shapes, and non-interactive behaviour.
    `--yes`, `--env`). When stdin is not a TTY, interactive commands fail
    fast with a clear error instead of hanging.
 3. **Check the exit code**, not the text.
-4. **Isolate state** with `devcli_CONFIG_DIR` when testing.
+4. **Isolate state** with `DEVCLI_CONFIG_DIR` when testing.
 
 ```bash
 devcli --json status          # parse JSON on stdout
@@ -177,7 +177,7 @@ interactive mode.
 
 | Variable            | Effect                                                       |
 | ------------------- | ------------------------------------------------------------ |
-| `devcli_CONFIG_DIR` | Override the config directory (default `~/.devcli`).         |
+| `DEVCLI_CONFIG_DIR` | Override the config directory (default `~/.devcli`). The former name `devcli_CONFIG_DIR` still works. |
 | `DEVCLI_METRICS_ADDR` | Metrics API address (default `127.0.0.1:9090`).            |
 | `NO_COLOR`          | Disable colored output.                                      |
 | `LOG_LEVEL`         | `off` / `error` / `warn` / `info` / `debug` / `trace`.       |

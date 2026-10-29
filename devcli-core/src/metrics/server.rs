@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 
 /// Address the metrics API listens on (`DEVCLI_METRICS_ADDR`, default
 /// `127.0.0.1:9090`). Configurable so two state directories (e.g. a test
-/// config via `devcli_CONFIG_DIR`) can each run a monitor.
+/// config via `DEVCLI_CONFIG_DIR`) can each run a monitor.
 pub fn metrics_addr() -> String {
     std::env::var("DEVCLI_METRICS_ADDR")
         .ok()

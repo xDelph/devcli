@@ -21,12 +21,12 @@ struct TestConfigGuard {
 impl TestConfigGuard {
     fn new() -> Self {
         // Use the *shared* env lock, not a private one: the loader tests clear
-        // devcli_CONFIG_DIR, and two different mutexes would not exclude each
+        // DEVCLI_CONFIG_DIR, and two different mutexes would not exclude each
         // other, so save_config could still land on the real ~/.devcli.
         let _lock = crate::test_utils::env_guard();
-        let original_dir = std::env::var("devcli_CONFIG_DIR").ok();
+        let original_dir = std::env::var("DEVCLI_CONFIG_DIR").ok();
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("devcli_CONFIG_DIR", temp_dir.path());
+        std::env::set_var("DEVCLI_CONFIG_DIR", temp_dir.path());
         Self {
             _lock,
             _temp_dir: temp_dir,
@@ -38,8 +38,8 @@ impl TestConfigGuard {
 impl Drop for TestConfigGuard {
     fn drop(&mut self) {
         match &self.original_dir {
-            Some(dir) => std::env::set_var("devcli_CONFIG_DIR", dir),
-            None => std::env::remove_var("devcli_CONFIG_DIR"),
+            Some(dir) => std::env::set_var("DEVCLI_CONFIG_DIR", dir),
+            None => std::env::remove_var("DEVCLI_CONFIG_DIR"),
         }
     }
 }
