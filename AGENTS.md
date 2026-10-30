@@ -56,7 +56,15 @@ Colors are automatically disabled when stdout is not a TTY.
 
 On error with `--json`, a JSON object `{"error": "..."}` is written to stderr
 and the process exits `1`. This includes command-line usage errors (unknown
-subcommand or flag).
+subcommand or flag); without `--json`, those usage errors print clap's message
+and exit `2`.
+
+An app name that is neither configured nor tracked is an error (exit `1`) for
+every command taking one, with a "did you mean" suggestion when a configured
+name is close.
+
+`--env` takes `local`, `docker`, `orbstack`, `docker-compose` (alias
+`compose`), `k8s` or `ci`. `--stage` takes `dev`, `qa`, `preprod` or `prod`.
 
 ## Commands and JSON output
 
@@ -69,13 +77,15 @@ devcli --json status [APP] [--project P] [--deps]
 ```json
 { "processes": [
   { "id": "proj.api.local", "app": "api", "project": "proj",
-    "environment": "local", "command_variant": null, "pid": 1234,
+    "environment": "local", "command_variant": "start", "pid": 1234,
     "running": true, "uptime_seconds": 42, "command": "npm run dev",
     "worktree": null } ] }
 ```
 
-`worktree` is `{ "slug", "path", "branch" }` for an instance running from a
-git worktree (its `project` is then `proj@slug`).
+`command_variant` is the name of the command that runs (the environment's
+default, e.g. `"start"`, or the variant given to `run`). `worktree` is
+`{ "slug", "path", "branch" }` for an instance running from a git worktree
+(its `project` is then `proj@slug`).
 
 With `--deps APP`: `{ "project", "app", "running", "pid", "uptime_seconds",
 "dependencies": [{ "project", "app", "running" }] }`.
@@ -95,7 +105,9 @@ devcli --json start api worker --project proj --env local --stage dev
 
 `started` lists what this command started; `already_running` the apps asked
 for that were running already (nothing was started for them). An app started
-as another's dependency appears in neither.
+as another's dependency appears in neither. `restart` answers
+`{ "started", "environment", "detached" }` (no `already_running`) and fails
+with exit code 1 when the app is not running.
 
 A worktree instance is reported as `api@slug`.
 
@@ -106,13 +118,18 @@ devcli --json stop api --project proj        # one app
 devcli --json stop --all --dry-run           # what runs; nothing is stopped
 ```
 
-`stop --all` and `stop --project P` (no app) stop everything, including what
-the user and other agents run: under an AI agent they are refused with
-`{"error": ...}` and exit code 1. Stop the apps you started, by name.
+`stop --all`, `stop --project P` (no app) and `stop APP@*` reach what the
+user and other agents run: under an AI agent they are refused with
+`{"error": ...}` and exit code 1 (`--dry-run` is allowed, and so is
+`stop --project P` inside your own worktree). Stop the apps you started, by
+name.
 
 ```json
 { "dry_run": false, "stopped": 1, "failed": 0, "errors": [] }
 ```
+
+When nothing matched a running process, the answer also has
+`"message": "No processes to stop"` (exit code 0).
 
 `--dry-run` answers with the same keys (`"dry_run": true`, nothing stopped)
 plus `count` and `processes` (`[{ "app", "project", "pid", "command" }]`).
@@ -124,7 +141,12 @@ devcli --json run api build --project proj --env local
 ```
 
 Runs a named command variant in the background and returns after a short
-check (`running: false` means it already finished; read `log_file`):
+check (`running: false` means it already finished; read `log_file`). Its
+output goes to the app's log file for that environment, the same file as
+`start` (read it with `logs`). Only one process per app and environment is
+tracked: `run` fails with exit code 1 (`Process 'api:build' is already running
+with PID ...`) when that app already runs in that environment, whatever its
+command.
 
 ```json
 { "project": "proj", "app": "api", "environment": "local",
@@ -182,6 +204,10 @@ devcli --json health-check api --project proj --env local
   "healthy": true, "duration_seconds": 0.03 }
 ```
 
+When the check fails, `healthy` is `false`, a `failures` key gives the number
+of consecutive failures, and the exit code is `2`. An app that is not running
+is an error (exit code 1).
+
 ### `metrics`
 
 ```bash
@@ -189,7 +215,9 @@ devcli --json metrics
 ```
 
 Returns the metrics document (process, system, performance). Works without a
-running monitor: process and system metrics are then computed from the state.
+running metrics server: process and system metrics are then computed from the
+state (the performance counters stay at zero). Only `devcli monitor --daemon`
+serves the metrics API; pm-daemon, which `start` spawns, does not.
 
 ### `auto-add` (non-interactive)
 
@@ -276,6 +304,7 @@ prunes them.
 | Variable            | Effect                                                       |
 | ------------------- | ------------------------------------------------------------ |
 | `DEVCLI_CONFIG_DIR` | Override the config directory (default `~/.devcli`). The former name `devcli_CONFIG_DIR` still works. |
-| `DEVCLI_METRICS_ADDR` | Metrics API address (default `127.0.0.1:9090`).            |
+| `DEVCLI_METRICS_ADDR` | Metrics API address (default `127.0.0.1:9090`), served only by `devcli monitor --daemon`. |
+| `DEVCLI_AGENT`      | `1` (or any true value) tells devcli it runs under an AI agent when your harness is not recognised. |
 | `NO_COLOR`          | Disable colored output.                                      |
 | `LOG_LEVEL`         | `off` / `error` / `warn` / `info` / `debug` / `trace`.       |
