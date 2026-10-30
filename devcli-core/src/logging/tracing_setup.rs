@@ -1,5 +1,4 @@
 // Tracing initialization with JSON structured logging
-use anyhow::Context;
 use tracing_appender::rolling;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -18,18 +17,23 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 ///
 /// Example: `LOG_LEVEL=error devcli start my-app`
 pub fn init_tracing(enable_console: bool) -> crate::Result<()> {
-    let log_dir = dirs::home_dir()
-        .context("No home directory found")?
-        .join(".devcli")
-        .join("logs");
+    // Next to the apps' logs, in the devcli directory (DEVCLI_CONFIG_DIR is
+    // honoured: it used to be ~/.devcli/logs whatever the override).
+    let log_dir = crate::config::loader::config_home().join("logs");
 
-    std::fs::create_dir_all(&log_dir)?;
-
-    // File appender with daily rotation
-    let file_appender = rolling::daily(log_dir, "devcli.json");
-
-    // JSON formatter for files - structured, machine-readable
-    let file_layer = fmt::layer().json().with_writer(file_appender);
+    // File appender with daily rotation, JSON for machines. A log directory
+    // that cannot be written (a read-only devcli directory) used to make
+    // every command panic at start-up; devcli now runs without its log file.
+    let file_layer = std::fs::create_dir_all(&log_dir)
+        .ok()
+        .and_then(|()| {
+            rolling::RollingFileAppender::builder()
+                .rotation(rolling::Rotation::DAILY)
+                .filename_prefix("devcli.json")
+                .build(&log_dir)
+                .ok()
+        })
+        .map(|appender| fmt::layer().json().with_writer(appender));
 
     // Parse log level from LOG_LEVEL environment variable
     // Falls back to INFO if not set or invalid
@@ -70,21 +74,11 @@ pub fn init_tracing(enable_console: bool) -> crate::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_init_tracing_creates_log_dir() {
-        // Note: This test validates the function exists and compiles correctly.
-        // Actual initialization is tested manually as it can only run once per process.
-        let log_dir = dirs::home_dir().unwrap().join(".devcli").join("logs");
-
-        // Verify the directory would be created
-        assert!(log_dir.parent().is_some());
-    }
-
-    #[test]
-    fn test_log_directory_path() {
-        let log_dir = dirs::home_dir().unwrap().join(".devcli").join("logs");
-
-        let path_str = log_dir.to_string_lossy();
-        assert!(path_str.contains(".devcli"));
-        assert!(path_str.ends_with("logs"));
+    fn the_log_directory_follows_the_devcli_directory() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        assert_eq!(
+            crate::config::loader::config_home().join("logs"),
+            dir.path().join("logs")
+        );
     }
 }
