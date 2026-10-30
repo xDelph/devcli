@@ -4,3 +4,4 @@
 //! See `dev-docs/worktrees-design.md`.
 
 pub mod git;
+pub mod registry;
