@@ -589,3 +589,23 @@ fn logs_and_health_check_explain_an_unknown_app() {
         );
     }
 }
+
+/// Output into a closed pipe ends devcli quietly instead of a panic.
+#[test]
+fn a_closed_pipe_is_not_a_panic() {
+    let sb = Sandbox::new();
+    let out = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(format!(
+            // The reader is gone before devcli writes: the write always fails.
+            "{{ sleep 0.2; '{}' config show ticker --project smoke; }} | true",
+            env!("CARGO_BIN_EXE_devcli")
+        ))
+        .env("DEVCLI_CONFIG_DIR", sb.path())
+        .env("HOME", sb.path())
+        .env("DEVCLI_AGENT", "0")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}

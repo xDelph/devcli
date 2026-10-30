@@ -4,6 +4,16 @@ use devcli_core::logging::init_tracing;
 
 #[tokio::main]
 async fn main() {
+    // Rust ignores SIGPIPE, so printing into a closed pipe (`devcli config
+    // show api | head -1`) panicked with "failed printing to stdout". Die
+    // quietly instead, like other command-line tools.
+    #[cfg(unix)]
+    // SAFETY: restoring a signal's default disposition at start-up, before any
+    // thread or handler depends on it.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     match run_main().await {
         Ok(()) => {
             // Commands may report a result via an exit code (status, health-check)

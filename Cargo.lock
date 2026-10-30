@@ -691,6 +691,7 @@ dependencies = [
  "anyhow",
  "clap",
  "devcli-core",
+ "libc",
  "serde_json",
  "tempfile",
  "tokio",
