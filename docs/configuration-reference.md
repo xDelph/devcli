@@ -383,7 +383,9 @@ shifted in worktrees).
 }
 ```
 
-Every app also gets `DEVCLI_WORKTREE` (the worktree's slug, empty in the
+Every app also gets `DEVCLI_PORT_<APP>` for each of its dependencies that
+declares a `port` (as that dependency runs for this app, shifted when it runs in
+the same worktree), and `DEVCLI_WORKTREE` (the worktree's slug, empty in the
 configured checkout), `DEVCLI_WORKTREE_INDEX` and `DEVCLI_PORT_OFFSET`, plus
 `DEVCLI_WORKTREE_PATH` and `DEVCLI_WORKTREE_BRANCH` in a worktree. Health
 check URLs, hosts and commands can use `${DEVCLI_PORT}` and the other

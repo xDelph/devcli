@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// Prints its worktree variables, then stays up.
 const APP: &str = "echo wt=$DEVCLI_WORKTREE index=$DEVCLI_WORKTREE_INDEX port=$PORT \
-                   key=$API_KEY; sleep 30";
+                   key=$API_KEY api=$DEVCLI_PORT_API; sleep 30";
 
 struct Sandbox {
     dir: tempfile::TempDir,
@@ -197,11 +197,11 @@ fn a_sub_agent_runs_its_worktrees_copy_without_touching_the_main_checkout() {
     // env file since the worktree has none.
     assert_eq!(
         sb.first_log_line(&main, "api"),
-        "wt= index=0 port=3000 key=from-main"
+        "wt= index=0 port=3000 key=from-main api="
     );
     assert_eq!(
         sb.first_log_line(&agent, "api"),
-        "wt=agent-1 index=1 port=3100 key=from-main"
+        "wt=agent-1 index=1 port=3100 key=from-main api="
     );
 
     // From the worktree, `stop api` and `stop --project shop` only ever
@@ -227,6 +227,9 @@ fn dependencies_start_in_the_same_worktree() {
     let agent = sb.add_worktree("agent-1");
 
     sb.json(&agent.join("web"), &["start", "web"]);
+    // web reaches the api of its own worktree.
+    let line = sb.first_log_line(&agent.join("web"), "web");
+    assert!(line.ends_with("api=3100"), "{line}");
     assert_eq!(
         sb.processes(),
         vec![

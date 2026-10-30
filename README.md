@@ -262,7 +262,10 @@ shifted. Also handled:
 - a fresh worktree has no env files (they are gitignored): the main
   checkout's are used until the worktree has its own
 - dependencies in the same repository start in the same worktree; shared ones
-  (a database, another repository) stay the configured instance
+  (a database, another repository) stay the configured instance. Each app gets
+  `DEVCLI_PORT_<APP>` with the port of each dependency that declares one (for
+  example `API_URL=http://localhost:$DEVCLI_PORT_API` in a command), so a
+  worktree's web talks to its own api
 - Docker Compose apps get a `COMPOSE_PROJECT_NAME` per worktree
 - deleting a worktree stops the apps that ran from it (pm-daemon)
 - `auto-add` run inside a worktree registers the main checkout's path

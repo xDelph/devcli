@@ -95,6 +95,25 @@ pub fn apply(
         }
     }
 
+    // Where the dependencies listen: in a worktree the API next to this web
+    // is on its own shifted port, which a URL hard-coded to the configured
+    // port would miss. DEVCLI_PORT_<APP> for each dependency with a declared
+    // `port`, as it runs for this instance.
+    if let Ok(config) = crate::config::load_config()
+        && let Ok(chain) = crate::config::dependencies::resolve_dependency_chain(&config, resolved)
+    {
+        for dep in chain {
+            let Some(port) = dep.app.port else {
+                continue;
+            };
+            let offset = dep.worktree.as_ref().map_or(0, |i| i.port_offset());
+            env_vars.insert(
+                dependency_port_var(&dep.app_name),
+                shifted(port, offset)?.to_string(),
+            );
+        }
+    }
+
     if let Some(i) = instance
         && matches!(environment, "docker-compose" | "docker" | "orbstack")
         && !env_vars.contains_key("COMPOSE_PROJECT_NAME")
@@ -241,6 +260,21 @@ pub fn env_dir(
         instance.slug
     );
     Ok((overlay, Some(note)))
+}
+
+/// `DEVCLI_PORT_<APP>`: the app name upper-cased, other characters as `_`.
+pub fn dependency_port_var(app: &str) -> String {
+    let name: String = app
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("DEVCLI_PORT_{name}")
 }
 
 /// `${NAME}` replaced by the instance's variables (`DEVCLI_*`, `PORT`), so a
@@ -519,5 +553,14 @@ mod tests {
         let mut env = HashMap::from([("PORT".to_string(), "4000".to_string())]);
         apply(&resolved(Some(3000), Some(1)), "local", &mut env).unwrap();
         assert_eq!(env["PORT"], "4100");
+    }
+
+    #[test]
+    fn dependency_port_variables_are_named_after_the_app() {
+        assert_eq!(dependency_port_var("api"), "DEVCLI_PORT_API");
+        assert_eq!(
+            dependency_port_var("auth-service.v2"),
+            "DEVCLI_PORT_AUTH_SERVICE_V2"
+        );
     }
 }

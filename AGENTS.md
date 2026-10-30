@@ -231,7 +231,8 @@ Each instance gets its own ports and variables:
 | `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists) |
 | `DEVCLI_PORT_OFFSET` | index × 100 |
 | `DEVCLI_WORKTREE_PATH`, `DEVCLI_WORKTREE_BRANCH` | in a worktree |
-| `PORT`, `DEVCLI_PORT` | the app's `port` + offset, when `port` is configured |
+| `PORT`, `DEVCLI_PORT` | the app's port + offset: its env files' `PORT`, else its configured `port` |
+| `DEVCLI_PORT_<APP>` | the port of each dependency with a configured `port`, as it runs for this instance (shifted when it runs in the same worktree), e.g. `DEVCLI_PORT_API` |
 
 Without a `port` in the config, a `PORT` from the app's env files is shifted
 in worktrees. Health checks follow the shifted port. In a fresh worktree
