@@ -87,23 +87,25 @@ Similarly, preferences are loaded from:
           "path": "~/code/awesome-monorepo/apps/api",
           "commands": {
             "local": {
-              "default": "start",
               "start": "npm run dev",
               "test": "npm test",
               "build": "npm run build",
               "build:production": "npm run build:prod"
             },
             "docker": {
-              "default": "start",
               "start": "docker compose up api",
               "build": "docker compose build api"
             },
             "k8s": {
-              "default": "apply",
               "apply": "kubectl apply -f k8s/",
               "delete": "kubectl delete -f k8s/",
               "restart": "kubectl rollout restart deployment/api"
             }
+          },
+          "defaults": {
+            "local": "start",
+            "docker": "start",
+            "k8s": "apply"
           },
           "dependencies": [
             "database",
@@ -140,13 +142,15 @@ Similarly, preferences are loaded from:
           "path": "~/code/awesome-monorepo/apps/worker",
           "commands": {
             "local": {
-              "default": "start",
               "start": "npm run worker"
             },
             "docker": {
-              "default": "start",
               "start": "docker compose up worker"
             }
+          },
+          "defaults": {
+            "local": "start",
+            "docker": "start"
           },
           "dependencies": [
             "database",
@@ -163,15 +167,17 @@ Similarly, preferences are loaded from:
           "path": "~/code/awesome-monorepo/apps/frontend",
           "commands": {
             "local": {
-              "default": "start",
               "start": "npm run dev",
               "build": "npm run build",
               "preview": "npm run preview"
             },
             "docker": {
-              "default": "start",
               "start": "docker compose up frontend"
             }
+          },
+          "defaults": {
+            "local": "start",
+            "docker": "start"
           },
           "dependencies": [
             "api"
@@ -196,16 +202,13 @@ Similarly, preferences are loaded from:
 #### `type`
 **Type**: String
 **Required**: Yes
-**Description**: Type of application
+**Description**: Type of application. devcli treats it as a free-form label
+(shown in `status`, the TUI and `config show`); it does not change how
+commands are run.
 
-**Supported Values**:
-- `nodejs` - Node.js applications
-- `docker` - Docker/Docker Compose
-- `k8s` - Kubernetes applications
-- `rust` - Rust applications
-- `go` - Go applications
-- `python` - Python applications
-- `generic` - Any other type
+**Values produced by auto-detection** (and accepted by `auto-add --type`):
+`nodejs`, `nx`, `nx-workspace`, `rust`, `python`, `docker`, `redis`,
+`traefik`. Any other string is accepted when you write the config by hand.
 
 **Example**:
 ```json
@@ -236,31 +239,39 @@ Similarly, preferences are loaded from:
 {
   "commands": {
     "<environment>": {
-      "<command-name>": "<command-string>",
-      "default": "<default-command-name>"
+      "<command-name>": "<command-string>"
     }
+  },
+  "defaults": {
+    "<environment>": "<default-command-name>"
   }
 }
 ```
 
-**Environments**: `local`, `docker`, `orbstack`, `k8s`
+**Environments**: `local`, `docker`, `orbstack`, `docker-compose`, `k8s`,
+`ci`. Each one is optional; define only the environments the app uses.
+
+The default command of each environment lives in the app-level `defaults`
+object (see [Default Commands](#default-commands)), not inside `commands`.
 
 **Example**:
 ```json
 {
   "commands": {
     "local": {
-      "default": "start",
       "start": "npm run dev",
       "test": "npm test",
       "build": "npm run build",
       "build:production": "npm run build --mode production"
     },
     "docker": {
-      "default": "start",
       "start": "docker compose up api",
       "build": "docker compose build api"
     }
+  },
+  "defaults": {
+    "local": "start",
+    "docker": "start"
   }
 }
 ```
@@ -568,24 +579,30 @@ devcli run api build
 
 ## Default Commands
 
-Each environment should have a `default` command:
+`defaults` maps an environment to the name of one of its commands. `start`
+and `restart` run that command when no variant is given. `defaults` is
+optional: an app without it can still run named commands with
+`devcli run APP COMMAND`, but `devcli start APP --env ENV` fails when
+`defaults.ENV` is missing (`config validate` warns about it).
 
 ```json
 {
   "commands": {
     "local": {
-      "default": "start",
       "start": "npm run dev",
       "test": "npm test"
     }
+  },
+  "defaults": {
+    "local": "start"
   }
 }
 ```
 
 **Used When**:
 ```bash
-devcli start api          # Uses 'default' → 'start'
-devcli start api --env docker  # Uses docker's 'default'
+devcli start api               # Uses defaults.local → 'start'
+devcli start api --env docker  # Uses defaults.docker
 ```
 
 ## App Types & Auto-Detection
@@ -599,11 +616,12 @@ devcli can **auto-detect** app types and generate commands:
 | **Node.js** | `package.json` | start, test, build (from scripts) |
 | **Nx Monorepo** | `nx.json` | Per-app targets |
 | **Docker** | `Dockerfile` | build, run (single/multi-stage) |
-| **Docker Compose** | `docker-compose.yml` | up, down, build |
+| **Docker Compose** | `docker-compose.yml`, `compose.yaml` (and variants) | up, down, build |
 | **Kubernetes** | `k8s/*.yaml` | apply, delete, restart |
-| **Rust** | `Cargo.toml` | run, test, build, check |
-| **Go** | `go.mod` | run, test, build |
-| **Python** | `setup.py`/`pyproject.toml` | Based on project type |
+| **Rust** | `Cargo.toml` (crates and workspaces) | run, test, build, check |
+| **Python** | `setup.py`/`pyproject.toml` (incl. uv workspaces) | Based on project type |
+| **Redis** | `redis.conf` (or a `redis/` directory) | start (`redis-server`) |
+| **Traefik** | `traefik.yml`/`traefik.yaml`/`traefik.toml` | start (`traefik`) |
 
 ### Auto-Add Command
 
