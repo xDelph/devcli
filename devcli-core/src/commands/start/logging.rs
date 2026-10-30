@@ -176,6 +176,8 @@ fn any_started_app_alive(store: &StateStore, owner: &str, started_apps: &[String
         .iter()
         .filter(|p| is_started_app(p, started_apps))
         .any(|p| store.is_running(p) || store.awaiting_restart(p))
+        // `restart` is replacing one of its apps (stopped, not started yet).
+        || store.restart_pending_for_owner(owner)
 }
 
 fn is_started_app(process: &ManagedProcess, started_apps: &[String]) -> bool {

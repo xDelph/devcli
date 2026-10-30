@@ -90,6 +90,10 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         format!("Restarting process '{}'...", args.app_name),
     );
 
+    // Until the new instance is recorded, tell the attached session owning
+    // the app (if any) that it is being replaced, not gone.
+    let _restarting = store.begin_restart(&process)?;
+
     // Stop current process first
     let stop_args = crate::commands::stop::StopCommandArgs {
         app_name: Some(actual_app_name.clone()),

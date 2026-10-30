@@ -70,6 +70,17 @@ pub struct EntryLock {
     file: fs::File,
 }
 
+/// A restart in progress (see [`StateStore::begin_restart`]); removed on drop.
+pub struct RestartMarker {
+    path: PathBuf,
+}
+
+impl Drop for RestartMarker {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 /// The monitor singleton lock; released when dropped (or the process exits).
 pub struct DaemonLock {
     _file: fs::File,
@@ -267,6 +278,39 @@ impl StateStore {
             .insert(STOPPING_KEY.to_string(), std::process::id().to_string());
         self.save(&process)?;
         Ok(Some(process))
+    }
+
+    /// Record that `process` is being restarted, until the returned marker is
+    /// dropped: between the stop and the start no entry exists, and the
+    /// attached session owning the app must not take that gap for its end.
+    pub fn begin_restart(&self, process: &ManagedProcess) -> Result<RestartMarker> {
+        let path = self.base_dir.join(format!("{}.restarting", process.id));
+        let owner = process
+            .owner_pid()
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        fs::write(&path, format!("{} {}", std::process::id(), owner))?;
+        Ok(RestartMarker { path })
+    }
+
+    /// Whether a restart still running (its process alive) is replacing an
+    /// app owned by `owner`.
+    pub fn restart_pending_for_owner(&self, owner: &str) -> bool {
+        let Ok(entries) = fs::read_dir(&self.base_dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("restarting") {
+                return false;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                return false;
+            };
+            let mut fields = content.split_whitespace();
+            let restarter = fields.next().and_then(|p| p.parse::<u32>().ok());
+            restarter.is_some_and(crate::engine::pid_alive) && fields.next() == Some(owner)
+        })
     }
 
     /// Mark entry `id` as needed by another app (see [`SHARED_KEY`]).
