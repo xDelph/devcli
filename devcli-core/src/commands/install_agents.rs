@@ -17,8 +17,10 @@
 //     block pointing at the full contract, written once to ~/.devcli/AGENTS.md.
 //   - local (default, or `--local DIR`): DIR/AGENTS.md with the full contract,
 //     read by Codex, Cursor, OpenCode, Devin, pi, Copilot, and Claude Code when
-//     the project has no CLAUDE.md. When the project has a CLAUDE.md, Claude
-//     Code ignores AGENTS.md, so CLAUDE.md gets an import of it.
+//     the project has no CLAUDE.md. Agents reading a file of their own get an
+//     import of AGENTS.md there: CLAUDE.md when the project has one (Claude Code
+//     then ignores AGENTS.md), and GEMINI.md (Gemini CLI does not read
+//     AGENTS.md by default).
 
 use crate::config::loader::user_config_home;
 use crate::Result;
@@ -45,7 +47,7 @@ const LEGACY_RULES: Markers = Markers {
     end: "# ===== XDELPH/DEVCLI rules stop =====",
 };
 
-/// The import of AGENTS.md added to a project's CLAUDE.md.
+/// The import of AGENTS.md added to a project's CLAUDE.md or GEMINI.md.
 const IMPORT: Markers = Markers {
     start: "<!-- devcli:import:start -->",
     end: "<!-- devcli:import:end -->",
@@ -602,22 +604,34 @@ struct ImportSite {
     file: PathBuf,
     /// The import line, relative to `file`, in the agent's syntax.
     import: &'static str,
+    /// Create `file` when it does not exist.
+    create: bool,
 }
 
 /// The project files to import AGENTS.md into:
 /// - CLAUDE.md / .claude/CLAUDE.md, only when present: without one, Claude
 ///   Code reads AGENTS.md itself.
-fn import_sites(dir: &Path) -> Vec<ImportSite> {
+/// - GEMINI.md, when present or when Gemini CLI is installed: Gemini CLI
+///   reads GEMINI.md, not AGENTS.md, unless configured otherwise.
+fn import_sites(homes: &Homes, dir: &Path) -> Vec<ImportSite> {
     vec![
         ImportSite {
             agent: Agent::Claude,
             file: dir.join("CLAUDE.md"),
             import: "@AGENTS.md",
+            create: false,
         },
         ImportSite {
             agent: Agent::Claude,
             file: dir.join(".claude").join("CLAUDE.md"),
             import: "@../AGENTS.md",
+            create: false,
+        },
+        ImportSite {
+            agent: Agent::Gemini,
+            file: dir.join("GEMINI.md"),
+            import: "@./AGENTS.md",
+            create: Agent::Gemini.home(homes).is_dir(),
         },
     ]
 }
@@ -645,9 +659,11 @@ fn install_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
         &fenced(RULES, &managed_body(RULES_BODY)),
     )?];
 
-    for site in import_sites(dir) {
-        let Some(content) = read_existing(&site.file)? else {
-            continue;
+    for site in import_sites(homes, dir) {
+        let content = match read_existing(&site.file)? {
+            Some(content) => content,
+            None if site.create => String::new(),
+            None => continue,
         };
         let ours = find_block(&content, &site.file, &[IMPORT])?.is_some();
         if !ours && imports_agents_md(&content, site.import) {
@@ -671,7 +687,7 @@ fn uninstall_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
         &dir.join("AGENTS.md"),
         ALL_RULES,
     )?];
-    for site in import_sites(dir) {
+    for site in import_sites(homes, dir) {
         let outcome = remove_block(homes, Some(site.agent), &site.file, &[IMPORT])?;
         if outcome.action == Action::Removed {
             outcomes.push(outcome);
@@ -1067,5 +1083,40 @@ mod tests {
         install_global(&sb.homes, &["pi".to_string()]).unwrap();
         assert!(read(&pi.join("AGENTS.override.md")).contains(RULES.start));
         assert!(!pi.join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn gemini_md_imports_agents_md() {
+        let sb = sandbox();
+        let gemini = sb.project.join("GEMINI.md");
+
+        // Gemini CLI not installed and no GEMINI.md: nothing is created.
+        install_local(&sb.homes, &sb.project).unwrap();
+        assert!(!gemini.exists());
+
+        // Gemini CLI installed: GEMINI.md is created with the import...
+        std::fs::create_dir_all(sb.homes.home.join(".gemini")).unwrap();
+        let outcomes = install_local(&sb.homes, &sb.project).unwrap();
+        assert_eq!(outcomes.last().unwrap().agent, Some(Agent::Gemini));
+        assert_eq!(
+            read(&gemini),
+            "<!-- devcli:import:start -->\n@./AGENTS.md\n<!-- devcli:import:end -->\n"
+        );
+        // ...and deleted again with it.
+        uninstall_local(&sb.homes, &sb.project).unwrap();
+        assert!(!gemini.exists());
+
+        // An existing GEMINI.md keeps its content around the import.
+        std::fs::write(&gemini, "# Gemini notes\n").unwrap();
+        install_local(&sb.homes, &sb.project).unwrap();
+        assert!(read(&gemini).starts_with("# Gemini notes\n\n<!-- devcli:import:start -->"));
+        uninstall_local(&sb.homes, &sb.project).unwrap();
+        assert_eq!(read(&gemini), "# Gemini notes\n");
+
+        // One that already imports AGENTS.md is left alone.
+        std::fs::write(&gemini, "@AGENTS.md\n").unwrap();
+        let outcomes = install_local(&sb.homes, &sb.project).unwrap();
+        assert!(outcomes.iter().all(|o| o.agent != Some(Agent::Gemini)));
+        assert_eq!(read(&gemini), "@AGENTS.md\n");
     }
 }

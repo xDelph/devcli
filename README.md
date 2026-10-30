@@ -259,9 +259,13 @@ The block is short on purpose: those files load into every session of every
 project.
 
 In a project, the full rules go into `AGENTS.md`, which Codex, Cursor, OpenCode,
-Devin, pi, Copilot and Claude Code read. When the project has a `CLAUDE.md` (or
-`.claude/CLAUDE.md`), Claude Code ignores `AGENTS.md`, so an import of it is
-added there.
+Devin, pi, Copilot and Claude Code read. Two agents get an import of it in their
+own file:
+
+- `CLAUDE.md` (or `.claude/CLAUDE.md`), when the project has one: Claude Code
+  then ignores `AGENTS.md`.
+- `GEMINI.md`, when the project has one or Gemini CLI is installed: Gemini CLI
+  reads `GEMINI.md`, not `AGENTS.md`.
 
 The blocks are fenced by HTML-comment markers, so devcli can refresh or remove
 them without touching your own lines; a file devcli created is deleted again on

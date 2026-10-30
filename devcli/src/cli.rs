@@ -187,8 +187,8 @@ pub enum Commands {
         about = "Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, ...) to use devcli",
         long_about = "Teach AI coding agents to use devcli.\n\n\
             By default, writes devcli's rules into ./AGENTS.md (read by Codex, Cursor, OpenCode, \
-            Devin, pi, Copilot and Claude Code), and imports it from the project's CLAUDE.md when \
-            there is one.\n\n\
+            Devin, pi, Copilot and Claude Code), and imports it from the project's CLAUDE.md (when \
+            there is one) and GEMINI.md (when there is one or Gemini CLI is installed).\n\n\
             With --global, writes a short block into the user-level rules of every agent found \
             (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md, \
             ~/.cursor/rules/devcli.mdc, ~/.pi/agent/AGENTS.md, ~/.config/opencode/AGENTS.md, \
