@@ -363,3 +363,30 @@ fn agents_cannot_act_on_every_worktree() {
     );
     assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
 }
+
+/// A worktree moved with plain `mv` is unknown to git at its new path: a
+/// command run from there is refused instead of acting on the main checkout.
+#[test]
+fn a_moved_worktree_is_refused_not_mistaken_for_the_main_checkout() {
+    let sb = Sandbox::new();
+    let main = sb.repo();
+    sb.json(&main, &["start", "api"]);
+    let agent = sb.add_worktree("agent-1");
+    let moved = sb.root().join("moved");
+    std::fs::rename(&agent, &moved).unwrap();
+
+    let out = sb
+        .command(&moved.join("api"), &["--json", "stop", "api"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("git worktree repair"),
+        "{err}"
+    );
+    assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
+}

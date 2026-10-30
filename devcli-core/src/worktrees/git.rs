@@ -114,6 +114,14 @@ fn discover_checkout(path: &Path) -> Option<Checkout> {
     })
 }
 
+/// The `origin` remote of the checkout at `root`, to recognise another clone
+/// of the same repository.
+pub fn origin_url(root: &Path) -> Option<String> {
+    git(root, &["config", "--get", "remote.origin.url"])
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+}
+
 /// Every worktree of the repository whose shared git directory is
 /// `common_dir`, main worktree first.
 ///

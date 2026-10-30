@@ -203,7 +203,24 @@ fn current(base: ResolvedApp) -> Result<ResolvedApp> {
     let Some(home) = git::checkout_of(&expand_path(&base.app.path)) else {
         return Ok(base);
     };
-    if here.common_dir != home.common_dir || here.root == home.root {
+    if here.root == home.root {
+        return Ok(base);
+    }
+    if here.common_dir != home.common_dir {
+        // Another clone of the same repository: devcli runs worktrees of the
+        // configured checkout, not clones; say which one is used.
+        if git::origin_url(&here.root).is_some_and(|url| git::origin_url(&home.root) == Some(url))
+            && crate::output::human(false)
+        {
+            eprintln!(
+                "note: {} is another clone of the repository of project '{}'; '{}' runs from the \
+                 configured checkout, {}",
+                here.root.display(),
+                base.project,
+                base.app_name,
+                home.root.display()
+            );
+        }
         return Ok(base);
     }
 
@@ -211,7 +228,17 @@ fn current(base: ResolvedApp) -> Result<ResolvedApp> {
         return Ok(base);
     };
     let Some((worktree, slot)) = view.slots.iter().find(|(w, _)| w.root == here.root) else {
-        return Ok(base);
+        // A worktree of this repository that git does not list at this path:
+        // moved with `mv`. Falling back to the configured checkout would make
+        // `stop api` run here stop the main checkout's api.
+        anyhow::bail!(
+            "{} is a worktree of the repository of project '{}' that git does not list at this path \
+             (moved without `git worktree move`?). Run `git worktree repair` here, or name \
+             the instance: {app}@SLUG for a worktree, {app}@ for the configured checkout.",
+            here.root.display(),
+            base.project,
+            app = base.app_name
+        );
     };
     match derive(&base, &view.home, worktree, slot) {
         Ok(instance) => Ok(instance),
