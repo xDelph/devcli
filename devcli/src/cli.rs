@@ -396,7 +396,11 @@ pub enum ConfigAction {
         #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
         project: Option<String>,
 
-        #[arg(short, long, help = "Filter by environment (local, docker, k8s)")]
+        #[arg(
+            short,
+            long,
+            help = "Filter by environment: local, docker, orbstack, docker-compose (compose), k8s, ci"
+        )]
         env: Option<String>,
     },
 

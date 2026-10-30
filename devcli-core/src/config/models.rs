@@ -580,7 +580,7 @@ pub struct Preferences {
     pub docker_platform: String,
 
     // Default deployment stage to use when starting apps
-    // Can be any string (dev, qa, preprod, prod, staging, etc.)
+    // One of dev, qa, preprod, prod
     // OPTIONAL: If not set, no default stage is applied
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_stage: Option<String>,

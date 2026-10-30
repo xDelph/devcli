@@ -153,6 +153,10 @@ pub async fn pref_reset() -> Result<()> {
     println!("  detached-mode: {}", prefs.detached_mode);
     println!("  auto-start-deps: {}", prefs.auto_start_deps);
     println!("  docker-platform: {}", prefs.docker_platform);
+    println!(
+        "  default-stage: {}",
+        prefs.default_stage.as_deref().unwrap_or("(none)")
+    );
 
     Ok(())
 }
