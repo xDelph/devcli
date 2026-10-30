@@ -782,10 +782,13 @@ CMD ["node", "server.js"]
             store.save(&process).unwrap();
 
             let original_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", daemon_dir.display(), original_path),
-            );
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe {
+                std::env::set_var(
+                    "PATH",
+                    format!("{}:{}", daemon_dir.display(), original_path),
+                )
+            };
             store.ensure_daemon_running().expect("start pm-daemon");
 
             engine::terminate(original_pid, pgid, true)
@@ -795,17 +798,19 @@ CMD ["node", "server.js"]
             let mut restarted = false;
             for _ in 0..20 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                if let Some(updated) = store.load(&id).unwrap() {
-                    if updated.pid != original_pid && store.is_running(&updated) {
-                        restarted = true;
-                        let _ = engine::terminate(updated.pid, updated.pgid, true).await;
-                        break;
-                    }
+                if let Some(updated) = store.load(&id).unwrap()
+                    && updated.pid != original_pid
+                    && store.is_running(&updated)
+                {
+                    restarted = true;
+                    let _ = engine::terminate(updated.pid, updated.pgid, true).await;
+                    break;
                 }
             }
 
             store.delete(&id).unwrap();
-            std::env::set_var("PATH", original_path);
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe { std::env::set_var("PATH", original_path) };
 
             assert!(
                 restarted,

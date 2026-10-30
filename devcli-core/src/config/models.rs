@@ -469,17 +469,17 @@ impl App {
     /// Falls back to stage-only or base .env if context-specific not found
     pub fn get_env_file(&self, stage: Option<&str>, env: &str) -> Option<String> {
         // Check env_files structure
-        if let Some(ref env_files) = self.env_files {
-            if let Some(stage_name) = stage {
-                // Try stage + environment specific
-                if let Some(stage_map) = env_files.get(stage_name) {
-                    if let Some(path) = stage_map.get(env) {
-                        return Some(path.clone());
-                    }
-                    // Try stage with "all" context
-                    if let Some(path) = stage_map.get("all") {
-                        return Some(path.clone());
-                    }
+        if let Some(ref env_files) = self.env_files
+            && let Some(stage_name) = stage
+        {
+            // Try stage + environment specific
+            if let Some(stage_map) = env_files.get(stage_name) {
+                if let Some(path) = stage_map.get(env) {
+                    return Some(path.clone());
+                }
+                // Try stage with "all" context
+                if let Some(path) = stage_map.get("all") {
+                    return Some(path.clone());
                 }
             }
         }
@@ -495,10 +495,10 @@ impl App {
         preferences_default: Option<&str>,
     ) -> Option<String> {
         // Check default_stages structure
-        if let Some(ref default_stages) = self.default_stages {
-            if let Some(stage) = default_stages.get(env) {
-                return Some(stage.clone());
-            }
+        if let Some(ref default_stages) = self.default_stages
+            && let Some(stage) = default_stages.get(env)
+        {
+            return Some(stage.clone());
         }
 
         // Fall back to preferences default

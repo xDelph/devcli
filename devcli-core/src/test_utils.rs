@@ -367,7 +367,8 @@ impl TempConfigDir {
         let lock = env_guard();
         let previous = std::env::var_os("DEVCLI_CONFIG_DIR");
         let dir = tempfile::TempDir::new().expect("create temp config dir");
-        std::env::set_var("DEVCLI_CONFIG_DIR", dir.path());
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", dir.path()) };
         Self {
             dir,
             previous,
@@ -397,8 +398,10 @@ impl Default for TempConfigDir {
 impl Drop for TempConfigDir {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(previous) => std::env::set_var("DEVCLI_CONFIG_DIR", previous),
-            None => std::env::remove_var("DEVCLI_CONFIG_DIR"),
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(previous) => unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", previous) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("DEVCLI_CONFIG_DIR") },
         }
     }
 }

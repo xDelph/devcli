@@ -66,10 +66,10 @@ impl LogManager {
     ) -> Result<Vec<LogFileInfo>> {
         const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(1);
         let key = (project_name.to_string(), app_name.to_string());
-        if let Some((at, logs)) = self.listing_cache.borrow().get(&key) {
-            if at.elapsed() < FRESH_FOR {
-                return Ok(logs.clone());
-            }
+        if let Some((at, logs)) = self.listing_cache.borrow().get(&key)
+            && at.elapsed() < FRESH_FOR
+        {
+            return Ok(logs.clone());
         }
         let logs = self.scan_logs_for_app(project_name, app_name)?;
         self.listing_cache
@@ -175,11 +175,11 @@ impl LogManager {
     /// Filename format: {project}_{app}_{context}_{date}.log
     /// Output: "{context} - {Today/Yesterday/X days ago}"
     pub fn format_log_label(filename: &str) -> String {
-        if let Some(name) = crate::process_manager_support::LogFileName::parse(filename) {
-            if let Ok(date) = NaiveDate::parse_from_str(&name.date, "%Y%m%d") {
-                let smart_date = Self::format_relative_date(date);
-                return format!("{} - {}", name.environment, smart_date);
-            }
+        if let Some(name) = crate::process_manager_support::LogFileName::parse(filename)
+            && let Ok(date) = NaiveDate::parse_from_str(&name.date, "%Y%m%d")
+        {
+            let smart_date = Self::format_relative_date(date);
+            return format!("{} - {}", name.environment, smart_date);
         }
 
         filename.to_string()

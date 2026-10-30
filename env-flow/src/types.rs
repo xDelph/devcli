@@ -201,9 +201,17 @@ impl EnvVars {
     }
 
     /// Set all variables in `std::env`.
-    pub fn apply(&self) {
+    ///
+    /// # Safety
+    ///
+    /// Same contract as [`std::env::set_var`]: no other thread may read or
+    /// write the process environment while this runs, other than through
+    /// `std::env` itself (call it early in `main`, before spawning threads or
+    /// starting an async runtime).
+    pub unsafe fn apply(&self) {
         for (key, entry) in &self.0 {
-            std::env::set_var(key, &entry.value);
+            // SAFETY: forwarded to the caller (see above).
+            unsafe { std::env::set_var(key, &entry.value) };
         }
     }
 

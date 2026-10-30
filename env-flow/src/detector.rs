@@ -136,49 +136,50 @@ fn classify(filename: &str, dir_context: Option<&str>) -> DetectedFile {
     };
 
     // Reverse pattern: `.local.env`, `.dev.env`, `.dev.local.env`
-    if filename.ends_with(".env") && filename != ".env" && !filename.starts_with(".env.") {
-        if let Some(inner) = filename
+    if filename.ends_with(".env")
+        && filename != ".env"
+        && !filename.starts_with(".env.")
+        && let Some(inner) = filename
             .strip_prefix('.')
             .and_then(|s| s.strip_suffix(".env"))
-        {
-            let parts: Vec<&str> = inner.split('.').collect();
-            let non_local: Vec<&str> = parts.iter().copied().filter(|&p| p != "local").collect();
+    {
+        let parts: Vec<&str> = inner.split('.').collect();
+        let non_local: Vec<&str> = parts.iter().copied().filter(|&p| p != "local").collect();
 
-            if parts.last() == Some(&"local") {
-                is_local = true;
-            }
-
-            match non_local.len() {
-                0 => {}
-                1 => {
-                    let token = non_local[0];
-                    if is_known_context(token) {
-                        context = Some(token.to_string());
-                    } else {
-                        stage = Some(token.to_string());
-                    }
-                }
-                2 => {
-                    stage = Some(non_local[0].to_string());
-                    context = Some(non_local[1].to_string());
-                }
-                _ => {
-                    stage = Some(non_local[0].to_string());
-                    if let Some(last) = non_local.last() {
-                        context = Some(last.to_string());
-                    }
-                }
-            }
-
-            return DetectedFile {
-                path: PathBuf::new(),
-                relative_path: String::new(),
-                stage,
-                context,
-                is_local,
-                convention: NamingConvention::Suffix,
-            };
+        if parts.last() == Some(&"local") {
+            is_local = true;
         }
+
+        match non_local.len() {
+            0 => {}
+            1 => {
+                let token = non_local[0];
+                if is_known_context(token) {
+                    context = Some(token.to_string());
+                } else {
+                    stage = Some(token.to_string());
+                }
+            }
+            2 => {
+                stage = Some(non_local[0].to_string());
+                context = Some(non_local[1].to_string());
+            }
+            _ => {
+                stage = Some(non_local[0].to_string());
+                if let Some(last) = non_local.last() {
+                    context = Some(last.to_string());
+                }
+            }
+        }
+
+        return DetectedFile {
+            path: PathBuf::new(),
+            relative_path: String::new(),
+            stage,
+            context,
+            is_local,
+            convention: NamingConvention::Suffix,
+        };
     }
 
     // Suffix after `.env`

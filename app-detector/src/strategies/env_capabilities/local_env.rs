@@ -106,16 +106,15 @@ impl DetectionStrategy for LocalEnvStrategy {
 
 fn extract_nodejs_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
     let pm = node_package_manager(ctx);
-    if let Ok(content) = ctx.read_file("package.json") {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(scripts) = json.get("scripts").and_then(|v| v.as_object()) {
-                for (key, _value) in scripts {
-                    commands.insert(
-                        key.clone(),
-                        crate::utils::package_manager::node_script_command(&pm, key),
-                    );
-                }
-            }
+    if let Ok(content) = ctx.read_file("package.json")
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(scripts) = json.get("scripts").and_then(|v| v.as_object())
+    {
+        for (key, _value) in scripts {
+            commands.insert(
+                key.clone(),
+                crate::utils::package_manager::node_script_command(&pm, key),
+            );
         }
     }
 }
@@ -139,11 +138,11 @@ fn extract_nx_commands(ctx: &DetectionContext, commands: &mut HashMap<String, St
 }
 
 fn extract_python_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
-    if let Some(result) = ctx.get_result("python") {
-        if let DetectionData::Monorepo(info) = &result.data {
-            extract_python_workspace_commands(ctx, info, commands);
-            return;
-        }
+    if let Some(result) = ctx.get_result("python")
+        && let DetectionData::Monorepo(info) = &result.data
+    {
+        extract_python_workspace_commands(ctx, info, commands);
+        return;
     }
 
     extract_python_package_commands(ctx, commands);
@@ -295,21 +294,19 @@ fn extract_redis_commands(ctx: &DetectionContext, commands: &mut HashMap<String,
     }
 
     // Check for any redis config files in current directory
-    if !config_found {
-        if let Ok(entries) = std::fs::read_dir(&ctx.root_path) {
-            for entry in entries.flatten() {
-                let file_name = entry.file_name();
-                let file_name_str = file_name.to_string_lossy();
-                if file_name_str.starts_with("redis")
-                    && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
-                {
-                    commands.insert(
-                        "start".to_string(),
-                        format!("redis-server {}", file_name_str),
-                    );
-                    config_found = true;
-                    break;
-                }
+    if !config_found && let Ok(entries) = std::fs::read_dir(&ctx.root_path) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            if file_name_str.starts_with("redis")
+                && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
+            {
+                commands.insert(
+                    "start".to_string(),
+                    format!("redis-server {}", file_name_str),
+                );
+                config_found = true;
+                break;
             }
         }
     }
@@ -350,23 +347,21 @@ fn extract_traefik_commands(ctx: &DetectionContext, commands: &mut HashMap<Strin
     }
 
     // Check for any traefik config files in current directory
-    if !config_found {
-        if let Ok(entries) = std::fs::read_dir(&ctx.root_path) {
-            for entry in entries.flatten() {
-                let file_name = entry.file_name();
-                let file_name_str = file_name.to_string_lossy();
-                if file_name_str.starts_with("traefik")
-                    && (file_name_str.ends_with(".yml")
-                        || file_name_str.ends_with(".yaml")
-                        || file_name_str.ends_with(".toml"))
-                {
-                    commands.insert(
-                        "start".to_string(),
-                        format!("traefik --configFile={}", file_name_str),
-                    );
-                    config_found = true;
-                    break;
-                }
+    if !config_found && let Ok(entries) = std::fs::read_dir(&ctx.root_path) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            if file_name_str.starts_with("traefik")
+                && (file_name_str.ends_with(".yml")
+                    || file_name_str.ends_with(".yaml")
+                    || file_name_str.ends_with(".toml"))
+            {
+                commands.insert(
+                    "start".to_string(),
+                    format!("traefik --configFile={}", file_name_str),
+                );
+                config_found = true;
+                break;
             }
         }
     }
@@ -378,11 +373,11 @@ fn extract_traefik_commands(ctx: &DetectionContext, commands: &mut HashMap<Strin
 }
 
 fn extract_rust_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
-    if let Some(result) = ctx.get_result("rust") {
-        if let DetectionData::Monorepo(info) = &result.data {
-            extract_cargo_workspace_commands(info, commands);
-            return;
-        }
+    if let Some(result) = ctx.get_result("rust")
+        && let DetectionData::Monorepo(info) = &result.data
+    {
+        extract_cargo_workspace_commands(info, commands);
+        return;
     }
 
     extract_cargo_crate_commands(ctx, commands);

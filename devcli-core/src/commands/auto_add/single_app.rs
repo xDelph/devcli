@@ -66,19 +66,19 @@ pub const KNOWN_APP_TYPES: &[&str] = &[
 
 pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
     // A typo (`--type nodjs`) used to be saved as-is.
-    if let Some(app_type) = &args.app_type {
-        if !KNOWN_APP_TYPES.contains(&app_type.as_str()) {
-            let candidates: Vec<String> = KNOWN_APP_TYPES.iter().map(|t| t.to_string()).collect();
-            let hint = config_manager::resolver::fuzzy_match(app_type, &candidates, 3)
-                .map(|t| format!(" Did you mean '{t}'?"))
-                .unwrap_or_default();
-            anyhow::bail!(
-                "Unknown app type '{}'.{} Known types: {}.",
-                app_type,
-                hint,
-                KNOWN_APP_TYPES.join(", ")
-            );
-        }
+    if let Some(app_type) = &args.app_type
+        && !KNOWN_APP_TYPES.contains(&app_type.as_str())
+    {
+        let candidates: Vec<String> = KNOWN_APP_TYPES.iter().map(|t| t.to_string()).collect();
+        let hint = config_manager::resolver::fuzzy_match(app_type, &candidates, 3)
+            .map(|t| format!(" Did you mean '{t}'?"))
+            .unwrap_or_default();
+        anyhow::bail!(
+            "Unknown app type '{}'.{} Known types: {}.",
+            app_type,
+            hint,
+            KNOWN_APP_TYPES.join(", ")
+        );
     }
 
     // Use provided path or default to current directory
@@ -457,10 +457,9 @@ fn discover_individual_apps(
                 // Check for individual Redis config files
                 if file_name_str.starts_with("redis")
                     && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
+                    && let Ok(app) = create_redis_app_from_config(&entry.path(), &file_name_str)
                 {
-                    if let Ok(app) = create_redis_app_from_config(&entry.path(), &file_name_str) {
-                        apps.push(app);
-                    }
+                    apps.push(app);
                 }
 
                 // Check for individual Traefik config files
@@ -468,10 +467,9 @@ fn discover_individual_apps(
                     && (file_name_str.ends_with(".yml")
                         || file_name_str.ends_with(".yaml")
                         || file_name_str.ends_with(".toml"))
+                    && let Ok(app) = create_traefik_app_from_config(&entry.path(), &file_name_str)
                 {
-                    if let Ok(app) = create_traefik_app_from_config(&entry.path(), &file_name_str) {
-                        apps.push(app);
-                    }
+                    apps.push(app);
                 }
             }
         }

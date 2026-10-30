@@ -50,7 +50,8 @@ println!("PORT = {}", vars.get("PORT").unwrap_or("3000"));
 
 // Auto-detect everything from the process environment
 let vars = EnvFlow::from_dir(".").auto_detect().load()?;
-vars.apply(); // push all vars into std::env
+// SAFETY: single-threaded, before anything else reads the environment.
+unsafe { vars.apply() }; // push all vars into std::env
 ```
 
 ---
@@ -211,7 +212,7 @@ vars.get("PORT")                    // Option<&str>
 vars.get_parsed::<u16>("PORT")?     // Result<u16>
 vars.get_with_source("DB_URL")      // Option<(&str, &Path)>  — value + source file
 vars.require(&["DATABASE_URL"])?    // Err if any key is missing
-vars.apply()                        // push all into std::env
+unsafe { vars.apply() }             // push all into std::env (see Safety)
 vars.iter()                         // (key, value) in insertion order
 vars.len()
 vars.is_empty()

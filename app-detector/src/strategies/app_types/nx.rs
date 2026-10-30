@@ -124,21 +124,20 @@ fn detect_nx_workspace_info(ctx: &DetectionContext) -> Vec<WorkspaceInfo> {
 
     // Look for apps/ and libs/ directories (common Nx structure)
     for dir in &["apps", "libs", "packages"] {
-        if ctx.file_exists(dir) {
-            if let Ok(entries) = std::fs::read_dir(ctx.root_path.join(dir)) {
-                let mut dir_entries: Vec<_> =
-                    entries.flatten().filter(|e| e.path().is_dir()).collect();
-                // Sort for deterministic order
-                dir_entries.sort_by_key(|e| e.file_name());
+        if ctx.file_exists(dir)
+            && let Ok(entries) = std::fs::read_dir(ctx.root_path.join(dir))
+        {
+            let mut dir_entries: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
+            // Sort for deterministic order
+            dir_entries.sort_by_key(|e| e.file_name());
 
-                for entry in dir_entries {
-                    if let Some(name) = entry.file_name().to_str() {
-                        infos.push(WorkspaceInfo {
-                            path: format!("{}/{}", dir, name),
-                            name: Some(name.to_string()),
-                            should_detect: true,
-                        });
-                    }
+            for entry in dir_entries {
+                if let Some(name) = entry.file_name().to_str() {
+                    infos.push(WorkspaceInfo {
+                        path: format!("{}/{}", dir, name),
+                        name: Some(name.to_string()),
+                        should_detect: true,
+                    });
                 }
             }
         }

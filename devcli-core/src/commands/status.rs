@@ -59,10 +59,10 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         return status_json(&args, &store, processes).await;
     }
 
-    if args.show_deps {
-        if let Some(app_name) = args.app_name {
-            return show_with_dependencies(app_name, args.project.as_deref(), &store).await;
-        }
+    if args.show_deps
+        && let Some(app_name) = args.app_name
+    {
+        return show_with_dependencies(app_name, args.project.as_deref(), &store).await;
     }
 
     if processes.is_empty() {
@@ -154,46 +154,46 @@ async fn status_json(
     store: &process_manager::StateStore,
     processes: Vec<ManagedProcess>,
 ) -> Result<()> {
-    if args.show_deps {
-        if let Some(app_name) = &args.app_name {
-            let config = load_config()?;
-            let resolved = resolve_app(&config, app_name, args.project.as_deref())?;
-            let dependencies = resolve_dependency_chain(&config, &resolved)?;
+    if args.show_deps
+        && let Some(app_name) = &args.app_name
+    {
+        let config = load_config()?;
+        let resolved = resolve_app(&config, app_name, args.project.as_deref())?;
+        let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
-            let deps: Vec<_> = dependencies
-                .iter()
-                .map(|dep| {
-                    let running = find_process(store, &dep.project, &dep.app_name, None)
-                        .ok()
-                        .flatten()
-                        .map(|p| store.is_running(&p))
-                        .unwrap_or(false);
-                    json!({
-                        "project": dep.project,
-                        "app": dep.app_name,
-                        "running": running,
-                    })
+        let deps: Vec<_> = dependencies
+            .iter()
+            .map(|dep| {
+                let running = find_process(store, &dep.project, &dep.app_name, None)
+                    .ok()
+                    .flatten()
+                    .map(|p| store.is_running(&p))
+                    .unwrap_or(false);
+                json!({
+                    "project": dep.project,
+                    "app": dep.app_name,
+                    "running": running,
                 })
-                .collect();
+            })
+            .collect();
 
-            let own = find_process(store, &resolved.project, &resolved.app_name, None)?;
-            let running = own.as_ref().map(|p| store.is_running(p)).unwrap_or(false);
-            let uptime_seconds = own
-                .as_ref()
-                .filter(|_| running)
-                .map(|p| (Utc::now() - p.start_time).num_seconds());
+        let own = find_process(store, &resolved.project, &resolved.app_name, None)?;
+        let running = own.as_ref().map(|p| store.is_running(p)).unwrap_or(false);
+        let uptime_seconds = own
+            .as_ref()
+            .filter(|_| running)
+            .map(|p| (Utc::now() - p.start_time).num_seconds());
 
-            crate::output::print_json(&json!({
-                "project": resolved.project,
-                "app": resolved.app_name,
-                "running": running,
-                "pid": own.as_ref().map(|p| p.pid),
-                "uptime_seconds": uptime_seconds,
-                "dependencies": deps,
-            }))?;
-            crate::output::set_exit_code(if running { 0 } else { 1 });
-            return Ok(());
-        }
+        crate::output::print_json(&json!({
+            "project": resolved.project,
+            "app": resolved.app_name,
+            "running": running,
+            "pid": own.as_ref().map(|p| p.pid),
+            "uptime_seconds": uptime_seconds,
+            "dependencies": deps,
+        }))?;
+        crate::output::set_exit_code(if running { 0 } else { 1 });
+        return Ok(());
     }
 
     let entries: Vec<_> = processes

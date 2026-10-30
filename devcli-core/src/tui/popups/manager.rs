@@ -150,10 +150,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -201,10 +201,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -278,10 +278,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -345,10 +345,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 

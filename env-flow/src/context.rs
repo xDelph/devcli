@@ -9,11 +9,11 @@ use crate::types::{RuntimeContext, Stage};
 /// `APP_ENV` → `RUST_ENV` → `NODE_ENV` → `RAILS_ENV` → `FLASK_ENV`
 pub fn detect_stage() -> Option<Stage> {
     for key in &["APP_ENV", "RUST_ENV", "NODE_ENV", "RAILS_ENV", "FLASK_ENV"] {
-        if let Ok(val) = std::env::var(key) {
-            if !val.is_empty() {
-                tracing::debug!(key, value = %val, "detected stage from env var");
-                return Some(Stage::from(val.as_str()));
-            }
+        if let Ok(val) = std::env::var(key)
+            && !val.is_empty()
+        {
+            tracing::debug!(key, value = %val, "detected stage from env var");
+            return Some(Stage::from(val.as_str()));
         }
     }
     None
@@ -74,10 +74,10 @@ fn is_orbstack(rootfs: &Path) -> bool {
 /// Check common CI environment variables.
 fn is_ci_environment() -> bool {
     // Generic CI=true/1 (used by many platforms including GitHub Actions)
-    if let Ok(val) = std::env::var("CI") {
-        if val == "true" || val == "1" {
-            return true;
-        }
+    if let Ok(val) = std::env::var("CI")
+        && (val == "true" || val == "1")
+    {
+        return true;
     }
     // Platform-specific
     std::env::var("GITHUB_ACTIONS").is_ok()
@@ -103,7 +103,8 @@ mod tests {
     impl EnvGuard {
         fn set(key: &str, value: &str) -> Self {
             let old = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe { std::env::set_var(key, value) };
             Self {
                 key: key.to_string(),
                 old,
@@ -113,8 +114,10 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.old {
-                Some(v) => std::env::set_var(&self.key, v),
-                None => std::env::remove_var(&self.key),
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                Some(v) => unsafe { std::env::set_var(&self.key, v) },
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                None => unsafe { std::env::remove_var(&self.key) },
             }
         }
     }
@@ -125,7 +128,8 @@ mod tests {
 
     fn clear_all_stage_vars() {
         for k in &["APP_ENV", "RUST_ENV", "NODE_ENV", "RAILS_ENV", "FLASK_ENV"] {
-            std::env::remove_var(k);
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe { std::env::remove_var(k) };
         }
     }
 
@@ -166,7 +170,8 @@ mod tests {
             "CODEBUILD_BUILD_ID",
             "COMPOSE_PROJECT_NAME",
         ] {
-            std::env::remove_var(k);
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe { std::env::remove_var(k) };
         }
     }
 

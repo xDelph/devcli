@@ -360,10 +360,8 @@ impl FileTree {
                     files,
                     directories,
                 )?;
-            } else if is_file {
-                if let Ok(rel_path) = path.strip_prefix(root) {
-                    files.push(rel_path.to_path_buf());
-                }
+            } else if is_file && let Ok(rel_path) = path.strip_prefix(root) {
+                files.push(rel_path.to_path_buf());
             }
         }
 

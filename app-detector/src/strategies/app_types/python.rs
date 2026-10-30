@@ -62,10 +62,10 @@ impl DetectionStrategy for PythonStrategy {
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
         if ctx.file_exists("pyproject.toml") {
             let content = ctx.read_file("pyproject.toml")?;
-            if let Some(members) = uv_workspace_members(&content) {
-                if !members.is_empty() {
-                    return detect_workspace(ctx, &content, members, "uv");
-                }
+            if let Some(members) = uv_workspace_members(&content)
+                && !members.is_empty()
+            {
+                return detect_workspace(ctx, &content, members, "uv");
             }
 
             let discovered = discover_python_packages(&ctx.root_path);
@@ -136,18 +136,18 @@ fn detect_single_package(ctx: &DetectionContext) -> Result<DetectionResult> {
     );
 
     let mut suggested = Vec::new();
-    if ctx.file_exists("requirements.txt") {
-        if let Ok(req) = ctx.read_file("requirements.txt") {
-            let lower = req.to_lowercase();
-            if lower.contains("django") {
-                suggested.push("django".to_string());
-            }
-            if lower.contains("flask") {
-                suggested.push("flask".to_string());
-            }
-            if lower.contains("fastapi") {
-                suggested.push("fastapi".to_string());
-            }
+    if ctx.file_exists("requirements.txt")
+        && let Ok(req) = ctx.read_file("requirements.txt")
+    {
+        let lower = req.to_lowercase();
+        if lower.contains("django") {
+            suggested.push("django".to_string());
+        }
+        if lower.contains("flask") {
+            suggested.push("flask".to_string());
+        }
+        if lower.contains("fastapi") {
+            suggested.push("fastapi".to_string());
         }
     }
 
@@ -195,11 +195,12 @@ fn package_metadata(ctx: &DetectionContext, pyproject: &str) -> HashMap<String, 
 
     if !pyproject.is_empty() {
         for line in pyproject.lines() {
-            if line.starts_with("name") && line.contains('=') {
-                if let Some(name) = line.split('=').nth(1) {
-                    let name = name.trim().trim_matches('"').trim_matches('\'');
-                    metadata.insert("package_name".to_string(), serde_json::json!(name));
-                }
+            if line.starts_with("name")
+                && line.contains('=')
+                && let Some(name) = line.split('=').nth(1)
+            {
+                let name = name.trim().trim_matches('"').trim_matches('\'');
+                metadata.insert("package_name".to_string(), serde_json::json!(name));
             }
         }
     }

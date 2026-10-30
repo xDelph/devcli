@@ -45,25 +45,25 @@ impl MainView {
     pub(crate) fn load_command_into_form(&mut self, project: &str, app_name: &str) -> Result<()> {
         let config = load_config()?;
 
-        if let Some(proj) = config.projects.get(project) {
-            if let Some(app) = proj.apps.get(app_name) {
-                let mut global_idx = 0;
+        if let Some(proj) = config.projects.get(project)
+            && let Some(app) = proj.apps.get(app_name)
+        {
+            let mut global_idx = 0;
 
-                // Same order as the config panel renders them.
-                for env in crate::config::models::Environment::all() {
-                    let Some(commands) = app.commands.get(env.as_str()) else {
-                        continue;
-                    };
-                    let mut sorted: Vec<_> = commands.iter().collect();
-                    sorted.sort_by_key(|(name, _)| *name);
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        let (name, cmd) = sorted[idx];
-                        self.load_command_into_form_helper(env.as_str(), name, cmd);
-                        return Ok(());
-                    }
-                    global_idx += sorted.len();
+            // Same order as the config panel renders them.
+            for env in crate::config::models::Environment::all() {
+                let Some(commands) = app.commands.get(env.as_str()) else {
+                    continue;
+                };
+                let mut sorted: Vec<_> = commands.iter().collect();
+                sorted.sort_by_key(|(name, _)| *name);
+                if self.selected_config_command_idx < global_idx + sorted.len() {
+                    let idx = self.selected_config_command_idx - global_idx;
+                    let (name, cmd) = sorted[idx];
+                    self.load_command_into_form_helper(env.as_str(), name, cmd);
+                    return Ok(());
                 }
+                global_idx += sorted.len();
             }
         }
 
@@ -134,24 +134,24 @@ impl MainView {
 
         let mut config = load_config()?;
 
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                let command_name = self.config_form.edit_command_name.content().to_string();
-                let command_value = self.config_form.edit_command_value.content().to_string();
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+        {
+            let command_name = self.config_form.edit_command_name.content().to_string();
+            let command_value = self.config_form.edit_command_value.content().to_string();
 
-                if let Some(env) = crate::config::models::Environment::from_string(
-                    self.config_form.edit_command_env.as_str(),
-                ) {
-                    let commands = app.commands.entry(env);
-                    let is_first = commands.is_empty();
-                    commands.insert(command_name.clone(), command_value);
-                    if is_first {
-                        *app.defaults.slot_mut(env) = Some(command_name);
-                    }
+            if let Some(env) = crate::config::models::Environment::from_string(
+                self.config_form.edit_command_env.as_str(),
+            ) {
+                let commands = app.commands.entry(env);
+                let is_first = commands.is_empty();
+                commands.insert(command_name.clone(), command_value);
+                if is_first {
+                    *app.defaults.slot_mut(env) = Some(command_name);
                 }
-
-                save_config(&config)?;
             }
+
+            save_config(&config)?;
         }
 
         self.config_mode = ConfigMode::View;
@@ -164,21 +164,21 @@ impl MainView {
 
         let mut config = load_config()?;
 
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                if let Some(commands) = crate::config::models::Environment::from_string(
-                    self.config_form.edit_command_env.as_str(),
-                )
-                .and_then(|env| app.commands.slot_mut(env).as_mut())
-                {
-                    commands.insert(
-                        self.config_form.edit_command_name.content().to_string(),
-                        self.config_form.edit_command_value.content().to_string(),
-                    );
-                }
-
-                save_config(&config)?;
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+        {
+            if let Some(commands) = crate::config::models::Environment::from_string(
+                self.config_form.edit_command_env.as_str(),
+            )
+            .and_then(|env| app.commands.slot_mut(env).as_mut())
+            {
+                commands.insert(
+                    self.config_form.edit_command_name.content().to_string(),
+                    self.config_form.edit_command_value.content().to_string(),
+                );
             }
+
+            save_config(&config)?;
         }
 
         self.config_mode = ConfigMode::View;
@@ -267,46 +267,46 @@ impl MainView {
     pub(crate) fn set_command_as_default(&self, project: &str, app_name: &str) -> Result<()> {
         let mut config = load_config()?;
 
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                let mut global_idx = 0;
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+        {
+            let mut global_idx = 0;
 
-                // Check local commands
-                if let Some(local) = &app.commands.local {
-                    let mut sorted: Vec<_> = local.keys().cloned().collect();
-                    sorted.sort();
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        app.defaults.local = Some(sorted[idx].clone());
-                        save_config(&config)?;
-                        return Ok(());
-                    }
-                    global_idx += sorted.len();
+            // Check local commands
+            if let Some(local) = &app.commands.local {
+                let mut sorted: Vec<_> = local.keys().cloned().collect();
+                sorted.sort();
+                if self.selected_config_command_idx < global_idx + sorted.len() {
+                    let idx = self.selected_config_command_idx - global_idx;
+                    app.defaults.local = Some(sorted[idx].clone());
+                    save_config(&config)?;
+                    return Ok(());
                 }
+                global_idx += sorted.len();
+            }
 
-                // Check docker commands
-                if let Some(docker) = &app.commands.docker {
-                    let mut sorted: Vec<_> = docker.keys().cloned().collect();
-                    sorted.sort();
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        app.defaults.docker = Some(sorted[idx].clone());
-                        save_config(&config)?;
-                        return Ok(());
-                    }
-                    global_idx += sorted.len();
+            // Check docker commands
+            if let Some(docker) = &app.commands.docker {
+                let mut sorted: Vec<_> = docker.keys().cloned().collect();
+                sorted.sort();
+                if self.selected_config_command_idx < global_idx + sorted.len() {
+                    let idx = self.selected_config_command_idx - global_idx;
+                    app.defaults.docker = Some(sorted[idx].clone());
+                    save_config(&config)?;
+                    return Ok(());
                 }
+                global_idx += sorted.len();
+            }
 
-                // Check k8s commands
-                if let Some(k8s) = &app.commands.k8s {
-                    let mut sorted: Vec<_> = k8s.keys().cloned().collect();
-                    sorted.sort();
-                    if self.selected_config_command_idx < global_idx + sorted.len() {
-                        let idx = self.selected_config_command_idx - global_idx;
-                        app.defaults.k8s = Some(sorted[idx].clone());
-                        save_config(&config)?;
-                        return Ok(());
-                    }
+            // Check k8s commands
+            if let Some(k8s) = &app.commands.k8s {
+                let mut sorted: Vec<_> = k8s.keys().cloned().collect();
+                sorted.sort();
+                if self.selected_config_command_idx < global_idx + sorted.len() {
+                    let idx = self.selected_config_command_idx - global_idx;
+                    app.defaults.k8s = Some(sorted[idx].clone());
+                    save_config(&config)?;
+                    return Ok(());
                 }
             }
         }
@@ -324,13 +324,12 @@ impl MainView {
         let mut config = load_config()?;
 
         let mut new_len = 0;
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                if dep_idx < app.dependencies.len() {
-                    app.dependencies.remove(dep_idx);
-                    new_len = app.dependencies.len();
-                }
-            }
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+            && dep_idx < app.dependencies.len()
+        {
+            app.dependencies.remove(dep_idx);
+            new_len = app.dependencies.len();
         }
 
         save_config(&config)?;
@@ -356,21 +355,21 @@ impl MainView {
 
         let mut config = load_config()?;
 
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                let dep = crate::config::models::Dependency {
-                    project: dep_project.to_string(),
-                    app: dep_app.to_string(),
-                };
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+        {
+            let dep = crate::config::models::Dependency {
+                project: dep_project.to_string(),
+                app: dep_app.to_string(),
+            };
 
-                if !app
-                    .dependencies
-                    .iter()
-                    .any(|d| d.project == dep.project && d.app == dep.app)
-                {
-                    app.dependencies.push(dep);
-                    save_config(&config)?;
-                }
+            if !app
+                .dependencies
+                .iter()
+                .any(|d| d.project == dep.project && d.app == dep.app)
+            {
+                app.dependencies.push(dep);
+                save_config(&config)?;
             }
         }
 
@@ -411,20 +410,20 @@ impl MainView {
     ) -> Result<()> {
         let mut config = load_config()?;
 
-        if let Some(proj) = config.projects.get_mut(project) {
-            if let Some(app) = proj.apps.get_mut(app_name) {
-                if let Some(env) = crate::config::models::Environment::from_string(env) {
-                    let slot = app.commands.slot_mut(env);
-                    if let Some(commands) = slot.as_mut() {
-                        commands.remove(command_name);
-                        if commands.is_empty() {
-                            *slot = None;
-                        }
+        if let Some(proj) = config.projects.get_mut(project)
+            && let Some(app) = proj.apps.get_mut(app_name)
+        {
+            if let Some(env) = crate::config::models::Environment::from_string(env) {
+                let slot = app.commands.slot_mut(env);
+                if let Some(commands) = slot.as_mut() {
+                    commands.remove(command_name);
+                    if commands.is_empty() {
+                        *slot = None;
                     }
                 }
-
-                save_config(&config)?;
             }
+
+            save_config(&config)?;
         }
 
         Ok(())
@@ -455,30 +454,30 @@ impl MainView {
     ) -> Result<()> {
         use super::{ConfigField, ConfigMode};
 
-        if let Some(app) = state.selected_app() {
-            if let Some(env_files) = &app.env_files {
-                // Build flat list of entries
-                let mut entries: Vec<(String, String, String)> = Vec::new();
-                for (stage, contexts) in env_files {
-                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+        if let Some(app) = state.selected_app()
+            && let Some(env_files) = &app.env_files
+        {
+            // Build flat list of entries
+            let mut entries: Vec<(String, String, String)> = Vec::new();
+            for (stage, contexts) in env_files {
+                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
 
-                    for (context, file_path) in sorted_contexts {
-                        entries.push((stage.clone(), context.clone(), file_path.clone()));
-                    }
+                for (context, file_path) in sorted_contexts {
+                    entries.push((stage.clone(), context.clone(), file_path.clone()));
                 }
-                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
-                if let Some((stage, context, file_path)) =
-                    entries.get(self.popup_scroll_manager.selected_env_file_idx)
-                {
-                    use crate::tui::widgets::TextEditor;
-                    self.config_form.env_file_stage = TextEditor::with_content(stage.clone());
-                    self.config_form.env_file_context = TextEditor::with_content(context.clone());
-                    self.config_form.env_file_path = TextEditor::with_content(file_path.clone());
-                    self.config_focused_field = ConfigField::EnvFileStage;
-                    self.config_mode = ConfigMode::EditEnvFile;
-                }
+            if let Some((stage, context, file_path)) =
+                entries.get(self.popup_scroll_manager.selected_env_file_idx)
+            {
+                use crate::tui::widgets::TextEditor;
+                self.config_form.env_file_stage = TextEditor::with_content(stage.clone());
+                self.config_form.env_file_context = TextEditor::with_content(context.clone());
+                self.config_form.env_file_path = TextEditor::with_content(file_path.clone());
+                self.config_focused_field = ConfigField::EnvFileStage;
+                self.config_mode = ConfigMode::EditEnvFile;
             }
         }
         Ok(())
@@ -491,30 +490,30 @@ impl MainView {
     ) -> Result<()> {
         use super::{ConfigMode, DeleteType};
 
-        if let Some(app) = state.selected_app() {
-            if let Some(env_files) = &app.env_files {
-                // Build flat list of entries
-                let mut entries: Vec<(String, String, String)> = Vec::new();
-                for (stage, contexts) in env_files {
-                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+        if let Some(app) = state.selected_app()
+            && let Some(env_files) = &app.env_files
+        {
+            // Build flat list of entries
+            let mut entries: Vec<(String, String, String)> = Vec::new();
+            for (stage, contexts) in env_files {
+                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
 
-                    for (context, file_path) in sorted_contexts {
-                        entries.push((stage.clone(), context.clone(), file_path.clone()));
-                    }
+                for (context, file_path) in sorted_contexts {
+                    entries.push((stage.clone(), context.clone(), file_path.clone()));
                 }
-                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
-                if let Some((stage, context, file_path)) =
-                    entries.get(self.popup_scroll_manager.selected_env_file_idx)
-                {
-                    self.delete_confirm_message = format!(
-                        "Delete env file?\n\nStage: {}\nContext: {}\nFile: {}",
-                        stage, context, file_path
-                    );
-                    self.delete_confirm_type = DeleteType::EnvFile;
-                    self.config_mode = ConfigMode::ConfirmDelete;
-                }
+            if let Some((stage, context, file_path)) =
+                entries.get(self.popup_scroll_manager.selected_env_file_idx)
+            {
+                self.delete_confirm_message = format!(
+                    "Delete env file?\n\nStage: {}\nContext: {}\nFile: {}",
+                    stage, context, file_path
+                );
+                self.delete_confirm_type = DeleteType::EnvFile;
+                self.config_mode = ConfigMode::ConfirmDelete;
             }
         }
         Ok(())

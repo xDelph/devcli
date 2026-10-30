@@ -502,10 +502,10 @@ fn validate_names(result: &mut ValidationResult, config: &Config) {
                 .entry(app_name.as_str())
                 .or_default()
                 .push(field.clone());
-            if let Some(alias) = app.alternative_name.as_deref() {
-                if alias != app_name {
-                    answers_to.entry(alias).or_default().push(field);
-                }
+            if let Some(alias) = app.alternative_name.as_deref()
+                && alias != app_name
+            {
+                answers_to.entry(alias).or_default().push(field);
             }
         }
     }

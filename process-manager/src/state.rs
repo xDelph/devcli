@@ -150,12 +150,11 @@ impl StateStore {
         for entry in fs::read_dir(&self.base_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(p) = serde_json::from_str(&content) {
-                        processes.push(p);
-                    }
-                }
+            if path.extension().is_some_and(|e| e == "json")
+                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(p) = serde_json::from_str(&content)
+            {
+                processes.push(p);
             }
         }
         Ok(processes)
@@ -442,12 +441,12 @@ impl StateStore {
     /// 2. Each directory in `$PATH`
     pub(crate) fn find_daemon_binary() -> Option<PathBuf> {
         // 1. Alongside current executable
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                let candidate = dir.join("pm-daemon");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            let candidate = dir.join("pm-daemon");
+            if candidate.exists() {
+                return Some(candidate);
             }
         }
 

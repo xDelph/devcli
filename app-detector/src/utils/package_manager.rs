@@ -37,16 +37,13 @@ pub fn detect_node_package_manager(ctx: &DetectionContext) -> String {
 const MAX_PARENT_LEVELS: usize = 6;
 
 fn package_manager_in(dir: &Path) -> Option<String> {
-    if let Ok(content) = std::fs::read_to_string(dir.join("package.json")) {
-        if let Ok(json) = serde_json::from_str::<Value>(&content) {
-            if let Some(pm) = json.get("packageManager").and_then(|v| v.as_str()) {
-                if let Some(name) = pm.split('@').next() {
-                    if matches!(name, "npm" | "pnpm" | "yarn" | "bun") {
-                        return Some(name.to_string());
-                    }
-                }
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(dir.join("package.json"))
+        && let Ok(json) = serde_json::from_str::<Value>(&content)
+        && let Some(pm) = json.get("packageManager").and_then(|v| v.as_str())
+        && let Some(name) = pm.split('@').next()
+        && matches!(name, "npm" | "pnpm" | "yarn" | "bun")
+    {
+        return Some(name.to_string());
     }
 
     let lockfiles = [

@@ -330,18 +330,24 @@ mod edit_tests {
         dir.write_config(&config_with_api());
         let previous_visual = std::env::var_os("VISUAL");
         let previous_editor = std::env::var_os("EDITOR");
-        std::env::remove_var("VISUAL");
-        std::env::set_var("EDITOR", "sh -c 'echo edited > \"$1.marker\"' sh");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::remove_var("VISUAL") };
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("EDITOR", "sh -c 'echo edited > \"$1.marker\"' sh") };
 
         let result = crate::commands::config::edit::config_edit().await;
 
         match previous_visual {
-            Some(v) => std::env::set_var("VISUAL", v),
-            None => std::env::remove_var("VISUAL"),
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(v) => unsafe { std::env::set_var("VISUAL", v) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("VISUAL") },
         }
         match previous_editor {
-            Some(v) => std::env::set_var("EDITOR", v),
-            None => std::env::remove_var("EDITOR"),
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(v) => unsafe { std::env::set_var("EDITOR", v) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("EDITOR") },
         }
         result.unwrap();
         assert!(dir.path().join("config.json.marker").exists());

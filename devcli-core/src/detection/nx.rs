@@ -30,10 +30,10 @@ pub fn detect_nx_apps(workspace_root: &Path) -> Result<Vec<DetectedApp>> {
             }
             if let Ok(entries) = fs::read_dir(&dir_path) {
                 for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        if let Ok(app) = detect_single_nx_app(&entry.path(), workspace_root) {
-                            detected_apps.push(app);
-                        }
+                    if entry.path().is_dir()
+                        && let Ok(app) = detect_single_nx_app(&entry.path(), workspace_root)
+                    {
+                        detected_apps.push(app);
                     }
                 }
             }
@@ -163,10 +163,10 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
     let mut local_commands = HashMap::new();
     let nx_cmd = "npx nx";
 
-    if let Some(nx_env) = report.get("nx-env") {
-        if let app_detector::DetectionData::NxEnv(info) = &nx_env.data {
-            local_commands.extend(info.commands.clone());
-        }
+    if let Some(nx_env) = report.get("nx-env")
+        && let app_detector::DetectionData::NxEnv(info) = &nx_env.data
+    {
+        local_commands.extend(info.commands.clone());
     }
 
     local_commands.insert(

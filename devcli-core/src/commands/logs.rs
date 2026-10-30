@@ -233,16 +233,15 @@ async fn follow(
         }
 
         idle_polls += 1;
-        if idle_polls.is_multiple_of(POLLS_BETWEEN_FILE_CHECKS) {
-            if let Some(latest) = find_latest_log(project, app, environment)? {
-                if latest != current {
-                    reader = open(&latest)?;
-                    current = latest;
-                    position = 0;
-                    pending.clear();
-                    continue;
-                }
-            }
+        if idle_polls.is_multiple_of(POLLS_BETWEEN_FILE_CHECKS)
+            && let Some(latest) = find_latest_log(project, app, environment)?
+            && latest != current
+        {
+            reader = open(&latest)?;
+            current = latest;
+            position = 0;
+            pending.clear();
+            continue;
         }
 
         tokio::time::sleep(POLL).await;

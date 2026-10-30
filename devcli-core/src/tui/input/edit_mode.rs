@@ -326,12 +326,12 @@ impl EditModeHandler for MainView {
         let envs = Environment::all();
         let current = Environment::from_string(&self.config_form.edit_command_env);
 
-        if let Some(current_env) = current {
-            if let Some(pos) = envs.iter().position(|e| e == &current_env) {
-                let next_pos = (pos + 1) % envs.len();
-                self.config_form.edit_command_env = envs[next_pos].as_str().to_string();
-                return;
-            }
+        if let Some(current_env) = current
+            && let Some(pos) = envs.iter().position(|e| e == &current_env)
+        {
+            let next_pos = (pos + 1) % envs.len();
+            self.config_form.edit_command_env = envs[next_pos].as_str().to_string();
+            return;
         }
 
         // Default to first environment if not found
@@ -414,44 +414,43 @@ impl EditModeHandler for MainView {
                         ConfigMode::EditDependencies
                     }
                     DeleteType::EnvFile => {
-                        if let Some(app) = state.selected_app() {
-                            if let Some(env_files) = &app.env_files {
-                                // Build flat list of entries
-                                let mut entries: Vec<(String, String, String)> = Vec::new();
-                                for (stage, contexts) in env_files {
-                                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+                        if let Some(app) = state.selected_app()
+                            && let Some(env_files) = &app.env_files
+                        {
+                            // Build flat list of entries
+                            let mut entries: Vec<(String, String, String)> = Vec::new();
+                            for (stage, contexts) in env_files {
+                                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
 
-                                    for (context, file_path) in sorted_contexts {
-                                        entries.push((
-                                            stage.clone(),
-                                            context.clone(),
-                                            file_path.clone(),
-                                        ));
-                                    }
+                                for (context, file_path) in sorted_contexts {
+                                    entries.push((
+                                        stage.clone(),
+                                        context.clone(),
+                                        file_path.clone(),
+                                    ));
                                 }
-                                entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                            }
+                            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
-                                if let Some((stage, context, _)) =
-                                    entries.get(self.popup_scroll_manager.selected_env_file_idx)
-                                {
-                                    if let Err(e) = remove_env_file(&app.name, stage, Some(context))
+                            if let Some((stage, context, _)) =
+                                entries.get(self.popup_scroll_manager.selected_env_file_idx)
+                            {
+                                if let Err(e) = remove_env_file(&app.name, stage, Some(context)) {
+                                    eprintln!("Error removing env file: {}", e);
+                                } else {
+                                    // Adjust selection if needed
+                                    let total_entries: usize =
+                                        env_files.values().map(|contexts| contexts.len()).sum();
+                                    if self.popup_scroll_manager.selected_env_file_idx
+                                        >= total_entries.saturating_sub(1)
                                     {
-                                        eprintln!("Error removing env file: {}", e);
-                                    } else {
-                                        // Adjust selection if needed
-                                        let total_entries: usize =
-                                            env_files.values().map(|contexts| contexts.len()).sum();
-                                        if self.popup_scroll_manager.selected_env_file_idx
-                                            >= total_entries.saturating_sub(1)
-                                        {
-                                            self.popup_scroll_manager.selected_env_file_idx =
-                                                total_entries.saturating_sub(2);
-                                        }
-                                        // Reload state after deletion
-                                        if let Err(e) = self.reload_state_from_config(state) {
-                                            eprintln!("Error reloading state: {}", e);
-                                        }
+                                        self.popup_scroll_manager.selected_env_file_idx =
+                                            total_entries.saturating_sub(2);
+                                    }
+                                    // Reload state after deletion
+                                    if let Err(e) = self.reload_state_from_config(state) {
+                                        eprintln!("Error reloading state: {}", e);
                                     }
                                 }
                             }

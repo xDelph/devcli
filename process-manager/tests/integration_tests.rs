@@ -47,10 +47,10 @@ fn managed_from_running(
 
 async fn wait_for_log_content(path: &Path, needle: &str) {
     for _ in 0..20 {
-        if let Ok(content) = tokio::fs::read_to_string(path).await {
-            if content.contains(needle) {
-                return;
-            }
+        if let Ok(content) = tokio::fs::read_to_string(path).await
+            && content.contains(needle)
+        {
+            return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -319,10 +319,13 @@ async fn test_ensure_daemon_running_singleton() {
     };
 
     let original_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var(
-        "PATH",
-        format!("{}:{}", daemon_dir.display(), original_path),
-    );
+    // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", daemon_dir.display(), original_path),
+        )
+    };
 
     let task = sleep_task("daemon-app", 120, None);
     let running = engine::spawn(&task).await.expect("spawn");

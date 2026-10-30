@@ -172,10 +172,10 @@ mod main_view_core {
                         // Filter out the current app if it's in this project
                         if let (Some(curr_proj), Some(curr_app)) =
                             (current_project_name, current_app_name)
+                            && proj_name == curr_proj
+                            && *app_name == curr_app
                         {
-                            if proj_name == curr_proj && *app_name == curr_app {
-                                return false;
-                            }
+                            return false;
                         }
                         true
                     })

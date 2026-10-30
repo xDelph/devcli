@@ -54,10 +54,10 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
         // Iterate through all projects
         for (project_name, project) in &config.projects {
             // Apply project filter if specified
-            if let Some(ref filter) = project_filter {
-                if project_name != filter {
-                    continue; // Skip this project
-                }
+            if let Some(ref filter) = project_filter
+                && project_name != filter
+            {
+                continue; // Skip this project
             }
 
             // Display project header (with alternative name if present)
@@ -162,10 +162,10 @@ fn config_list_json(
 
     let mut projects = Vec::new();
     for (project_name, project) in &config.projects {
-        if let Some(ref filter) = project_filter {
-            if project_name != filter {
-                continue;
-            }
+        if let Some(ref filter) = project_filter
+            && project_name != filter
+        {
+            continue;
         }
 
         let apps: Vec<_> = project

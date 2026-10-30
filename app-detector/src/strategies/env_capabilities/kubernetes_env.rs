@@ -99,10 +99,10 @@ impl DetectionStrategy for KubernetesEnvStrategy {
                         let path = entry.path();
                         if path.is_file() {
                             let file_name = path.file_name().unwrap().to_string_lossy();
-                            if file_name.ends_with(".yaml") || file_name.ends_with(".yml") {
-                                if let Ok(rel_path) = path.strip_prefix(&ctx.root_path) {
-                                    manifests.push(rel_path.to_path_buf());
-                                }
+                            if (file_name.ends_with(".yaml") || file_name.ends_with(".yml"))
+                                && let Ok(rel_path) = path.strip_prefix(&ctx.root_path)
+                            {
+                                manifests.push(rel_path.to_path_buf());
                             }
                         }
                     }
@@ -127,11 +127,11 @@ impl DetectionStrategy for KubernetesEnvStrategy {
             commands.insert("apply".to_string(), "kubectl apply -f .".to_string());
         }
 
-        if let Some(base) = k8s_base_path(&manifests, &commands) {
-            if commands.contains_key("apply") {
-                commands.insert("apply".to_string(), format!("kubectl apply -f {base}"));
-                commands.insert("delete".to_string(), format!("kubectl delete -f {base}"));
-            }
+        if let Some(base) = k8s_base_path(&manifests, &commands)
+            && commands.contains_key("apply")
+        {
+            commands.insert("apply".to_string(), format!("kubectl apply -f {base}"));
+            commands.insert("delete".to_string(), format!("kubectl delete -f {base}"));
         }
 
         if !commands.is_empty() {

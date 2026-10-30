@@ -82,12 +82,11 @@ async fn wait_for_interrupt_or_exit(started_apps: &[String]) -> Result<()> {
                     for app_name in started_apps {
                         if let Some(process) = processes.iter().find(|p| {
                             p.metadata.get("app_config_name").map(String::as_str) == Some(app_name.as_str())
-                        }) {
-                            if store.is_running(process) {
+                        })
+                            && store.is_running(process) {
                                 any_running = true;
                                 break;
                             }
-                        }
                     }
                 }
 

@@ -11,7 +11,8 @@ fn main() -> env_flow::Result<()> {
     vars.require(&["APP_NAME"])?;
 
     // Push all vars into std::env so child processes inherit them
-    vars.apply();
+    // SAFETY: single-threaded example, before anything else reads the environment.
+    unsafe { vars.apply() };
 
     println!("Applied {} env vars to process environment.", vars.len());
 

@@ -74,21 +74,20 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
             &app.resolved_app.project,
             app_name,
             Some(&environment),
-        )? {
-            if store.is_running(&existing) {
-                tracing::info!(
-                    app = %app_name,
-                    pid = existing.pid,
-                    "App already running (started as dependency), skipping"
+        )? && store.is_running(&existing)
+        {
+            tracing::info!(
+                app = %app_name,
+                pid = existing.pid,
+                "App already running (started as dependency), skipping"
+            );
+            if crate::output::human(silent) {
+                println!(
+                    "⚠ Process '{}' is already running with PID {}, skipping",
+                    app_name, existing.pid
                 );
-                if crate::output::human(silent) {
-                    println!(
-                        "⚠ Process '{}' is already running with PID {}, skipping",
-                        app_name, existing.pid
-                    );
-                }
-                continue;
             }
+            continue;
         }
         apps_to_start_filtered.push(app);
     }

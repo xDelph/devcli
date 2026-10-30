@@ -115,12 +115,11 @@ pub fn load_config_cached() -> Result<Config> {
         Err(_) => return load_config(),
     };
 
-    if let Ok(cache) = CACHE.lock() {
-        if let Some((cached_key, config)) = cache.as_ref() {
-            if *cached_key == key {
-                return Ok(config.clone());
-            }
-        }
+    if let Ok(cache) = CACHE.lock()
+        && let Some((cached_key, config)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return Ok(config.clone());
     }
 
     let config = load_config()?;
@@ -168,10 +167,12 @@ mod tests {
         let _guard = crate::test_utils::env_guard();
         let original = env::var(CONFIG_DIR_ENV).ok();
         let original_legacy = env::var(LEGACY_CONFIG_DIR_ENV).ok();
-        env::remove_var(LEGACY_CONFIG_DIR_ENV);
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(LEGACY_CONFIG_DIR_ENV) };
 
         // ~ expands to $HOME
-        env::set_var(CONFIG_DIR_ENV, "~/devcli-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "~/devcli-cfg") };
         let home = env::var("HOME").expect("HOME must be set");
         assert_eq!(
             env_config_dir(),
@@ -179,24 +180,31 @@ mod tests {
         );
 
         // plain absolute path passes through untouched
-        env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg") };
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
 
         // the legacy name still works, the uppercase one wins over it
-        env::remove_var(CONFIG_DIR_ENV);
-        env::set_var(LEGACY_CONFIG_DIR_ENV, "/tmp/legacy-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(CONFIG_DIR_ENV) };
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(LEGACY_CONFIG_DIR_ENV, "/tmp/legacy-cfg") };
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
-        env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg") };
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
 
         // empty → ignored, not "the current directory"
-        env::set_var(CONFIG_DIR_ENV, "  ");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "  ") };
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
-        env::remove_var(LEGACY_CONFIG_DIR_ENV);
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(LEGACY_CONFIG_DIR_ENV) };
         assert_eq!(env_config_dir(), None);
 
         // unset → None
-        env::remove_var(CONFIG_DIR_ENV);
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(CONFIG_DIR_ENV) };
         assert_eq!(env_config_dir(), None);
 
         for (name, value) in [
@@ -204,8 +212,10 @@ mod tests {
             (LEGACY_CONFIG_DIR_ENV, original_legacy),
         ] {
             match value {
-                Some(prev) => env::set_var(name, prev),
-                None => env::remove_var(name),
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                Some(prev) => unsafe { env::set_var(name, prev) },
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                None => unsafe { env::remove_var(name) },
             }
         }
     }

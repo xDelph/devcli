@@ -199,7 +199,7 @@ fn filter_processes(
 
     if args.all {
         filtered.extend(processes);
-    } else if let Some(ref app_name) = actual_app_name {
+    } else if let Some(app_name) = actual_app_name {
         for process in processes {
             let matches_app = process.metadata.get("app_config_name").map(String::as_str)
                 == Some(app_name.as_str())
@@ -334,14 +334,14 @@ async fn stop_single_process(
     let _ = engine::terminate(process.pid, process.pgid, true).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    if let Some(reloaded) = store.load(&process.id)? {
-        if store.is_running(&reloaded) {
-            anyhow::bail!(
-                "Process '{}' (PID: {}) is still running after SIGKILL",
-                display_name,
-                process.pid
-            );
-        }
+    if let Some(reloaded) = store.load(&process.id)?
+        && store.is_running(&reloaded)
+    {
+        anyhow::bail!(
+            "Process '{}' (PID: {}) is still running after SIGKILL",
+            display_name,
+            process.pid
+        );
     }
 
     store.delete(&process.id)?;

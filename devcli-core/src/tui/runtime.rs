@@ -80,11 +80,11 @@ impl Runtime {
                         // Debounced: smooth trackpads emit a *burst* of scroll
                         // events per notch — without a rate limit that becomes
                         // an uncontrollable fast scroll.
-                        if let Some(key) = mouse_scroll_key(&mouse) {
-                            if self.wheel_scroll_allowed(now) {
-                                app.handle_key_event(key)?;
-                                app.set_needs_redraw(true);
-                            }
+                        if let Some(key) = mouse_scroll_key(&mouse)
+                            && self.wheel_scroll_allowed(now)
+                        {
+                            app.handle_key_event(key)?;
+                            app.set_needs_redraw(true);
                         }
                     }
                     Event::Resize(_, _) => {

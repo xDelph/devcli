@@ -302,10 +302,10 @@ fn parse_dockerfile(content: &str) -> DockerfileInfo {
             }
 
             // Check for stage name (AS keyword)
-            if let Some(as_pos) = parts.iter().position(|&p| p.to_uppercase() == "AS") {
-                if as_pos + 1 < parts.len() {
-                    stages.push(parts[as_pos + 1].to_string());
-                }
+            if let Some(as_pos) = parts.iter().position(|&p| p.to_uppercase() == "AS")
+                && as_pos + 1 < parts.len()
+            {
+                stages.push(parts[as_pos + 1].to_string());
             }
         }
 
@@ -315,10 +315,10 @@ fn parse_dockerfile(content: &str) -> DockerfileInfo {
             for part in parts.iter().skip(1) {
                 // Remove /tcp or /udp suffix
                 let port_str = part.split('/').next().unwrap_or(part);
-                if let Ok(port) = port_str.parse::<u16>() {
-                    if !exposed_ports.contains(&port) {
-                        exposed_ports.push(port);
-                    }
+                if let Ok(port) = port_str.parse::<u16>()
+                    && !exposed_ports.contains(&port)
+                {
+                    exposed_ports.push(port);
                 }
             }
         }

@@ -59,13 +59,12 @@ impl DetectionStrategy for TraefikStrategy {
 
         // Check docker-compose files for traefik services
         for compose_file in &["docker-compose.yml", "docker-compose.yaml"] {
-            if ctx.file_exists(compose_file) {
-                if let Ok(content) = ctx.read_file(compose_file) {
-                    let content_lower = content.to_lowercase();
-                    if content_lower.contains("traefik") || content_lower.contains("image: traefik")
-                    {
-                        return true;
-                    }
+            if ctx.file_exists(compose_file)
+                && let Ok(content) = ctx.read_file(compose_file)
+            {
+                let content_lower = content.to_lowercase();
+                if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                    return true;
                 }
             }
         }
@@ -114,14 +113,13 @@ impl DetectionStrategy for TraefikStrategy {
 
         // Check if defined in docker-compose
         for compose_file in &["docker-compose.yml", "docker-compose.yaml"] {
-            if ctx.file_exists(compose_file) {
-                if let Ok(content) = ctx.read_file(compose_file) {
-                    let content_lower = content.to_lowercase();
-                    if content_lower.contains("traefik") || content_lower.contains("image: traefik")
-                    {
-                        metadata.insert("in_docker_compose".to_string(), serde_json::json!(true));
-                        break;
-                    }
+            if ctx.file_exists(compose_file)
+                && let Ok(content) = ctx.read_file(compose_file)
+            {
+                let content_lower = content.to_lowercase();
+                if content_lower.contains("traefik") || content_lower.contains("image: traefik") {
+                    metadata.insert("in_docker_compose".to_string(), serde_json::json!(true));
+                    break;
                 }
             }
         }

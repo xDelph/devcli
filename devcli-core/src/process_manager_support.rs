@@ -106,10 +106,10 @@ pub fn find_process(
             continue;
         }
 
-        if let Some(env) = environment {
-            if proc.metadata.get("environment").map(String::as_str) != Some(env) {
-                continue;
-            }
+        if let Some(env) = environment
+            && proc.metadata.get("environment").map(String::as_str) != Some(env)
+        {
+            continue;
         }
 
         return Ok(Some(proc));

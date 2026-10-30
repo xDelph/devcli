@@ -281,7 +281,8 @@ mod tests {
 
     #[test]
     fn self_reference_extends_the_process_value() {
-        std::env::set_var("ENVFLOW_TEST_SELF_PATH", "/usr/bin");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("ENVFLOW_TEST_SELF_PATH", "/usr/bin") };
         let map = interpolated(&[(
             "ENVFLOW_TEST_SELF_PATH",
             "${ENVFLOW_TEST_SELF_PATH}:./bin",
@@ -289,7 +290,8 @@ mod tests {
         )])
         .unwrap();
         assert_eq!(map["ENVFLOW_TEST_SELF_PATH"].value, "/usr/bin:./bin");
-        std::env::remove_var("ENVFLOW_TEST_SELF_PATH");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::remove_var("ENVFLOW_TEST_SELF_PATH") };
     }
 
     #[test]

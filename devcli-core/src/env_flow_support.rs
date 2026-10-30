@@ -418,18 +418,17 @@ fn resolve_config_env_path(
         return Ok(None);
     };
 
-    if let Some(stage_name) = stage {
-        if let Some(stage_map) = env_files.get(stage_name) {
-            if let Some(path) = stage_map.get(environment) {
-                return Ok(Some(path.clone()));
-            }
-        }
+    if let Some(stage_name) = stage
+        && let Some(stage_map) = env_files.get(stage_name)
+        && let Some(path) = stage_map.get(environment)
+    {
+        return Ok(Some(path.clone()));
     }
 
-    if let Some(base_map) = env_files.get("base") {
-        if let Some(path) = base_map.get(environment) {
-            return Ok(Some(path.clone()));
-        }
+    if let Some(base_map) = env_files.get("base")
+        && let Some(path) = base_map.get(environment)
+    {
+        return Ok(Some(path.clone()));
     }
 
     Ok(None)
@@ -447,10 +446,10 @@ fn resolve_highest_layer_path(
         return Ok(Some(path));
     }
 
-    if let Some(parent) = dockerfile_parent_dir(working_dir, dockerfile_path)? {
-        if let Some(path) = highest_layer_relative_path(&parent, working_dir, stage, &context)? {
-            return Ok(Some(path));
-        }
+    if let Some(parent) = dockerfile_parent_dir(working_dir, dockerfile_path)?
+        && let Some(path) = highest_layer_relative_path(&parent, working_dir, stage, &context)?
+    {
+        return Ok(Some(path));
     }
 
     Ok(None)

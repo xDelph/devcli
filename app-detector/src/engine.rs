@@ -316,10 +316,10 @@ impl DetectionEngine {
                 }
 
                 // Check if category is enabled
-                if let Some(ref enabled) = config.enabled_categories {
-                    if !enabled.contains(&s.category()) {
-                        return false;
-                    }
+                if let Some(ref enabled) = config.enabled_categories
+                    && !enabled.contains(&s.category())
+                {
+                    return false;
                 }
 
                 // Check if strategy is explicitly disabled
@@ -350,10 +350,10 @@ impl DetectionEngine {
                 }
 
                 // Check if category is enabled
-                if let Some(ref enabled) = config.enabled_categories {
-                    if !enabled.contains(&s.category()) {
-                        return false;
-                    }
+                if let Some(ref enabled) = config.enabled_categories
+                    && !enabled.contains(&s.category())
+                {
+                    return false;
                 }
 
                 // Check if strategy is explicitly disabled

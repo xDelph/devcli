@@ -26,7 +26,8 @@ impl TestConfigGuard {
         let _lock = crate::test_utils::env_guard();
         let original_dir = std::env::var("DEVCLI_CONFIG_DIR").ok();
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("DEVCLI_CONFIG_DIR", temp_dir.path());
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", temp_dir.path()) };
         Self {
             _lock,
             _temp_dir: temp_dir,
@@ -38,8 +39,10 @@ impl TestConfigGuard {
 impl Drop for TestConfigGuard {
     fn drop(&mut self) {
         match &self.original_dir {
-            Some(dir) => std::env::set_var("DEVCLI_CONFIG_DIR", dir),
-            None => std::env::remove_var("DEVCLI_CONFIG_DIR"),
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(dir) => unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", dir) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("DEVCLI_CONFIG_DIR") },
         }
     }
 }

@@ -457,12 +457,12 @@ impl TuiApp {
         }
 
         // Clean up log viewer when leaving that view
-        if let Ok(state) = self.state.lock() {
-            if matches!(state.current_view, ViewType::LogViewer { .. }) {
-                self.log_viewer = None;
-                // Clear terminal to avoid artifacts
-                self.needs_clear = true;
-            }
+        if let Ok(state) = self.state.lock()
+            && matches!(state.current_view, ViewType::LogViewer { .. })
+        {
+            self.log_viewer = None;
+            // Clear terminal to avoid artifacts
+            self.needs_clear = true;
         }
 
         // Pop the navigation stack; fall back to Main
@@ -515,29 +515,29 @@ impl TuiApp {
         };
 
         // If we're in LogViewer view but don't have a viewer instance, create one
-        if let ViewType::LogViewer { log_paths, .. } = current_view {
-            if self.log_viewer.is_none() {
-                match LogViewerView::new(log_paths.clone()) {
-                    Ok(viewer) => {
-                        self.log_viewer = Some(viewer);
-                        // Clear terminal to avoid artifacts from previous view
-                        self.needs_clear = true;
+        if let ViewType::LogViewer { log_paths, .. } = current_view
+            && self.log_viewer.is_none()
+        {
+            match LogViewerView::new(log_paths.clone()) {
+                Ok(viewer) => {
+                    self.log_viewer = Some(viewer);
+                    // Clear terminal to avoid artifacts from previous view
+                    self.needs_clear = true;
 
-                        // If opened with no logs, trigger selector
-                        if log_paths.is_empty() {
-                            self.open_log_selector(SelectionMode::Add);
-                        }
+                    // If opened with no logs, trigger selector
+                    if log_paths.is_empty() {
+                        self.open_log_selector(SelectionMode::Add);
                     }
-                    Err(e) => {
-                        // Failed to create viewer - set error and go back to main view
-                        // This is a non-blocking error - user can dismiss and continue
-                        let mut state = self
-                            .state
-                            .lock()
-                            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                        state.error_message = Some(format!("Failed to open log files: {}", e));
-                        state.current_view = ViewType::Main;
-                    }
+                }
+                Err(e) => {
+                    // Failed to create viewer - set error and go back to main view
+                    // This is a non-blocking error - user can dismiss and continue
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
+                    state.error_message = Some(format!("Failed to open log files: {}", e));
+                    state.current_view = ViewType::Main;
                 }
             }
         }
@@ -736,10 +736,11 @@ impl TuiApp {
         }
 
         // Render error message if present (but not if popup or help is showing)
-        if let Some(error) = &state.error_message {
-            if !self.popup_manager.is_active() && !self.help_overlay.is_visible() {
-                self.render_error_message(frame, error);
-            }
+        if let Some(error) = &state.error_message
+            && !self.popup_manager.is_active()
+            && !self.help_overlay.is_visible()
+        {
+            self.render_error_message(frame, error);
         }
 
         // Render popup overlay if active
