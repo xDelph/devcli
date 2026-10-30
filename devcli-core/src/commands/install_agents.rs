@@ -9,12 +9,16 @@
 //       Claude Code → ~/.claude/CLAUDE.md
 //       Codex       → $CODEX_HOME/AGENTS.md (default ~/.codex; AGENTS.override.md wins)
 //       Gemini CLI  → ~/.gemini/GEMINI.md
+//       Cursor      → ~/.cursor/rules/devcli.mdc (a file of its own)
+//       pi          → $PI_CODING_AGENT_DIR/AGENTS.md (default ~/.pi/agent; AGENTS.override.md wins)
+//       OpenCode    → ~/.config/opencode/AGENTS.md
+//       Devin CLI   → ~/.config/devin/AGENTS.md (Windows: %APPDATA%\devin)
 //     These load into every session of every project, so they get a short
 //     block pointing at the full contract, written once to ~/.devcli/AGENTS.md.
-//   - local (default, or `--local DIR`): DIR/AGENTS.md with the full contract
-//     (read by Codex, Cursor, Copilot, and by Claude Code when the project has
-//     no CLAUDE.md). When DIR has a CLAUDE.md, Claude Code ignores AGENTS.md,
-//     so CLAUDE.md also gets an `@AGENTS.md` import.
+//   - local (default, or `--local DIR`): DIR/AGENTS.md with the full contract,
+//     read by Codex, Cursor, OpenCode, Devin, pi, Copilot, and Claude Code when
+//     the project has no CLAUDE.md. When the project has a CLAUDE.md, Claude
+//     Code ignores AGENTS.md, so CLAUDE.md gets an import of it.
 
 use crate::config::loader::user_config_home;
 use crate::Result;
@@ -41,7 +45,7 @@ const LEGACY_RULES: Markers = Markers {
     end: "# ===== XDELPH/DEVCLI rules stop =====",
 };
 
-/// The `@AGENTS.md` import added to a project's CLAUDE.md.
+/// The import of AGENTS.md added to a project's CLAUDE.md.
 const IMPORT: Markers = Markers {
     start: "<!-- devcli:import:start -->",
     end: "<!-- devcli:import:end -->",
@@ -72,23 +76,60 @@ the user registered with it; prefer it over launching dev servers by hand.
 Before scripting devcli further, read the full contract (every command, JSON
 shape and exit code): {reference}";
 
+/// Front matter of the Cursor rule: plain `.md` files in a rules directory are
+/// ignored, and without `alwaysApply` the rule only loads when it seems relevant.
+const CURSOR_FRONT_MATTER: &str = "\
+---
+description: devcli, the local development process manager, and how to drive it
+alwaysApply: true
+---
+";
+
 /// Agents with a user-level instruction file devcli can write to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
     Claude,
     Codex,
     Gemini,
+    Cursor,
+    Pi,
+    OpenCode,
+    Devin,
+}
+
+/// Where an agent's user-level rules go.
+enum Target {
+    /// A block in a file the user may also write to.
+    Block(PathBuf),
+    /// A file devcli owns as a whole.
+    File(PathBuf),
 }
 
 impl Agent {
-    pub const ALL: [Agent; 3] = [Agent::Claude, Agent::Codex, Agent::Gemini];
+    pub const ALL: [Agent; 7] = [
+        Agent::Claude,
+        Agent::Codex,
+        Agent::Gemini,
+        Agent::Cursor,
+        Agent::Pi,
+        Agent::OpenCode,
+        Agent::Devin,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
             Agent::Gemini => "gemini",
+            Agent::Cursor => "cursor",
+            Agent::Pi => "pi",
+            Agent::OpenCode => "opencode",
+            Agent::Devin => "devin",
         }
+    }
+
+    pub fn names() -> Vec<&'static str> {
+        Agent::ALL.into_iter().map(Agent::name).collect()
     }
 
     pub fn parse(name: &str) -> Result<Self> {
@@ -96,12 +137,16 @@ impl Agent {
             .into_iter()
             .find(|a| a.name() == name)
             .ok_or_else(|| {
-                anyhow::anyhow!("Unknown agent '{name}' (expected claude, codex or gemini)")
+                anyhow::anyhow!(
+                    "Unknown agent '{name}' (expected one of: {})",
+                    Agent::names().join(", ")
+                )
             })
     }
 
-    /// The agent's per-user directory.
+    /// The agent's per-user directory; its existence means "installed".
     fn home(self, homes: &Homes) -> PathBuf {
+        let config = homes.home.join(".config");
         match self {
             Agent::Claude => homes.home.join(".claude"),
             Agent::Codex => homes
@@ -109,49 +154,79 @@ impl Agent {
                 .clone()
                 .unwrap_or_else(|| homes.home.join(".codex")),
             Agent::Gemini => homes.home.join(".gemini"),
+            Agent::Cursor => homes.home.join(".cursor"),
+            Agent::Pi => homes
+                .pi_dir
+                .clone()
+                .unwrap_or_else(|| homes.home.join(".pi").join("agent")),
+            Agent::OpenCode => config.join("opencode"),
+            Agent::Devin => homes
+                .devin_dir
+                .clone()
+                .unwrap_or_else(|| config.join("devin")),
         }
     }
 
-    /// The user-level file the agent loads into every session.
-    fn instructions_file(self, homes: &Homes) -> PathBuf {
+    /// Where the agent's user-level rules go.
+    fn target(self, homes: &Homes) -> Target {
         let dir = self.home(homes);
         match self {
-            Agent::Claude => dir.join("CLAUDE.md"),
-            Agent::Gemini => dir.join("GEMINI.md"),
-            // Codex uses the first non-empty one of the two.
-            Agent::Codex => {
-                let override_file = dir.join("AGENTS.override.md");
-                let in_use = std::fs::read_to_string(&override_file)
-                    .is_ok_and(|content| !content.trim().is_empty());
-                if in_use {
-                    override_file
-                } else {
-                    dir.join("AGENTS.md")
-                }
-            }
+            Agent::Claude => Target::Block(dir.join("CLAUDE.md")),
+            Agent::Gemini => Target::Block(dir.join("GEMINI.md")),
+            Agent::Cursor => Target::File(dir.join("rules").join("devcli.mdc")),
+            Agent::Codex | Agent::Pi => Target::Block(agents_md_in_use(&dir)),
+            Agent::OpenCode | Agent::Devin => Target::Block(dir.join("AGENTS.md")),
         }
+    }
+}
+
+/// For agents where an `AGENTS.override.md` replaces `AGENTS.md` (Codex, pi):
+/// the file that is actually read.
+fn agents_md_in_use(dir: &Path) -> PathBuf {
+    let override_file = dir.join("AGENTS.override.md");
+    let in_use =
+        std::fs::read_to_string(&override_file).is_ok_and(|content| !content.trim().is_empty());
+    if in_use {
+        override_file
+    } else {
+        dir.join("AGENTS.md")
     }
 }
 
 /// Where the user-level files live, resolved once from the environment.
 struct Homes {
     home: PathBuf,
+    /// `CODEX_HOME`.
     codex_home: Option<PathBuf>,
+    /// `PI_CODING_AGENT_DIR`.
+    pi_dir: Option<PathBuf>,
+    /// Devin's config directory when it is not `~/.config/devin` (Windows).
+    devin_dir: Option<PathBuf>,
     /// devcli's own per-user directory (reference file, backups).
     devcli: PathBuf,
+}
+
+fn env_dir(name: &str) -> Option<PathBuf> {
+    std::env::var(name)
+        .ok()
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
 }
 
 impl Homes {
     fn from_env() -> Result<Self> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        let codex_home = std::env::var("CODEX_HOME")
-            .ok()
-            .filter(|dir| !dir.trim().is_empty())
-            .map(PathBuf::from);
+        let devin_dir = if cfg!(windows) {
+            env_dir("APPDATA").map(|dir| dir.join("devin"))
+        } else {
+            None
+        };
         Ok(Self {
             home,
-            codex_home,
+            codex_home: env_dir("CODEX_HOME"),
+            pi_dir: env_dir("PI_CODING_AGENT_DIR"),
+            devin_dir,
             devcli: user_config_home(),
         })
     }
@@ -403,37 +478,49 @@ fn selected_agents(names: &[String], homes: &Homes, installed_only: bool) -> Res
         .filter(|a| a.home(homes).is_dir())
         .collect();
     if found.is_empty() {
+        let looked: Vec<String> = Agent::ALL
+            .into_iter()
+            .map(|a| a.home(homes).display().to_string())
+            .collect();
         anyhow::bail!(
-            "No supported agent found (looked for {}, {} and {}). \
-             Pass --agent claude, codex or gemini to install anyway.",
-            Agent::Claude.home(homes).display(),
-            Agent::Codex.home(homes).display(),
-            Agent::Gemini.home(homes).display()
+            "No supported agent found (looked for {}). Pass --agent NAME ({}) to install anyway.",
+            looked.join(", "),
+            Agent::names().join(", ")
         );
     }
     Ok(found)
 }
 
-/// Write the full contract to `path`, a file devcli owns as a whole.
-fn write_reference(path: &Path) -> Result<Outcome> {
-    let content = format!("{}\n", RULES_BODY.trim_end());
+/// Write `content` to `path`, a file devcli owns as a whole. With
+/// `keep_backup`, a different previous version is saved first.
+fn write_owned(
+    homes: &Homes,
+    agent: Option<Agent>,
+    path: &Path,
+    content: &str,
+    keep_backup: bool,
+) -> Result<Outcome> {
     let previous = read_existing(path)?;
     let action = match previous.as_deref() {
         Some(p) if p == content => Action::Unchanged,
         Some(_) => Action::Updated,
         None => Action::Installed,
     };
+    let mut saved = None;
     if action != Action::Unchanged {
+        if keep_backup && let Some(p) = previous.as_deref() {
+            saved = Some(backup(homes, path, p)?);
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         config_manager::utils::fs::write_atomic(path, content.as_bytes())?;
     }
     Ok(Outcome {
-        agent: None,
+        agent,
         path: path.to_path_buf(),
         action,
-        backup: None,
+        backup: saved,
     })
 }
 
@@ -441,31 +528,61 @@ fn install_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
     let agents = selected_agents(agents, homes, true)?;
 
     let reference = homes.reference_file();
-    let mut outcomes = vec![write_reference(&reference)?];
+    let full = format!("{}\n", RULES_BODY.trim_end());
+    let mut outcomes = vec![write_owned(homes, None, &reference, &full, false)?];
 
     let body = GLOBAL_BODY.replace("{reference}", &reference.display().to_string());
-    let block = fenced(RULES, &body);
     for agent in agents {
-        let file = agent.instructions_file(homes);
-        outcomes.push(install_block(homes, Some(agent), &file, ALL_RULES, &block)?);
+        outcomes.push(match agent.target(homes) {
+            Target::Block(file) => {
+                install_block(homes, Some(agent), &file, ALL_RULES, &fenced(RULES, &body))?
+            }
+            Target::File(file) => {
+                let content = format!("{CURSOR_FRONT_MATTER}\n{}\n", body.trim_end());
+                write_owned(homes, Some(agent), &file, &content, true)?
+            }
+        });
     }
     Ok(outcomes)
+}
+
+/// Whether `agent` still has devcli rules installed at user level.
+fn has_global_rules(agent: Agent, homes: &Homes) -> bool {
+    match agent.target(homes) {
+        Target::File(file) => file.exists(),
+        Target::Block(file) => read_existing(&file)
+            .ok()
+            .flatten()
+            .is_some_and(|c| c.contains(RULES.start) || c.contains(LEGACY_RULES.start)),
+    }
 }
 
 fn uninstall_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
     let mut outcomes = Vec::new();
     for agent in selected_agents(agents, homes, false)? {
-        let file = agent.instructions_file(homes);
-        outcomes.push(remove_block(homes, Some(agent), &file, ALL_RULES)?);
+        outcomes.push(match agent.target(homes) {
+            Target::Block(file) => remove_block(homes, Some(agent), &file, ALL_RULES)?,
+            Target::File(file) => {
+                let action = if file.exists() {
+                    std::fs::remove_file(&file)?;
+                    Action::Removed
+                } else {
+                    Action::Absent
+                };
+                Outcome {
+                    agent: Some(agent),
+                    path: file,
+                    action,
+                    backup: None,
+                }
+            }
+        });
     }
 
-    // Keep the reference while another agent's block still points at it.
-    let still_used = Agent::ALL.into_iter().any(|agent| {
-        read_existing(&agent.instructions_file(homes))
-            .ok()
-            .flatten()
-            .is_some_and(|c| c.contains(RULES.start) || c.contains(LEGACY_RULES.start))
-    });
+    // Keep the reference while another agent's rules still point at it.
+    let still_used = Agent::ALL
+        .into_iter()
+        .any(|agent| has_global_rules(agent, homes));
     let reference = homes.reference_file();
     if !still_used && reference.exists() {
         std::fs::remove_file(&reference)?;
@@ -479,21 +596,43 @@ fn uninstall_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
     Ok(outcomes)
 }
 
-/// The project's CLAUDE.md and the import line that reaches AGENTS.md from it.
-fn claude_files(dir: &Path) -> [(PathBuf, &'static str); 2] {
-    [
-        (dir.join("CLAUDE.md"), "@AGENTS.md"),
-        (dir.join(".claude").join("CLAUDE.md"), "@../AGENTS.md"),
+/// A project file of one agent that gets an import of AGENTS.md.
+struct ImportSite {
+    agent: Agent,
+    file: PathBuf,
+    /// The import line, relative to `file`, in the agent's syntax.
+    import: &'static str,
+}
+
+/// The project files to import AGENTS.md into:
+/// - CLAUDE.md / .claude/CLAUDE.md, only when present: without one, Claude
+///   Code reads AGENTS.md itself.
+fn import_sites(dir: &Path) -> Vec<ImportSite> {
+    vec![
+        ImportSite {
+            agent: Agent::Claude,
+            file: dir.join("CLAUDE.md"),
+            import: "@AGENTS.md",
+        },
+        ImportSite {
+            agent: Agent::Claude,
+            file: dir.join(".claude").join("CLAUDE.md"),
+            import: "@../AGENTS.md",
+        },
     ]
 }
 
-/// Whether `content` already imports AGENTS.md outside devcli's own block.
+/// Whether `content` already imports the file `import` points at.
 fn imports_agents_md(content: &str, import: &str) -> bool {
-    let alternative = import.replacen('@', "@./", 1);
+    let target = |line: &str| {
+        line.strip_prefix('@')
+            .map(|path| path.trim_start_matches("./").to_string())
+    };
+    let wanted = target(import);
     content
         .lines()
         .map(str::trim)
-        .any(|line| line == import || line == alternative)
+        .any(|line| target(line).is_some() && target(line) == wanted)
 }
 
 fn install_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
@@ -506,21 +645,20 @@ fn install_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
         &fenced(RULES, &managed_body(RULES_BODY)),
     )?];
 
-    // Claude Code ignores AGENTS.md as soon as the project has a CLAUDE.md.
-    for (file, import) in claude_files(dir) {
-        let Some(content) = read_existing(&file)? else {
+    for site in import_sites(dir) {
+        let Some(content) = read_existing(&site.file)? else {
             continue;
         };
-        let ours = find_block(&content, &file, &[IMPORT])?.is_some();
-        if !ours && imports_agents_md(&content, import) {
+        let ours = find_block(&content, &site.file, &[IMPORT])?.is_some();
+        if !ours && imports_agents_md(&content, site.import) {
             continue;
         }
         outcomes.push(install_block(
             homes,
-            Some(Agent::Claude),
-            &file,
+            Some(site.agent),
+            &site.file,
             &[IMPORT],
-            &fenced(IMPORT, import),
+            &fenced(IMPORT, site.import),
         )?);
     }
     Ok(outcomes)
@@ -533,8 +671,8 @@ fn uninstall_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
         &dir.join("AGENTS.md"),
         ALL_RULES,
     )?];
-    for (file, _) in claude_files(dir) {
-        let outcome = remove_block(homes, Some(Agent::Claude), &file, &[IMPORT])?;
+    for site in import_sites(dir) {
+        let outcome = remove_block(homes, Some(site.agent), &site.file, &[IMPORT])?;
         if outcome.action == Action::Removed {
             outcomes.push(outcome);
         }
@@ -649,6 +787,8 @@ mod tests {
             devcli: home.join(".devcli"),
             home,
             codex_home: None,
+            pi_dir: None,
+            devin_dir: None,
         };
         Sandbox {
             _dir: dir,
@@ -811,7 +951,7 @@ mod tests {
 
         install_global(&sb.homes, &["gemini".to_string()]).unwrap();
         assert!(sb.homes.home.join(".gemini/GEMINI.md").exists());
-        assert!(install_global(&sb.homes, &["cursor".to_string()]).is_err());
+        assert!(install_global(&sb.homes, &["windsurf".to_string()]).is_err());
     }
 
     #[test]
@@ -877,5 +1017,55 @@ mod tests {
 
         assert!(install_local(&sb.homes, &sb.project).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"# notes \xff\xfe\n");
+    }
+
+    #[test]
+    fn every_agent_gets_its_own_user_level_file() {
+        let sb = sandbox();
+        let home = &sb.homes.home;
+        for dir in [".cursor", ".pi/agent", ".config/opencode", ".config/devin"] {
+            std::fs::create_dir_all(home.join(dir)).unwrap();
+        }
+
+        let outcomes = install_global(&sb.homes, &[]).unwrap();
+        let installed: Vec<_> = outcomes
+            .iter()
+            .filter_map(|o| o.agent.map(|a| (a.name(), o.path.clone())))
+            .collect();
+        assert_eq!(
+            installed,
+            vec![
+                ("cursor", home.join(".cursor/rules/devcli.mdc")),
+                ("pi", home.join(".pi/agent/AGENTS.md")),
+                ("opencode", home.join(".config/opencode/AGENTS.md")),
+                ("devin", home.join(".config/devin/AGENTS.md")),
+            ]
+        );
+
+        // Cursor ignores plain markdown rules and only always loads a rule that
+        // says so.
+        let cursor = read(&home.join(".cursor/rules/devcli.mdc"));
+        assert!(cursor.starts_with("---\ndescription: "));
+        assert!(cursor.contains("alwaysApply: true\n---\n"));
+        assert!(cursor.contains(&sb.homes.reference_file().display().to_string()));
+        assert!(!cursor.contains(RULES.start), "the whole file is devcli's");
+
+        uninstall_global(&sb.homes, &[]).unwrap();
+        for (_, path) in installed {
+            assert!(!path.exists(), "{} left behind", path.display());
+        }
+    }
+
+    #[test]
+    fn pi_override_file_is_used_when_it_has_content() {
+        let mut sb = sandbox();
+        let pi = sb.homes.home.join("pi-agent");
+        std::fs::create_dir_all(&pi).unwrap();
+        std::fs::write(pi.join("AGENTS.override.md"), "# override\n").unwrap();
+        sb.homes.pi_dir = Some(pi.clone());
+
+        install_global(&sb.homes, &["pi".to_string()]).unwrap();
+        assert!(read(&pi.join("AGENTS.override.md")).contains(RULES.start));
+        assert!(!pi.join("AGENTS.md").exists());
     }
 }

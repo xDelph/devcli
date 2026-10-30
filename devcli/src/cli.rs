@@ -186,11 +186,14 @@ pub enum Commands {
     #[command(
         about = "Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, ...) to use devcli",
         long_about = "Teach AI coding agents to use devcli.\n\n\
-            By default, writes devcli's rules into ./AGENTS.md (read by Codex, Cursor, Copilot and \
-            Claude Code) and, when the project has a CLAUDE.md, adds an @AGENTS.md import to it.\n\n\
-            With --global, writes a short block into the user-level file of every agent found \
-            (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md), pointing at the full \
-            rules in ~/.devcli/AGENTS.md. Re-run after upgrading devcli to refresh them."
+            By default, writes devcli's rules into ./AGENTS.md (read by Codex, Cursor, OpenCode, \
+            Devin, pi, Copilot and Claude Code), and imports it from the project's CLAUDE.md when \
+            there is one.\n\n\
+            With --global, writes a short block into the user-level rules of every agent found \
+            (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md, \
+            ~/.cursor/rules/devcli.mdc, ~/.pi/agent/AGENTS.md, ~/.config/opencode/AGENTS.md, \
+            ~/.config/devin/AGENTS.md), pointing at the full rules in ~/.devcli/AGENTS.md. \
+            Re-run after upgrading devcli to refresh them."
     )]
     InstallAgents {
         #[arg(
@@ -211,7 +214,7 @@ pub enum Commands {
             long = "agent",
             value_name = "AGENT",
             requires = "global",
-            value_parser = ["claude", "codex", "gemini"],
+            value_parser = ["claude", "codex", "gemini", "cursor", "pi", "opencode", "devin"],
             help = "With --global: only this agent (repeatable; default: every agent found)"
         )]
         agents: Vec<String>,
@@ -237,7 +240,7 @@ pub enum Commands {
             long = "agent",
             value_name = "AGENT",
             requires = "global",
-            value_parser = ["claude", "codex", "gemini"],
+            value_parser = ["claude", "codex", "gemini", "cursor", "pi", "opencode", "devin"],
             help = "With --global: only this agent (repeatable; default: all of them)"
         )]
         agents: Vec<String>,

@@ -239,17 +239,29 @@ devcli install-agents              # this project (or --local PATH)
 devcli uninstall-agents --global   # remove them again
 ```
 
-Each agent reads its own files, so devcli writes where they actually look:
+Each agent reads its own files, so devcli writes where they actually look.
 
-| Scope | Files written |
-|-------|---------------|
-| `--global` | A short block in `~/.claude/CLAUDE.md` (Claude Code), `~/.codex/AGENTS.md` (Codex, honours `CODEX_HOME`) and `~/.gemini/GEMINI.md` (Gemini CLI), for each agent whose directory exists (`--agent NAME` picks them explicitly). It points at the full rules, written to `~/.devcli/AGENTS.md`. |
-| project | The full rules in `AGENTS.md` (Codex, Cursor, Copilot, and Claude Code when there is no `CLAUDE.md`). If the project has a `CLAUDE.md`, Claude Code ignores `AGENTS.md`, so an `@AGENTS.md` import is added to it. |
+`--global` writes a short block, pointing at the full rules in
+`~/.devcli/AGENTS.md`, for each agent whose directory exists (`--agent NAME`
+picks them explicitly):
 
-The global block is short on purpose: those files load into every session of
-every project. Cursor keeps its user rules in its settings, so it only picks
-devcli up per project. Gemini CLI reads `AGENTS.md` in a project only if you add
-it to `context.fileName` in its settings.
+| Agent | User-level file |
+|-------|-----------------|
+| Claude Code (`claude`) | `~/.claude/CLAUDE.md` |
+| Codex (`codex`) | `~/.codex/AGENTS.md` (honours `CODEX_HOME` and `AGENTS.override.md`) |
+| Gemini CLI (`gemini`) | `~/.gemini/GEMINI.md` |
+| Cursor (`cursor`) | `~/.cursor/rules/devcli.mdc`, an always-applied rule file of its own |
+| pi (`pi`) | `~/.pi/agent/AGENTS.md` (honours `PI_CODING_AGENT_DIR` and `AGENTS.override.md`) |
+| OpenCode (`opencode`) | `~/.config/opencode/AGENTS.md` |
+| Devin CLI (`devin`) | `~/.config/devin/AGENTS.md` (Windows: `%APPDATA%\devin\AGENTS.md`) |
+
+The block is short on purpose: those files load into every session of every
+project.
+
+In a project, the full rules go into `AGENTS.md`, which Codex, Cursor, OpenCode,
+Devin, pi, Copilot and Claude Code read. When the project has a `CLAUDE.md` (or
+`.claude/CLAUDE.md`), Claude Code ignores `AGENTS.md`, so an import of it is
+added there.
 
 The blocks are fenced by HTML-comment markers, so devcli can refresh or remove
 them without touching your own lines; a file devcli created is deleted again on
