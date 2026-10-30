@@ -435,4 +435,28 @@ mod tests {
         let all = resolve_all(&f.config, "api@*", None, Mode::Exact).unwrap();
         assert!(all.iter().all(|a| a.project != "proj@feat"));
     }
+
+    #[test]
+    fn apps_found_in_a_worktree_are_registered_at_the_main_checkout() {
+        use crate::worktrees::{registration_for, Registration};
+        let f = fixture();
+        assert_eq!(
+            registration_for(&f.repo.join("apps/api")),
+            Registration::AsIs
+        );
+        assert_eq!(
+            registration_for(&f.feat.join("apps/api")),
+            Registration::MainCheckout {
+                path: f.repo.join("apps/api"),
+                worktree: "feat".into()
+            }
+        );
+        std::fs::create_dir_all(f.feat.join("apps/new")).unwrap();
+        assert_eq!(
+            registration_for(&f.feat.join("apps/new")),
+            Registration::WorktreeOnly {
+                worktree: "feat".into()
+            }
+        );
+    }
 }

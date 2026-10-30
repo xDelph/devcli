@@ -52,3 +52,55 @@ pub fn instance_name(app: &str, worktree: Option<&Instance>) -> String {
         None => app.to_string(),
     }
 }
+
+/// Where to register an app found at `path`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Registration {
+    /// Not in a linked worktree: register `path` itself.
+    AsIs,
+    /// In a linked worktree: register the same directory of the main
+    /// checkout; the worktree's copy runs as `APP@<worktree>`.
+    MainCheckout {
+        path: std::path::PathBuf,
+        worktree: String,
+    },
+    /// Only exists in this linked worktree (an app added on its branch).
+    WorktreeOnly { worktree: String },
+}
+
+/// Sub-agents run `auto-add` inside their worktree too. Registering that
+/// path would point the config at a directory deleted with the worktree,
+/// and duplicate an app devcli already runs in every worktree.
+pub fn registration_for(path: &std::path::Path) -> Registration {
+    let path = git::canonical(path);
+    let Some(here) = git::checkout_of(&path) else {
+        return Registration::AsIs;
+    };
+    let Ok(worktrees) = git::list(&here.common_dir) else {
+        return Registration::AsIs;
+    };
+    // The main worktree is listed first; a bare repository has none.
+    let Some(main) = worktrees.first().filter(|w| !w.bare && w.root.is_dir()) else {
+        return Registration::AsIs;
+    };
+    if main.root == here.root {
+        return Registration::AsIs;
+    }
+    let worktree = worktrees
+        .iter()
+        .find(|w| w.root == here.root)
+        .and_then(|w| w.admin_name.clone())
+        .unwrap_or_else(|| here.root.display().to_string());
+    let relative = path
+        .strip_prefix(&here.root)
+        .unwrap_or(std::path::Path::new(""));
+    let in_main = main.root.join(relative);
+    if in_main.is_dir() {
+        Registration::MainCheckout {
+            path: in_main,
+            worktree,
+        }
+    } else {
+        Registration::WorktreeOnly { worktree }
+    }
+}
