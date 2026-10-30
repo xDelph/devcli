@@ -79,6 +79,21 @@ pub fn prepare_command(
     // exported (AWS keys, GITHUB_TOKEN, ...) to disk.
     let mut env_vars: HashMap<String, String> = HashMap::new();
 
+    // Where env files are read from: in a fresh git worktree (env files are
+    // usually gitignored), the configured checkout's.
+    let (env_dir, env_note) =
+        crate::worktrees::runtime::env_dir(resolved_app, working_dir, stage, environment)?;
+    if let Some(note) = env_note
+        && show_output
+        && !crate::output::json_enabled()
+    {
+        println!("  {note}");
+    }
+    // The process still runs in `process_dir`; paths handed to it are
+    // relative to that one.
+    let process_dir = working_dir;
+    let working_dir = env_dir.as_path();
+
     // Inject --platform flag for docker/orbstack commands
     let mut final_command = match environment {
         "docker" | "orbstack" | "docker-compose" => {
@@ -93,6 +108,7 @@ pub fn prepare_command(
             apply_container_env_file(
                 &mut final_command,
                 working_dir,
+                process_dir,
                 resolved_app,
                 stage,
                 "docker",
@@ -109,6 +125,7 @@ pub fn prepare_command(
             apply_container_env_file(
                 &mut final_command,
                 working_dir,
+                process_dir,
                 resolved_app,
                 stage,
                 "orbstack",
@@ -124,6 +141,7 @@ pub fn prepare_command(
             apply_container_env_file(
                 &mut final_command,
                 working_dir,
+                process_dir,
                 resolved_app,
                 stage,
                 "docker-compose",
@@ -184,6 +202,7 @@ pub fn prepare_command(
 fn apply_container_env_file(
     final_command: &mut String,
     working_dir: &Path,
+    process_dir: &Path,
     resolved_app: &ResolvedApp,
     stage: Option<&str>,
     environment: &str,
@@ -203,7 +222,7 @@ fn apply_container_env_file(
     )? {
         let env_file_path = prepared
             .path
-            .strip_prefix(working_dir)
+            .strip_prefix(process_dir)
             .ok()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| prepared.path.to_string_lossy().to_string());
@@ -497,5 +516,76 @@ mod tests {
 
         assert_eq!(prepared.env_vars.get("APP"), Some(&"1".to_string()));
         assert_eq!(prepared.env_vars.get("NS"), Some(&"prod".to_string()));
+    }
+
+    /// A fresh worktree has no env files (they are gitignored): its instance
+    /// uses the configured checkout's, and a container gets the file by an
+    /// absolute path, since it runs from the worktree.
+    #[test]
+    fn a_worktree_instance_uses_the_configured_checkouts_env_files() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("repo/api");
+        let worktree = dir.path().join("wt/feat/api");
+        fs::create_dir_all(base.join("config")).unwrap();
+        fs::create_dir_all(&worktree).unwrap();
+        fs::write(base.join("config/.env.dev"), "API_KEY=secret\n").unwrap();
+
+        let mut app = AppBuilder::new("nodejs", worktree.to_str().unwrap())
+            .with_local_command("start", "npm start")
+            .build();
+        app.env_files = Some(HashMap::from([(
+            "base".to_string(),
+            HashMap::from([
+                ("local".to_string(), "config/.env.dev".to_string()),
+                ("docker".to_string(), "config/.env.dev".to_string()),
+            ]),
+        )]));
+        let resolved = ResolvedApp {
+            project: "proj@feat".to_string(),
+            app_name: "api".to_string(),
+            app,
+            worktree: Some(crate::worktrees::Instance {
+                slug: "feat".into(),
+                index: 1,
+                base_project: "proj".into(),
+                root: dir.path().join("wt/feat"),
+                base_root: dir.path().join("repo"),
+                base_path: base.clone(),
+                common_dir: dir.path().join("repo/.git"),
+                branch: Some("feat".into()),
+            }),
+        };
+        let prefs = PreferencesBuilder::new().build();
+
+        let local = prepare_command(
+            "npm start",
+            "local",
+            &resolved,
+            None,
+            &worktree,
+            &prefs,
+            false,
+        )
+        .unwrap();
+        assert_eq!(local.env_vars.get("API_KEY"), Some(&"secret".to_string()));
+
+        let docker = prepare_command(
+            "docker run --rm api",
+            "docker",
+            &resolved,
+            None,
+            &worktree,
+            &prefs,
+            false,
+        )
+        .unwrap();
+        let expected = base.join("config/.env.dev");
+        assert!(
+            docker
+                .final_command
+                .contains(&format!("--env-file {}", expected.display())),
+            "{}",
+            docker.final_command
+        );
     }
 }

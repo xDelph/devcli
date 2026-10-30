@@ -6,6 +6,7 @@ use crate::config::resolver::ResolvedApp;
 use crate::Result;
 use process_manager::HealthCheck;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// The variables every app gets (the configured checkout has slot 0).
 pub const WORKTREE: &str = "DEVCLI_WORKTREE";
@@ -122,6 +123,54 @@ pub fn apply(
     }
 
     Ok(applied)
+}
+
+/// Whether `dir` has the env files the app would load: the file pinned in
+/// `env_files`, or any `.env*` file of the cascade.
+fn has_env_files(dir: &Path, pinned: Option<&str>) -> bool {
+    if let Some(path) = pinned {
+        return dir.join(path).exists();
+    }
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".env") && name != ".envrc"
+        })
+    })
+}
+
+/// The directory to read env files from.
+///
+/// Env files are usually gitignored, so a new worktree has none: its instance
+/// then uses the configured checkout's, with a note, rather than starting
+/// without its variables (or failing on a pinned file that is "missing").
+/// Env files the worktree does have always win.
+pub fn env_dir(
+    resolved: &ResolvedApp,
+    working_dir: &Path,
+    stage: Option<&str>,
+    environment: &str,
+) -> Result<(PathBuf, Option<String>)> {
+    let Some(instance) = &resolved.worktree else {
+        return Ok((working_dir.to_path_buf(), None));
+    };
+    let pinned = crate::env_flow_support::resolve_config_env_path(
+        resolved.app.env_files.as_ref(),
+        stage,
+        environment,
+    )?;
+    if has_env_files(working_dir, pinned.as_deref())
+        || !has_env_files(&instance.base_path, pinned.as_deref())
+    {
+        return Ok((working_dir.to_path_buf(), None));
+    }
+    let note = format!(
+        "Env files: none in worktree '{}', using {}",
+        instance.slug,
+        instance.base_path.display()
+    );
+    Ok((instance.base_path.clone(), Some(note)))
 }
 
 /// `${NAME}` replaced by the instance's variables (`DEVCLI_*`, `PORT`), so a
@@ -333,5 +382,39 @@ mod tests {
             &env,
         );
         assert!(matches!(other, HealthCheck::Tcp { port: 5432, .. }));
+    }
+
+    #[test]
+    fn a_worktree_without_env_files_uses_the_configured_checkouts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path().join("repo/api");
+        let worktree = dir.path().join("w/feat/api");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(base.join(".env"), "PORT=3000\n").unwrap();
+        std::fs::write(worktree.join(".envrc"), "use nix\n").unwrap();
+
+        let mut app = resolved(None, Some(1));
+        app.worktree.as_mut().unwrap().base_path = base.clone();
+        let (used, note) = env_dir(&app, &worktree, None, "local").unwrap();
+        assert_eq!(used, base);
+        assert!(note.unwrap().contains("none in worktree 'feat'"));
+
+        // The worktree's own env files win.
+        std::fs::write(worktree.join(".env.local"), "PORT=4000\n").unwrap();
+        assert_eq!(env_dir(&app, &worktree, None, "local").unwrap().0, worktree);
+
+        // A pinned file is looked up by name.
+        app.app.env_files = Some(HashMap::from([(
+            "base".to_string(),
+            HashMap::from([("local".to_string(), "config/.env.dev".to_string())]),
+        )]));
+        std::fs::create_dir_all(base.join("config")).unwrap();
+        std::fs::write(base.join("config/.env.dev"), "A=1\n").unwrap();
+        assert_eq!(env_dir(&app, &worktree, None, "local").unwrap().0, base);
+
+        // The configured checkout always reads its own.
+        let main = resolved(None, None);
+        assert_eq!(env_dir(&main, &base, None, "local").unwrap().0, base);
     }
 }
