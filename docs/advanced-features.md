@@ -17,7 +17,9 @@ Deep dive into devcli's powerful features for production-ready process managemen
 
 ## Health Checks
 
-Automatically monitor app health and trigger restarts when unhealthy.
+Automatically monitor app health and trigger restarts when unhealthy. Checks
+are run by `pm-daemon`, the background monitor that `start` spawns. A health
+check is an object tagged by `type`: `http`, `tcp`, `command` or `process`.
 
 ### Types of Health Checks
 
@@ -28,19 +30,18 @@ Sends HTTP requests to check if service is responding.
 ```json
 {
   "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health",
-      "expected_status": 200,
-      "timeout_secs": 5
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "expected_status": 200,
+    "timeout_secs": 5
   }
 }
 ```
 
 **Features**:
-- Configurable URL and expected status
-- Timeout protection
-- Follows redirects (up to 5)
+- Configurable URL and expected status (default 200; with 200, any 2xx passes)
+- Timeout protection (`timeout_secs`, default 5)
+- Follows redirects
 - Supports HTTPS
 
 **Best For**: Web services, APIs, frontends
@@ -52,11 +53,10 @@ Checks if TCP port is accepting connections.
 ```json
 {
   "health_check": {
-    "tcp": {
-      "host": "localhost",
-      "port": 5432,
-      "timeout_secs": 10
-    }
+    "type": "tcp",
+    "host": "localhost",
+    "port": 5432,
+    "timeout_secs": 10
   }
 }
 ```
@@ -65,54 +65,59 @@ Checks if TCP port is accepting connections.
 
 #### Command Health Check
 
-Runs custom command to determine health.
+Runs a custom command (with `sh -c`) to determine health.
 
 ```json
 {
   "health_check": {
-    "command": {
-      "cmd": "curl -f http://localhost:3000/health",
-      "timeout_secs": 5
-    }
+    "type": "command",
+    "command": "curl -f http://localhost:3000/health",
+    "timeout_secs": 5,
+    "expected_exit_code": 0
   }
 }
 ```
 
-**Exit code 0** = healthy, **non-zero** = unhealthy
+**Exit code `expected_exit_code`** (default 0) = healthy, anything else (or a
+timeout) = unhealthy
 
 **Best For**: Complex health logic, custom protocols
+
+#### Process Health Check
+
+Healthy as long as the process is alive. This is also what happens without a
+`health_check`.
+
+```json
+{
+  "health_check": {
+    "type": "process"
+  }
+}
+```
 
 ### Health Check Behavior
 
 **Monitor Cycle**:
-1. Monitor runs health checks every **3 seconds**
+1. Monitor runs health checks every **3 seconds**, starting 30 seconds after
+   each (re)start
 2. Failure increments failure counter
 3. Success resets failure counter to 0
-4. After **3 consecutive failures**, restart is triggered
+4. After **3 consecutive failures**, restart is triggered (or, without an
+   enabled `restart_policy`, the app is stopped)
 
 **Example Timeline**:
 ```
-00:00 - Check #1: ✓ healthy (failures: 0)
-00:03 - Check #2: ✗ failed  (failures: 1)
-00:06 - Check #3: ✗ failed  (failures: 2)
-00:09 - Check #4: ✗ failed  (failures: 3) → RESTART TRIGGERED
+00:30 - Check #1: ✓ healthy (failures: 0)
+00:33 - Check #2: ✗ failed  (failures: 1)
+00:36 - Check #3: ✗ failed  (failures: 2)
+00:39 - Check #4: ✗ failed  (failures: 3) → RESTART TRIGGERED
 ```
 
-### Configuring Health Check Thresholds
+### Health Check Thresholds
 
-Currently hardcoded to 3 failures. To customize (future feature):
-
-```json
-{
-  "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health"
-    },
-    "failure_threshold": 5,
-    "check_interval_secs": 10
-  }
-}
-```
+The interval (3 seconds), the start-up grace period (30 seconds) and the
+threshold (3 failures) are fixed; they cannot be configured.
 
 ### Health Check Best Practices
 
@@ -141,9 +146,9 @@ app.get('/health', (req, res) => {
 ```json
 {
   "health_check": {
-    "http": {
-      "timeout_secs": 2
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "timeout_secs": 2
   }
 }
 ```
@@ -152,21 +157,24 @@ app.get('/health', (req, res) => {
 ```json
 {
   "health_check": {
-    "tcp": {
-      "timeout_secs": 30
-    }
+    "type": "tcp",
+    "host": "localhost",
+    "port": 5432,
+    "timeout_secs": 30
   }
 }
 ```
 
 #### 3. Combine with Restart Policies
 
+Without a `restart_policy`, an app that fails its health check 3 times in a
+row is stopped, not restarted.
+
 ```json
 {
   "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health"
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health"
   },
   "restart_policy": {
     "max_restarts": 5,
@@ -183,19 +191,30 @@ Automatically restart crashed or unhealthy processes.
 
 ### Basic Configuration
 
+Every field is optional; these are the defaults:
+
 ```json
 {
   "restart_policy": {
+    "enabled": true,
     "max_restarts": 5,
     "restart_window_secs": 300,
-    "backoff_secs": 5
+    "initial_backoff_secs": 1,
+    "max_backoff_secs": 60,
+    "backoff_multiplier": 2.0
   }
 }
 ```
 
+`restart_on_exit_codes` (e.g. `[1, 137]`) restricts restarts to those exit
+codes; without it any non-zero exit code restarts and exit code 0 does not.
+`max_restarts: 0` means unlimited. An app without `restart_policy` is never
+restarted.
+
 ### Restart Triggers
 
-**1. Process Crashes** (non-zero exit code):
+**1. Process Crashes** (non-zero exit code, or one listed in
+`restart_on_exit_codes`):
 ```
 Process exited with code 1 → automatic restart
 ```
@@ -216,21 +235,27 @@ Health check failed 3 times → automatic restart
 
 Prevents restart loops by increasing delay:
 
+With the defaults:
+
 ```
-Attempt 1: Wait 5 seconds
-Attempt 2: Wait 10 seconds
-Attempt 3: Wait 20 seconds
-Attempt 4: Wait 40 seconds
-Attempt 5: Wait 80 seconds
+Restart 1: Wait 1 second
+Restart 2: Wait 1 second
+Restart 3: Wait 2 seconds
+Restart 4: Wait 4 seconds
+Restart 5: Wait 8 seconds
+...
+Capped at 60 seconds
 ```
 
-**Formula**: `delay = backoff_secs * 2^(attempt-1)`
-
-**Max backoff**: Capped at 300 seconds (5 minutes)
+**Formula**: `delay = initial_backoff_secs * backoff_multiplier^(max(n,1)-1)`,
+where `n` is the number of restarts already done, capped at
+`max_backoff_secs`. The restart count is kept for as long as the process is
+tracked; a `devcli restart` or a new `start` resets it.
 
 ### Restart Window
 
-Restart counter resets after the window expires:
+Only restarts within the last `restart_window_secs` count towards
+`max_restarts` (a sliding window):
 
 ```json
 {
@@ -245,19 +270,18 @@ Restart counter resets after the window expires:
 - 00:00 - Restart #1
 - 00:20 - Restart #2
 - 00:40 - Restart #3
-- 01:10 - Window expired, counter resets to 0
-- 01:15 - Restart #1 (new window starts)
+- 01:10 - Crash: restart #1 is out of the window, 2 restarts in the last 60s
+  → restarted
+- 01:15 - Crash: 3 restarts in the last 60s (00:20, 00:40, 01:10) → no
+  restart (see below)
 
 ### Max Restarts Reached
 
 When max restarts is hit within window:
 
-```
-Monitor: Max restarts (5) reached for api within 300s window
-Monitor: Giving up on restarting api
-```
-
-Process remains stopped until manually restarted.
+pm-daemon logs `Max restarts reached or policy prevents restart. Deleting
+state.`, kills the process if it still runs (an unhealthy one) and stops
+tracking it. Start it again with `devcli start`.
 
 ### Strategies by Service Type
 
@@ -267,7 +291,7 @@ Process remains stopped until manually restarted.
   "restart_policy": {
     "max_restarts": 10,
     "restart_window_secs": 600,
-    "backoff_secs": 3
+    "initial_backoff_secs": 3
   }
 }
 ```
@@ -278,7 +302,8 @@ Process remains stopped until manually restarted.
   "restart_policy": {
     "max_restarts": 5,
     "restart_window_secs": 300,
-    "backoff_secs": 10
+    "initial_backoff_secs": 10,
+    "max_backoff_secs": 120
   }
 }
 ```
@@ -289,7 +314,8 @@ Process remains stopped until manually restarted.
   "restart_policy": {
     "max_restarts": 3,
     "restart_window_secs": 600,
-    "backoff_secs": 30
+    "initial_backoff_secs": 30,
+    "max_backoff_secs": 300
   }
 }
 ```
@@ -300,7 +326,8 @@ Process remains stopped until manually restarted.
   "restart_policy": {
     "max_restarts": 20,
     "restart_window_secs": 600,
-    "backoff_secs": 1
+    "initial_backoff_secs": 1,
+    "backoff_multiplier": 1.0
   }
 }
 ```
@@ -315,7 +342,7 @@ Real-time insights into process behavior and performance.
 
 ```
 ┌───────────────────────────────────────┐
-│ Monitor Daemon                        │
+│ devcli monitor --daemon               │
 │ ┌─────────────────┐                   │
 │ │ MetricsCollector│                   │
 │ │  - Counters     │                   │
@@ -325,13 +352,19 @@ Real-time insights into process behavior and performance.
 │          │                             │
 │  ┌───────▼────────┐                   │
 │  │ HTTP API       │                   │
-│  │ localhost:9090 │                   │
+│  │ 127.0.0.1:9090 │                   │
 │  └────────────────┘                   │
 └───────────────────────────────────────┘
            │
            ├─── devcli metrics (CLI)
            └─── curl http://localhost:9090/metrics
 ```
+
+The HTTP API is served only by `devcli monitor --daemon`. `pm-daemon`, the
+monitor that `start` spawns automatically, has no HTTP server, and
+`monitor --daemon` refuses to run while pm-daemon holds the monitor lock (it
+also exits when no process is tracked). In everyday use, `devcli metrics`
+therefore computes its figures from the process state.
 
 ### Viewing Metrics
 
@@ -379,7 +412,9 @@ checks pass.
         "status": "running",
         "uptime_seconds": 3600,
         "restart_count": 2,
-        "health_status": "healthy"
+        "last_exit_code": null,
+        "health_status": "healthy",
+        "health_check_failures": 0
       }
     ]
   }
@@ -393,7 +428,7 @@ checks pass.
   "system": {
     "monitor_uptime_seconds": 7200,
     "monitor_loop_iterations": 2400,
-    "devcli_version": "0.1.0",
+    "devcli_version": "0.6.1",
     "total_apps_configured": 12
   }
 }
@@ -421,6 +456,9 @@ checks pass.
 ```
 
 ### Metrics Use Cases
+
+The examples below need the HTTP API, i.e. a running `devcli monitor
+--daemon`; `devcli --json metrics` gives the same document without it.
 
 **1. Monitoring Dashboards**:
 ```bash
@@ -461,80 +499,90 @@ Production-grade logging with JSON format and structured fields.
 
 ### Log Files
 
-**Location**: `~/.devcli/logs/`
+**Location**: `~/.devcli/logs/` (the `logs/` directory of the devcli
+directory: `$DEVCLI_CONFIG_DIR`, else `./.devcli` when it exists, else
+`~/.devcli`)
 
 **Files**:
-- `devcli.YYYY-MM-DD.json` - Structured JSON logs (daily rotation)
-- `<project>_<app>_<date>.log` - App-specific logs (legacy)
+- `devcli.json.YYYY-MM-DD` - devcli's own structured JSON logs (one file per
+  day; old files are not deleted)
+- `<project>_<app>_<env>_<YYYYMMDD>.log` - each app's raw stdout/stderr, as the
+  app prints it (no timestamps added); rotated to `<name>.log.1` past 20 MiB
 
 ### JSON Log Format
 
+One JSON object per line:
+
 ```json
 {
-  "timestamp": "2024-02-08T10:30:15.123Z",
+  "timestamp": "2026-10-30T18:16:28.075762Z",
   "level": "INFO",
   "fields": {
-    "app_name": "api",
-    "project": "awesome-project",
-    "environment": "docker",
-    "duration_ms": 523
+    "message": "Starting app process",
+    "app": "worker",
+    "environment": "local",
+    "command": "npm run worker"
   },
-  "target": "devcli_core::commands::start",
+  "target": "devcli_core::commands::start::executor",
   "span": {
-    "name": "start_command",
-    "app_count": 1
+    "name": "start_single_app_process",
+    "project": "awesome-project"
   },
-  "message": "Starting application"
+  "spans": [
+    { "name": "start_command", "app_names": "[\"api\"]" }
+  ]
 }
 ```
 
 ### Log Levels
 
-Set via `RUST_LOG` environment variable:
+Set via the `LOG_LEVEL` environment variable (`off`, `error`, `warn`,
+`info`, `debug`, `trace`); it applies to the console (stderr) and to the log
+file. `RUST_LOG` is not read, and there are no per-module filters.
 
 ```bash
 # Info level (default)
-RUST_LOG=info devcli start api
+LOG_LEVEL=info devcli start api
 
 # Debug level
-RUST_LOG=debug devcli start api
+LOG_LEVEL=debug devcli start api
 
 # Trace level (very verbose)
-RUST_LOG=trace devcli start api
+LOG_LEVEL=trace devcli start api
 
-# Module-specific
-RUST_LOG=devcli_core::commands::start=debug devcli start api
+# Nothing at all
+LOG_LEVEL=off devcli start api
 ```
 
 ### Querying Logs with jq
 
 **All errors**:
 ```bash
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.level == "ERROR")'
 ```
 
 **Specific app**:
 ```bash
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.fields.app_name == "api")'
 ```
 
 **Slow operations** (> 1 second):
 ```bash
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.fields.duration_ms > 1000)'
 ```
 
 **Time range**:
 ```bash
-cat ~/.devcli/logs/devcli.2024-02-08.json | \
+cat ~/.devcli/logs/devcli.json.2024-02-08 | \
   jq 'select(.timestamp > "2024-02-08T10:00:00Z")'
 ```
 
 **Span hierarchy**:
 ```bash
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq '.span.name' | sort | uniq
 ```
 
@@ -560,17 +608,19 @@ Automatic dependency resolution and ordered startup.
 
 ### Defining Dependencies
 
+Each dependency names its project and app:
+
 ```json
 {
   "frontend": {
     "dependencies": [
-      "api"
+      { "project": "shop", "app": "api" }
     ]
   },
   "api": {
     "dependencies": [
-      "database",
-      "redis"
+      { "project": "shop", "app": "database" },
+      { "project": "shop", "app": "redis" }
     ]
   }
 }
@@ -607,12 +657,12 @@ frontend → api → redis
 {
   "api": {
     "dependencies": [
-      "worker"
+      { "project": "shop", "app": "worker" }
     ]
   },
   "worker": {
     "dependencies": [
-      "api"
+      { "project": "shop", "app": "api" }
     ]
   }
 }
@@ -620,8 +670,10 @@ frontend → api → redis
 
 ```bash
 devcli start api
-# Error: Circular dependency detected: api → worker → api
+# Error: Circular dependency detected: shop/api -> shop/worker -> shop/api. Check app dependencies in config.
 ```
+
+`devcli config validate` reports the same error.
 
 ### Skipping Dependencies
 
@@ -641,29 +693,28 @@ devcli start api --skip-deps
 {
   "service-a": {
     "dependencies": [
-      "database"
+      { "project": "shop", "app": "database" }
     ]
   },
   "service-b": {
     "dependencies": [
-      "database",
-      "redis"
+      { "project": "shop", "app": "database" },
+      { "project": "shop", "app": "redis" }
     ]
   },
   "service-c": {
     "dependencies": [
-      "service-a",
-      "service-b"
+      { "project": "shop", "app": "service-a" },
+      { "project": "shop", "app": "service-b" }
     ]
   }
 }
 ```
 
 **Starting `service-c`**:
-1. database
-2. redis
-3. service-a, service-b (parallel)
-4. service-c
+1. database, redis (parallel)
+2. service-a, service-b (parallel)
+3. service-c
 
 ---
 
@@ -673,11 +724,15 @@ Manage environment-specific configuration across dev/qa/prod.
 
 ### Stage Concept
 
-A **stage** represents a deployment environment:
+A **stage** represents a deployment environment. Only these four exist (any
+other `--stage`, `env add --stage` or `default-stage` value is refused):
 - `dev` - Local development
 - `qa` - QA environment
-- `staging` - Pre-production
+- `preprod` - Pre-production
 - `prod` - Production
+
+In `env_files`, the key `base` holds files used for every stage
+(`devcli env add APP --stage base ...`).
 
 ### Env File Mapping
 
@@ -690,14 +745,19 @@ A **stage** represents a deployment environment:
     },
     "qa": {
       "docker": ".env.qa",
-      "k8s": "k8s/qa/env.yaml"
+      "k8s": "k8s/qa/.env"
     },
     "prod": {
-      "k8s": "k8s/prod/env.yaml"
+      "k8s": "k8s/prod/.env"
     }
   }
 }
 ```
+
+The keys under a stage are environment names (`local`, `docker`, `orbstack`,
+`docker-compose`, `k8s`, `ci`). Without `--stage`, the app's
+`default_stages` for that environment, then the `default-stage` preference,
+pick the stage.
 
 ### Usage
 
@@ -714,13 +774,16 @@ devcli start api --stage prod --env k8s
 
 ### Docker Integration
 
-Env files automatically injected:
+In the `docker`, `orbstack` and `docker-compose` environments, the env file is
+added to `docker run` / `docker create` commands as `--env-file` (other
+commands, such as `docker compose up`, are left as they are). In `local`,
+`k8s` and `ci`, its variables are set in the command's environment.
 
 ```json
 {
   "commands": {
     "docker": {
-      "start": "docker compose up api"
+      "start": "docker run --rm my-api"
     }
   },
   "env_files": {
@@ -731,9 +794,9 @@ Env files automatically injected:
 }
 ```
 
-**Becomes**:
+**Becomes** (with `--stage dev`):
 ```bash
-docker compose --env-file .env.dev up api
+docker run --platform linux/amd64 --rm --env-file .env.dev my-api
 ```
 
 ### Best Practices
@@ -742,7 +805,7 @@ docker compose --env-file .env.dev up api
 ```
 .env.dev       # Local development
 .env.qa        # QA
-.env.staging   # Staging
+.env.preprod   # Pre-production
 .env.prod      # Production (never commit!)
 ```
 
@@ -765,7 +828,7 @@ SECRET_KEY=
 
 ## TUI Interface
 
-Beautiful terminal UI for viewing logs in real-time.
+Terminal UI to watch and drive your apps: status, commands and logs.
 
 ### Launching TUI
 
@@ -775,25 +838,24 @@ devcli ui
 
 ### Features
 
-- **Real-time log streaming**
-- **Syntax highlighting** for code and JSON
-- **Multi-pane view** for multiple apps
+- **Status, Commands and Logs tabs** (`1`, `2`, `3`)
+- **Start, stop and restart** apps (`Enter`, `s`, `r` in the Status tab)
+- **Run commands** of an app (Commands tab)
+- **Real-time log streaming**, with search (`/`, then `n`/`N`)
 - **ANSI color support** for colored logs
-- **Automatic scrolling** to latest logs
-- **Search and filter** (coming soon)
+- Worktree instances listed under their project
 
 ### Keyboard Shortcuts
 
-- `↑/↓` or `j/k` - Scroll up/down
-- `Page Up/Page Down` - Page scroll
-- `Home/End` or `g/G` - Jump to top/bottom
-- `Tab` - Switch between apps
+- `↑/↓` or `k/j` - Move selection
+- `Tab` - Switch panel focus
+- `Space` - Expand/collapse a project
+- `Enter` - Select / execute / open the log viewer
+- In the log viewer: `↑/↓`, `PgUp/PgDn`, `Home/End` or `g/G`, `/` search,
+  `n/N` next/previous match, `Esc` to leave
+- `Esc` - Back / cancel / close popup
 - `Ctrl+C` or `q` - Quit
-- `h` or `?` - Show help
-
-### Log Filtering
-
-Currently shows logs for all running processes. Future: filter by project or app.
+- `?` - Show help
 
 ---
 
@@ -803,25 +865,14 @@ Understanding how devcli manages processes.
 
 ### State Tracking
 
-**File**: `~/.devcli/state.json`
+**Files**: `~/.devcli/processes/<project>.<app>.<env>.json`, one per tracked
+process (e.g. `awesome-project.api.local.json`)
 
-Tracks all managed processes:
-
-```json
-{
-  "processes": [
-    {
-      "app_name": "api",
-      "pid": 12345,
-      "project": "awesome-project",
-      "environment": "local",
-      "start_time": "2024-02-08T10:00:00Z",
-      "restart_count": 2,
-      "last_exit_code": null
-    }
-  ]
-}
-```
+Each file holds the PID and process group, the command, working directory and
+environment devcli set, the start time, the restart count and history, the
+last exit code, and the project/app/environment metadata, with the health
+check and restart policy taken from the config. Inspect them with
+`devcli --json status` rather than reading them.
 
 ### Spawner Architecture
 
@@ -834,7 +885,8 @@ devcli start api
       ├─ Record it in ~/.devcli/processes/<id>.json
       ├─ Make sure pm-daemon is running (health checks, auto-restart)
       │
-      └─ Return immediately (non-blocking)
+      └─ Detached: return immediately; attached (the default for a person):
+         stream the output and stop the apps on Ctrl+C
 ```
 
 - The app writes its output straight into its log file, so it keeps running
@@ -849,21 +901,21 @@ devcli start api
 **Auto-start**:
 ```bash
 devcli start api
-# → Starts monitor daemon automatically if not running
+# → Spawns pm-daemon if it is not running
 ```
 
-**Auto-exit**:
-```
-Monitor: No processes remaining
-Monitor: Exiting
-```
+pm-daemon must be installed next to `devcli` or on the `PATH`; without it,
+apps still run, but nothing checks their health or restarts them.
+
+**Auto-exit**: pm-daemon exits on its own when no process is tracked any more
+(it logs `No processes remaining, stopping monitor`).
 
 **Manual control**:
 ```bash
 # Check if running
-ps aux | grep "devcli monitor --daemon"
+ps aux | grep pm-daemon
 
-# Stop monitor (stops all apps)
+# Stop every app (pm-daemon then exits by itself)
 devcli stop --all
 ```
 
@@ -881,9 +933,11 @@ devcli monitor
 ```
 
 **Automatic cleanup**:
-- Monitor runs cleanup on each cycle
-- Removes processes with no PID
-- Updates state.json
+- Commands such as `status`, `start` and `stop` drop the entries of dead
+  processes before they run
+- pm-daemon checks every tracked process on each cycle, and restarts or
+  forgets the dead ones
+- Entries live in `~/.devcli/processes/`
 
 ---
 

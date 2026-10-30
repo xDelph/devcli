@@ -70,7 +70,7 @@ xattr -d com.apple.quarantine /usr/local/bin/devcli
 
 ### Config File Not Found
 
-**Problem**: `Failed to load config: No such file or directory`
+**Problem**: `Config file not found at ~/.devcli/config.json. Run 'devcli config init' to create one.`
 
 **Solution**:
 ```bash
@@ -82,11 +82,14 @@ ls -l ~/.devcli/config.json
 
 # Check DEVCLI_CONFIG_DIR override
 echo $DEVCLI_CONFIG_DIR
+
+# A ./.devcli directory in the current directory is used instead of ~/.devcli
+ls -d .devcli
 ```
 
 ### Invalid JSON Syntax
 
-**Problem**: `Failed to parse config: invalid JSON`
+**Problem**: `Failed to load configuration: Failed to parse JSON from ~/.devcli/config.json: ...`
 
 **Solution**:
 ```bash
@@ -118,7 +121,8 @@ cat ~/.devcli/config.json | pbcopy
 
 ### App Not Found
 
-**Problem**: `App 'api' not found in config`
+**Problem**: `App 'api' not found in config` (`start`, `stop`, `status` and
+`run` add `Did you mean '...'?` when a configured name is close)
 
 **Solution**:
 ```bash
@@ -137,22 +141,52 @@ devcli config show api
 
 ### Circular Dependency Error
 
-**Problem**: `Circular dependency detected: api → worker → api`
+**Problem**: `Circular dependency detected: shop/api -> shop/worker -> shop/api. Check app dependencies in config.`
 
 **Solution**:
 **WRONG**:
 ```json
 {
-  "api": { "dependencies": ["worker"] },
-  "worker": { "dependencies": ["api"] }
+  "api": { "dependencies": [{ "project": "shop", "app": "worker" }] },
+  "worker": { "dependencies": [{ "project": "shop", "app": "api" }] }
 }
 ```
 
 **CORRECT**:
 ```json
 {
-  "api": { "dependencies": ["database"] },
-  "worker": { "dependencies": ["api"] }
+  "api": { "dependencies": [{ "project": "shop", "app": "database" }] },
+  "worker": { "dependencies": [{ "project": "shop", "app": "api" }] }
+}
+```
+
+### Invalid Dependency Format
+
+**Problem**: `invalid type: string "database", expected struct Dependency`
+
+**Solution**: a dependency is an object naming the project and the app, not a
+plain string:
+
+```json
+{
+  "dependencies": [{ "project": "shop", "app": "database" }]
+}
+```
+
+### Invalid Health Check Format
+
+**Problem**: the config fails to load with `missing field `type`` (or
+`unknown variant`) at a `health_check`
+
+**Solution**: a health check is tagged by `type` (`http`, `tcp`, `command`,
+`process`), with its fields next to it:
+
+```json
+{
+  "health_check": {
+    "type": "http",
+    "url": "http://localhost:3000/health"
+  }
 }
 ```
 
@@ -166,11 +200,12 @@ devcli config show api
 
 **Diagnosis**:
 ```bash
-# Check logs
+# Check the app's output
+devcli logs app -n 100
 cat ~/.devcli/logs/project_app_*.log
 
-# Check JSON logs for errors
-cat ~/.devcli/logs/devcli.*.json | jq 'select(.level == "ERROR")'
+# Check devcli's JSON logs for errors
+cat ~/.devcli/logs/devcli.json.* | jq 'select(.level == "ERROR")'
 
 # Run command manually to see error
 cd ~/path/to/app
@@ -182,6 +217,9 @@ npm start  # or whatever the command is
 2. **Port already in use**: Check with `lsof -i :3000`
 3. **Environment variables missing**: Check `.env` file
 4. **Permissions**: Check file/directory permissions
+5. **Shell syntax in the command** (`Failed to spawn process`): commands run
+   without a shell, so `&&`, pipes and `VAR=value` prefixes fail; use
+   `sh -c '...'`
 
 **Solutions**:
 ```bash
@@ -218,7 +256,7 @@ devcli stop api --force
 # Force kill
 devcli stop api --force
 
-# Manual cleanup if needed
+# Manual cleanup if needed (the PID shown by devcli status)
 kill -9 <PID>
 
 # Clean up state
@@ -227,24 +265,29 @@ devcli monitor
 
 ### Monitor Daemon Not Starting
 
-**Problem**: Monitor doesn't start with first app
+**Problem**: no health checks or automatic restarts happen
+
+The monitor is `pm-daemon`, spawned by `start` and `run`. It must be
+installed next to the `devcli` binary or be on the `PATH`; without it, apps
+still run but nothing watches them. It exits by itself when no process is
+tracked.
 
 **Diagnosis**:
 ```bash
-# Check if monitor is running
-ps aux | grep "devcli monitor --daemon"
+# Check if pm-daemon is running
+ps aux | grep pm-daemon
 
-# Check monitor logs
-cat ~/.devcli/logs/devcli.*.json | \
-  jq 'select(.target | contains("monitor"))'
+# Check it is installed
+ls ~/.devcli/bin/
+which pm-daemon
+
+# Check its lock file
+ls -l ~/.devcli/processes/.daemon.lock
 ```
 
 **Solution**:
 ```bash
-# Start monitor manually
-devcli monitor --daemon
-
-# Then start apps
+# Reinstall devcli with pm-daemon (see Getting Started), then start apps
 devcli start api
 ```
 
@@ -257,10 +300,14 @@ devcli start api
 # Find running processes
 ps aux | grep node  # or your runtime
 
+# Check which config devcli reads: status only lists apps of that config
+devcli --json config list --apps-only
+echo $DEVCLI_CONFIG_DIR
+
 # Clean up state
 devcli monitor
 
-# Stop all manually
+# Stop the stray process by its PID
 kill <PID>
 
 # Restart properly
@@ -293,21 +340,21 @@ curl -v http://localhost:3000/health
 ```json
 {
   "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health",
-      "timeout_secs": 10
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "timeout_secs": 10
   }
 }
 ```
 
-**2. Check expected status**:
+**2. Check expected status** (with 200, any 2xx passes; set the exact code
+otherwise):
 ```json
 {
   "health_check": {
-    "http": {
-      "expected_status": 200
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "expected_status": 204
   }
 }
 ```
@@ -338,18 +385,14 @@ devcli config show database
 **Correct host (use `localhost`, not `0.0.0.0`)**:
 ```json
 {
-  "health_check": {
-    "tcp": { "host": "localhost", "port": 5432 }
-  }
+  "health_check": { "type": "tcp", "host": "localhost", "port": 5432 }
 }
 ```
 
 **Increase timeout for slow services**:
 ```json
 {
-  "health_check": {
-    "tcp": { "timeout_secs": 30 }
-  }
+  "health_check": { "type": "tcp", "host": "localhost", "port": 5432, "timeout_secs": 30 }
 }
 ```
 
@@ -362,8 +405,8 @@ devcli config show database
 # Temporarily disable health checks
 # (edit config, remove health_check section)
 
-# Or increase failure threshold
-# (future feature - currently hardcoded to 3)
+# The threshold (3 failures), interval (3s) and start-up grace period (30s)
+# are fixed; give a slow check a longer timeout_secs instead
 
 # Check if app is actually healthy
 curl http://localhost:3000/health
@@ -402,12 +445,12 @@ devcli start frontend --skip-deps
 
 ### Dependency Not Found
 
-**Problem**: `App 'database' not found (dependency of 'api')`
+**Problem**: `Invalid dependency my-project/database: App 'database' not found in project 'my-project'.`
 
-**Solution**:
+**Solution**: name an app that exists, with its project:
 ```json
 {
-  "api": { "dependencies": ["database"] }
+  "api": { "dependencies": [{ "project": "my-project", "app": "database" }] }
 }
 ```
 
@@ -422,8 +465,11 @@ devcli config list
 
 **Diagnosis**:
 ```bash
-# Check dependency chain
-devcli config show --deps frontend
+# Check the dependencies of an app
+devcli config show frontend
+
+# And whether they run
+devcli status frontend --deps
 ```
 
 **Solution**:
@@ -437,13 +483,13 @@ devcli config show --deps frontend
   },
   "api": {
     "dependencies": [
-      "database",
-      "redis"
+      { "project": "shop", "app": "database" },
+      { "project": "shop", "app": "redis" }
     ]
   },
   "frontend": {
     "dependencies": [
-      "api"
+      { "project": "shop", "app": "api" }
     ]
   }
 }
@@ -466,14 +512,15 @@ ls -lh ~/.devcli/logs/
 devcli status
 
 # Check for errors in JSON logs
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.level == "ERROR")'
 ```
 
 **Solution**:
 ```bash
 # Logs are at:
-# ~/.devcli/logs/<project>_<app>_<date>.log
+# ~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log
+devcli logs app
 
 # Find by date
 ls ~/.devcli/logs/*$(date +%Y%m%d)*
@@ -486,31 +533,31 @@ devcli ui
 
 **Problem**: `curl http://localhost:9090/metrics` fails
 
+The metrics API is served only by `devcli monitor --daemon`. `pm-daemon`,
+which `start` spawns, has no HTTP server, and `monitor --daemon` refuses to run
+while pm-daemon holds the monitor lock (`A monitor (pm-daemon) is already
+running for ...`).
+
 **Diagnosis**:
 ```bash
-# Check if monitor is running
-ps aux | grep "devcli monitor --daemon"
+# Is pm-daemon (no HTTP API) or devcli monitor --daemon running?
+ps aux | grep -E "pm-daemon|devcli monitor"
 
 # Check if port 9090 is in use
 lsof -i :9090
 
 # Check metrics server logs
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.target | contains("metrics"))'
 ```
 
 **Solutions**:
 ```bash
-# Start monitor
-devcli monitor --daemon
+# Usually you do not need the API: this computes the same document
+devcli --json metrics
 
-# Wait a few seconds for server to start
-sleep 3
-curl http://localhost:9090/metrics
-
-# Check for port conflicts
-# If port 9090 is used, you'll need to modify source code
-# (future: make port configurable)
+# Port conflict: choose another address for monitor --daemon
+DEVCLI_METRICS_ADDR=127.0.0.1:9191 devcli monitor --daemon
 ```
 
 ### Too Many Log Files
@@ -521,10 +568,10 @@ curl http://localhost:9090/metrics
 ```bash
 # Remove old logs (older than 30 days)
 find ~/.devcli/logs -name "*.log" -mtime +30 -delete
-find ~/.devcli/logs -name "*.json" -mtime +30 -delete
+find ~/.devcli/logs -name "devcli.json.*" -mtime +30 -delete
 
 # Or manually clean up
-rm ~/.devcli/logs/*2024-01-*.log
+rm ~/.devcli/logs/*_202401*.log
 
 # Set up cron job for automatic cleanup
 # crontab -e
@@ -583,9 +630,13 @@ ls -l ~/path/to/.env.dev
 devcli env list api
 
 # Verify injected command
-RUST_LOG=debug devcli start api --env docker
-# Look for: "--env-file .env.dev" in logs
+LOG_LEVEL=debug devcli start api --env docker --stage dev
+# Look for: "--env-file .env.dev" in the "Command preparation complete" line
 ```
+
+`--env-file` is only added to `docker run` / `docker create` commands; a
+`docker compose up` command is run as written (pass `--env-file` yourself or
+let compose read its own `.env`).
 
 **Solution**:
 **Correct path (relative to the app `path`)**:
@@ -634,9 +685,6 @@ kubectl version --client
 
 **Diagnosis**:
 ```bash
-# Check startup times in metrics
-devcli metrics | grep "Avg Startup Time"
-
 # Check specific app logs
 cat ~/.devcli/logs/project_app_*.log
 
@@ -676,7 +724,7 @@ top | grep devcli
 devcli status
 
 # Check monitor loop
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.target | contains("monitor"))'
 ```
 
@@ -685,8 +733,7 @@ cat ~/.devcli/logs/devcli.*.json | \
 # Stop unused apps
 devcli stop --all
 
-# Reduce health check frequency
-# (future feature - currently 3 seconds)
+# The health check interval is fixed (3 seconds)
 
 # Check for restart loops
 devcli metrics | grep "Restarts"
@@ -698,29 +745,32 @@ devcli metrics | grep "Restarts"
 
 ### Enable Debug Logging
 
+devcli reads `LOG_LEVEL` (`off`, `error`, `warn`, `info`, `debug`,
+`trace`); `RUST_LOG` is ignored and there are no per-module filters.
+
 ```bash
 # Debug level
-RUST_LOG=debug devcli start api
+LOG_LEVEL=debug devcli start api
 
 # Trace level (very verbose)
-RUST_LOG=trace devcli start api
-
-# Module-specific
-RUST_LOG=devcli_core::commands::start=debug devcli start api
+LOG_LEVEL=trace devcli start api
 
 # Save to file
-RUST_LOG=debug devcli start api 2> debug.log
+LOG_LEVEL=debug devcli start api 2> debug.log
 ```
 
 ### Check Process State
 
 ```bash
-# View internal state
-cat ~/.devcli/state.json | jq
+# What devcli tracks
+devcli --json status | jq
 
 # Check specific process
-cat ~/.devcli/state.json | \
-  jq '.processes[] | select(.app_name == "api")'
+devcli --json status | jq '.processes[] | select(.app == "api")'
+
+# Raw state: one file per process
+ls ~/.devcli/processes/
+cat ~/.devcli/processes/my-project.api.local.json | jq
 ```
 
 ### Verify Configuration
@@ -736,24 +786,32 @@ devcli config show api
 devcli config list
 
 # Check dependency resolution
-devcli config show frontend --deps
+devcli status frontend --deps
 ```
 
 ### Clean Slate Restart
 
 ```bash
-# Stop everything
+# See what would be stopped
+devcli stop --all --dry-run
+
+# Stop everything (force if needed)
 devcli stop --all
+devcli stop --all --force
 
-# Clean up state
-rm ~/.devcli/state.json
+# Drop the entries of dead processes
+devcli monitor
 
-# Kill any lingering processes
-pkill -f "devcli"
+# Check nothing is left
+devcli status
 
 # Restart
 devcli start api
 ```
+
+Do not `pkill -f devcli`: the pattern also matches pm-daemon (installed under
+`~/.devcli/bin`) and anything else with `devcli` in its command line, and the
+apps' state would be left behind. Stop apps through devcli.
 
 ### Check System Resources
 
@@ -768,21 +826,22 @@ free -h
 lsof | grep devcli | wc -l
 
 # Check processes
-ps aux | grep devcli
+ps aux | grep -E "devcli|pm-daemon"
 ```
 
 ### Inspect Logs
 
 ```bash
 # View all errors
-cat ~/.devcli/logs/devcli.*.json | \
+cat ~/.devcli/logs/devcli.json.* | \
   jq 'select(.level == "ERROR")'
 
 # View specific app logs
 cat ~/.devcli/logs/project_app_*.log
+devcli logs app --follow
 
 # Follow logs in real-time
-tail -f ~/.devcli/logs/devcli.$(date +%Y-%m-%d).json | jq
+tail -f ~/.devcli/logs/devcli.json.$(date +%Y-%m-%d) | jq
 
 # Search for specific error
 grep -r "error message" ~/.devcli/logs/
@@ -808,7 +867,7 @@ If you're still stuck:
    - [ ] Commands work manually
    - [ ] Ports not in use
    - [ ] Logs checked for errors
-   - [ ] State file checked
+   - [ ] Process state checked (`devcli --json status`)
 
 ---
 
@@ -829,28 +888,38 @@ kill -9 <PID>
 # Or change port in your app config
 ```
 
-### "Permission denied: .devcli/state.json"
+### "Permission denied" under `~/.devcli/processes/`
 
-**Cause**: Incorrect file permissions
-
-**Fix**:
-```bash
-chmod 644 ~/.devcli/state.json
-chmod 755 ~/.devcli
-```
-
-### "Failed to connect to metrics API"
-
-**Cause**: Monitor daemon not running
+**Cause**: Incorrect file permissions (for example files created by
+`sudo devcli`)
 
 **Fix**:
 ```bash
-devcli monitor --daemon
+ls -l ~/.devcli/processes/
+sudo chown -R "$USER" ~/.devcli
 ```
 
-### "App 'api' is not running"
+### "A monitor (pm-daemon) is already running for ..."
 
-**Cause**: App crashed or not started
+**Cause**: `devcli monitor --daemon` was started while pm-daemon, spawned by
+`start`, already monitors the apps
+
+**Fix**: nothing to do; pm-daemon does the monitoring. Use `devcli metrics`
+(computed from the state) instead of the metrics API.
+
+### "`stop --all` is not allowed when devcli runs under an AI agent"
+
+**Cause**: devcli detected an AI agent harness (or `DEVCLI_AGENT=1`). Under an
+agent, `stop --all`, `stop --project P` without an app and `APP@*` are
+refused
+
+**Fix**: stop the apps by name (`devcli stop api --project P`), or, in a
+terminal of your own that devcli mistakes for an agent, set `DEVCLI_AGENT=0`.
+
+### "App my-project/api is not currently running"
+
+**Cause**: App crashed or not started (`health-check`; `restart` says
+`Process 'api' is not currently running. Use 'start' command instead.`)
 
 **Fix**:
 ```bash
