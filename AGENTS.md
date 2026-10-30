@@ -17,11 +17,13 @@ shapes, and non-interactive behaviour.
 3. **Check the exit code**, not the text.
 4. **Isolate state** with `DEVCLI_CONFIG_DIR` when testing.
 5. **Act on the apps you work on, by name.** The user and other agents run
-   apps too. `stop --all`, and `stop --project P` without an app, are refused
-   when devcli detects it runs under an AI agent (exit code 1); listing them
-   with `--dry-run` is allowed.
-
-5. **In a git worktree, just run devcli from it.** `devcli start api` run
+   apps too. When devcli detects it runs under an AI agent, it refuses what
+   would reach their apps (exit code 1): `stop --all`, `stop --project P`
+   without an app, and `start`/`stop` with `APP@*` or `--project P@*` (every
+   git worktree). `--dry-run` and `status` are fine, and so is
+   `stop --project P` run inside your own worktree, which only reaches your
+   worktree's apps.
+6. **In a git worktree, just run devcli from it.** `devcli start api` run
    inside a worktree starts *that worktree's* copy of the app, on its own
    ports, and `stop`/`status`/`logs` act on that copy only. See
    [Git worktrees](#git-worktrees).

@@ -103,6 +103,9 @@ impl Sandbox {
             .env("HOME", &home)
             .env("PATH", "/usr/bin:/bin")
             .env("NO_COLOR", "1")
+            // A person by default, even when the tests run under an AI agent
+            // (which would refuse the `stop --all` of the cleanup).
+            .env("DEVCLI_AGENT", "0")
             .env_remove("devcli_CONFIG_DIR")
             .env_remove("LOG_LEVEL");
         cmd
@@ -316,4 +319,47 @@ fn parallel_sub_agents_get_distinct_slots_and_ports() {
     ports.sort();
     ports.dedup();
     assert_eq!(ports.len(), 5, "two agents share a port: {ports:?}");
+}
+
+/// A sub-agent cannot reach the other checkouts' apps in bulk: `@*` and a
+/// whole-project stop from outside its worktree are refused, while a
+/// whole-project stop inside its own worktree only reaches its own apps.
+#[test]
+fn agents_cannot_act_on_every_worktree() {
+    let sb = Sandbox::new();
+    let main = sb.repo();
+    let agent_dir = sb.add_worktree("agent-1");
+    sb.json(&main, &["start", "api"]);
+    sb.json(&agent_dir, &["start", "api"]);
+
+    let as_agent = |cwd: &Path, args: &[&str]| {
+        let mut full = vec!["--json"];
+        full.extend_from_slice(args);
+        sb.command(cwd, &full)
+            .env("DEVCLI_AGENT", "1")
+            .output()
+            .unwrap()
+    };
+
+    for args in [
+        &["start", "api@*"][..],
+        &["stop", "api@*"][..],
+        &["stop", "--project", "shop@*"][..],
+        &["stop", "--project", "shop"][..],
+    ] {
+        let out = as_agent(&main, args);
+        assert_eq!(out.status.code(), Some(1), "{args:?} was allowed");
+        let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert!(err["error"].as_str().unwrap().contains("AI agent"), "{err}");
+    }
+    assert_eq!(sb.processes().len(), 2, "something was stopped");
+
+    // Inside its own worktree, the whole-project stop only reaches its apps.
+    let out = as_agent(&agent_dir, &["stop", "--project", "shop"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
 }
