@@ -68,8 +68,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 /// The checkout containing `path`, or `None` outside a git repository (or in
 /// a bare repository, which has no checkout).
 ///
-/// Cached for the life of the process: the answer for a given directory does
-/// not change while devcli runs.
+/// A checkout found is cached for the life of the process (a directory does
+/// not move to another repository while devcli runs). "Not a checkout" is
+/// not: the long-running TUI must see a repository cloned after it started.
 pub fn checkout_of(path: &Path) -> Option<Checkout> {
     static CACHE: Mutex<Option<HashMap<PathBuf, Option<Checkout>>>> = Mutex::new(None);
 
@@ -81,7 +82,9 @@ pub fn checkout_of(path: &Path) -> Option<Checkout> {
     }
 
     let found = discover_checkout(&path);
-    if let Ok(mut cache) = CACHE.lock() {
+    if found.is_some()
+        && let Ok(mut cache) = CACHE.lock()
+    {
         cache
             .get_or_insert_with(HashMap::new)
             .insert(path, found.clone());
@@ -125,19 +128,23 @@ pub fn origin_url(root: &Path) -> Option<String> {
 /// Every worktree of the repository whose shared git directory is
 /// `common_dir`, main worktree first.
 ///
-/// Cached while `<common_dir>/worktrees` is unchanged: creating or removing a
-/// worktree touches that directory, and the TUI asks several times a second.
+/// Cached for a couple of seconds while `<common_dir>/worktrees` is
+/// unchanged: creating or removing a worktree touches that directory, a
+/// branch switch inside one does not (hence the expiry), and the TUI asks
+/// several times a second.
 pub fn list(common_dir: &Path) -> Result<Vec<Worktree>> {
-    type Entry = (Option<SystemTime>, Vec<Worktree>);
+    type Entry = (Option<SystemTime>, std::time::Instant, Vec<Worktree>);
+    const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(2);
     static CACHE: Mutex<Option<HashMap<PathBuf, Entry>>> = Mutex::new(None);
 
     let stamp = std::fs::metadata(common_dir.join("worktrees"))
         .and_then(|m| m.modified())
         .ok();
     if let Ok(mut cache) = CACHE.lock()
-        && let Some((cached_stamp, worktrees)) =
+        && let Some((cached_stamp, at, worktrees)) =
             cache.get_or_insert_with(HashMap::new).get(common_dir)
         && *cached_stamp == stamp
+        && at.elapsed() < FRESH_FOR
     {
         return Ok(worktrees.clone());
     }
@@ -146,9 +153,10 @@ pub fn list(common_dir: &Path) -> Result<Vec<Worktree>> {
         .ok_or_else(|| anyhow::anyhow!("`git worktree list` failed in {}", common_dir.display()))?;
     let worktrees = parse_porcelain(&out, &admin_names(common_dir));
     if let Ok(mut cache) = CACHE.lock() {
-        cache
-            .get_or_insert_with(HashMap::new)
-            .insert(common_dir.to_path_buf(), (stamp, worktrees.clone()));
+        cache.get_or_insert_with(HashMap::new).insert(
+            common_dir.to_path_buf(),
+            (stamp, std::time::Instant::now(), worktrees.clone()),
+        );
     }
     Ok(worktrees)
 }
@@ -315,5 +323,16 @@ pub(crate) mod tests {
         assert!(!worktrees[3].is_usable(), "deleted with rm -rf");
 
         assert_eq!(checkout_of(dir.path()), None, "not a repository");
+    }
+
+    #[test]
+    fn a_directory_that_becomes_a_repository_is_seen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(checkout_of(dir.path()), None);
+        run_git(dir.path(), &["init", "-q"]);
+        assert!(
+            checkout_of(dir.path()).is_some(),
+            "\"not a checkout\" was cached"
+        );
     }
 }
