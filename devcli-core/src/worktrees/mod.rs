@@ -17,7 +17,8 @@ pub mod meta {
     /// The project in `config.json` (`proj` for `proj@slug`).
     pub const BASE_PROJECT: &str = "base_project";
     pub const WORKTREE: &str = "worktree";
-    pub const WORKTREE_ROOT: &str = "worktree_root";
+    /// pm-daemon stops the process when this directory is deleted.
+    pub const WORKTREE_ROOT: &str = process_manager::state::WORKTREE_ROOT_KEY;
     pub const WORKTREE_BRANCH: &str = "worktree_branch";
 }
 

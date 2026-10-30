@@ -79,9 +79,10 @@ impl Monitor {
                 continue;
             }
 
-            if proc.owner_gone() {
+            if proc.owner_gone() || proc.worktree_gone() {
                 // The attached `devcli start` that owned it exited without
-                // stopping it: it was killed, or its terminal went away.
+                // stopping it (killed, terminal closed), or the git worktree
+                // it runs from was deleted.
                 if let Err(e) = self.stop_orphan(&proc).await {
                     tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
                 }
@@ -97,9 +98,15 @@ impl Monitor {
         Ok(true)
     }
 
-    /// Stop a process whose owner is gone: SIGTERM, then SIGKILL after 5s.
+    /// Stop a process whose owner or worktree is gone: SIGTERM, then SIGKILL
+    /// after 5s.
     async fn stop_orphan(&self, proc: &crate::state::ManagedProcess) -> Result<()> {
-        tracing::info!(id = %proc.id, owner = ?proc.owner_pid(), "Owner exited, stopping process");
+        tracing::info!(
+            id = %proc.id,
+            owner = ?proc.owner_pid(),
+            worktree_gone = proc.worktree_gone(),
+            "Orphaned process, stopping it"
+        );
         let Some(current) = self.state.mark_stopping(&proc.id)? else {
             return Ok(());
         };
