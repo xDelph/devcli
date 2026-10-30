@@ -49,7 +49,12 @@ Complete reference for all devcli CLI commands.
 > app (project `proj@slug`). `APP@slug` names a worktree's instance from
 > anywhere, `APP@` the configured checkout, and `APP@*` every checkout
 > (`start`, `stop`, `status`). The suffix also works on `--project`. See
-> [`worktrees`](#worktrees).
+> [`worktrees`](#worktrees). Under an AI agent, `start` and `stop` refuse
+> `@*`.
+>
+> **Unknown names.** An app name that is neither configured nor running is an
+> error (exit code 1, with a "did you mean" suggestion when a configured name
+> is close), for `start` and `stop` as for `status`.
 
 ### `start`
 
@@ -65,9 +70,9 @@ devcli start <app-names>... [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `k8s` (overrides preference)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
-- `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `prod`, etc.
+- `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `preprod` or `prod` (overrides the app's `default_stages` and the `default-stage` preference)
 - `--detached` - Leave the apps running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
@@ -99,10 +104,13 @@ devcli start api --project awesome-project
   kill them right away. Apps that were already running are left alone. If
   `devcli` itself is killed, `pm-daemon` stops its apps within a few seconds.
 - **Detached** (`--detached`, `--json`, or `devcli pref set detached-mode true`):
-  returns immediately; the apps keep running until `devcli stop`
-- Starts monitor daemon automatically
-- Tracks process state in `~/.devcli/processes/`
-- Logs to `~/.devcli/logs/<project>_<app>_<env>_<date>.log`
+  returns immediately; the apps keep running until `devcli stop`. Under an AI
+  agent, `start` is always detached.
+- Apps asked for that already run are left alone (`--json` lists them in
+  `already_running`)
+- Spawns `pm-daemon` (health checks, auto-restart) if it is not running
+- Tracks process state in `~/.devcli/processes/<project>.<app>.<env>.json`
+- Logs to `~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log`
 
 **Dependencies**:
 ```bash
@@ -146,9 +154,10 @@ devcli stop --all
 devcli stop api --force
 ```
 
-**Under an AI agent**: `stop --all` and `stop --project P` without an app are
-refused (exit code 1), since they would also stop what the user and other
-agents run. devcli recognises agents by the variables their harnesses set on
+**Under an AI agent**: `stop --all`, `stop --project P` without an app, and
+`stop APP@*` (every worktree) are refused (exit code 1), since they would also
+stop what the user and other agents run (`stop --project P` run inside one of
+the project's worktrees only reaches that worktree, and is allowed). devcli recognises agents by the variables their harnesses set on
 the commands they run (`CLAUDE_CODE_CHILD_SESSION`/`CLAUDECODE`,
 `CODEX_SANDBOX`/`CODEX_THREAD_ID`, `GEMINI_CLI`, `CURSOR_AGENT`, `OPENCODE`,
 `PI_CODING_AGENT`, `AI_AGENT`, ...). `--dry-run` is still allowed. Set
@@ -158,11 +167,13 @@ IDE extensions also sets `CLAUDECODE`). This guards against mistakes; it is not
 a security boundary.
 
 **Behavior**:
-- Sends SIGTERM by default (graceful shutdown)
+- Sends SIGTERM by default (graceful shutdown), to the app's whole process group
 - Waits 5 seconds for graceful exit
 - Uses SIGKILL if --force or after timeout
 - Removes from state tracking
-- Monitor daemon exits when no processes remain
+- An app name that is neither configured nor running is an error (exit code 1);
+  a configured app that is not running is reported, with exit code 0
+- `pm-daemon` exits when no processes remain
 
 ---
 
@@ -180,7 +191,7 @@ devcli restart <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment (can change from current)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (defaults to the one it runs in)
 - `--skip-deps` - Skip restarting dependencies
 - `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
@@ -200,9 +211,11 @@ devcli restart api --skip-deps
 ```
 
 **Behavior**:
+- Fails (exit code 1) when the app is not running: use `start`
 - Stops current process
-- Starts new process with same config, attached or detached like `start`
-- Preserves restart count
+- Starts it again with the same command (the environment's default, or the
+  variant last given to `run`), attached or detached like `start`; under an AI
+  agent it always returns right away
 - Can change environment on restart
 
 ---
@@ -222,7 +235,7 @@ devcli run <app-name> <command-variant> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
 - `--skip-deps` - Skip dependencies
 
 **Examples**:
@@ -237,8 +250,18 @@ devcli run api build:production
 devcli run api test --env docker
 
 # Run specific variant
-devcli run api build:staging
+devcli run api test:e2e
 ```
+
+**Behavior**:
+- Starts the command in the background, with its output in the app's log file
+  (`~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log`, the same file as
+  `start`)
+- Then streams that output until Ctrl+C, which stops viewing but leaves the
+  command running; with `--json`, the `detached-mode` preference or under an AI
+  agent it returns right away
+- Only one process per app and environment is tracked: `run` fails (exit code
+  1) when the app already runs in that environment, whatever its command
 
 **Command Variants**:
 ```json
@@ -292,22 +315,25 @@ devcli status --deps
 
 **Output**:
 ```
-┌─────────────────────────────────────────────┐
-│ Running Processes                           │
-├─────────────────────────────────────────────┤
-│ api (PID 12345) ✓ healthy                  │
-│   Project: awesome-project                  │
-│   Environment: local                        │
-│   Uptime: 1h 23m 45s                       │
-│   Restarts: 0                              │
-│   Health: ✓ http://localhost:3000/health  │
-├─────────────────────────────────────────────┤
-│ worker (PID 12346) ● running               │
-│   Project: awesome-project                  │
-│   Environment: docker                       │
-│   Uptime: 45m 12s                          │
-│   Restarts: 2                              │
-└─────────────────────────────────────────────┘
+PROJECT: awesome-project
+  [api (local) [start]]  PID: 12345  running  1h 23m  npm run dev
+  [worker (docker) [start]]  PID: 12346  running  45m  docker compose up worker
+```
+
+Each line gives the app, its environment, the command name, PID, state,
+uptime and the command. With no tracked process it prints
+`No processes are currently tracked` and exits with code 1.
+
+`devcli status api --deps`:
+```
+App: api (Project: awesome-project)
+
+Dependencies:
+  - awesome-project/database ✓ running (PID: 12340, env: local, cmd: start)
+
+Status: running
+✓ running (PID: 12345, env: local, cmd: start)
+Uptime: 1h 23m
 ```
 
 ---
@@ -323,7 +349,7 @@ devcli logs <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `k8s`)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
 - `-n, --lines <N>` - Number of trailing lines to show (default `200`)
 - `-f, --follow` - Follow the file and stream new lines (blocks)
 
@@ -344,7 +370,8 @@ devcli --json logs api -n 100
 
 **Behavior**:
 - Reads the most recent file matching
-  `~/.devcli/logs/<project>_<app>_<env>_<date>.log`
+  `~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log`
+- Lines are the app's raw stdout/stderr; devcli adds no timestamps
 - `--json` returns `{ project, app, environment, file, lines: [...] }`
 - Use `--json` for agents; `--follow` is meant for humans
 
@@ -354,7 +381,9 @@ devcli --json logs api -n 100
 
 ### `monitor`
 
-Run health monitoring daemon (usually auto-started).
+Run the monitor loop in the foreground, with the metrics API (internal use).
+The monitor that normally runs is `pm-daemon`, which `start` and `run` spawn
+automatically.
 
 **Usage**:
 ```bash
@@ -366,19 +395,23 @@ devcli monitor [OPTIONS]
 
 **Examples**:
 ```bash
-# Run daemon (internal use, auto-started by 'start')
+# Run the monitor loop and the metrics API in the foreground
 devcli monitor --daemon
 
-# Manual cleanup run (without daemon)
+# One-shot cleanup of dead process entries (no daemon)
 devcli monitor
 ```
 
-**Behavior**:
+**Behavior** (`--daemon`):
+- Refuses to run (exit code 1, `A monitor (pm-daemon) is already running for
+  ...`) while pm-daemon holds the monitor lock; `start` does not spawn
+  pm-daemon while it runs
 - Monitors all running processes
 - Performs health checks every 3 seconds
 - Auto-restarts crashed processes (with restart_policy)
 - Tracks metrics
-- Exposes metrics API on localhost:9090
+- Serves the metrics API on `DEVCLI_METRICS_ADDR` (default `127.0.0.1:9090`);
+  pm-daemon has no HTTP server
 - Exits automatically when no processes remain
 
 ---
@@ -408,7 +441,7 @@ marks the current directory's worktree. `--json` gives the full document
 ```bash
 devcli worktrees
 devcli start api@agent-1     # start api in worktree agent-1
-devcli stop api@*            # stop api in every checkout
+devcli stop api@*            # stop api in every checkout (refused under an AI agent)
 ```
 
 ---
@@ -426,7 +459,8 @@ devcli health-check <app-name> [OPTIONS]
 - `<app-name>` - App name to check
 
 **Options**:
-- `-e, --env <ENV>` - Environment
+- `-p, --project <NAME>` - Project name (if app name is ambiguous)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
 
 **Examples**:
 ```bash
@@ -439,12 +473,19 @@ devcli health-check api --env docker
 
 **Output**:
 ```
-Health Check: api
-✓ HTTP check passed
-  URL: http://localhost:3000/health
-  Status: 200 OK
-  Response time: 45ms
+Checking health of: awesome-project/api
+Process ID: 12345
+Health check type: Http { url: "http://localhost:3000/health", timeout_secs: 5, expected_status: 200 }
+
+Executing health check...
+✅ Health check PASSED (0.01s)
+
+Status: Healthy
 ```
+
+When the check fails it prints `❌ Health check FAILED`, `Status: Unhealthy`
+and the number of consecutive failures, and exits with code 2. An app that is
+not running is an error (exit code 1).
 
 ---
 
@@ -452,7 +493,9 @@ Health Check: api
 
 Display process, system and performance metrics. Fetched from the metrics API
 when `devcli monitor --daemon` is running (`DEVCLI_METRICS_ADDR`, default
-`127.0.0.1:9090`), computed from the state store otherwise.
+`127.0.0.1:9090`), computed from the state store otherwise (pm-daemon, the
+monitor `start` spawns, serves no API; the monitor and performance counters
+are then 0).
 
 **Usage**:
 ```bash
@@ -465,49 +508,47 @@ devcli metrics
 devcli metrics
 ```
 
-**Output**:
+**Output** (without a metrics server):
 ```
 === Process Metrics ===
-Total Processes:       3
-  Running:             3 ●
+Total Processes:       1
+  Running:             1 ●
   Stopped:             0 ○
 
-Total Restarts:        5
-Restarts (last hour):  2
-Health Check Success:  98.5%
-
-Exit Code Distribution:
-  Exit 0: 3 times ✓
-  Exit 1: 2 times ✗
+Total Restarts:        0
+Restarts (last hour):  0
+Health Check Success:  100.0%
 
 === System Metrics ===
-Monitor Uptime:        3600 seconds (60 minutes)
-Loop Iterations:       1200
-DevCLI Version:        0.1.0
-Apps Configured:       12
+Monitor Uptime:        0 seconds (0 minutes)
+Loop Iterations:       0
+DevCLI Version:        0.6.1
+Apps Configured:       2
 
 === Performance Metrics ===
-Avg Startup Time:      450.23 ms
-Avg Health Check:      42.15 ms
-Avg Restart Time:      1023.45 ms
+Avg Startup Time:      0.00 ms
+Avg Health Check:      0.00 ms
+Avg Restart Time:      0.00 ms
 
-Recent Operations (last 5):
-  ✓ start - api (523 ms)
-  ✓ health_check - api (38 ms)
-  ✓ restart - worker (1250 ms)
+=== Running Apps ===
+  ✓ my-project/worker (uptime: 1s, restarts: 0)
+
+Timestamp: 2026-10-30 18:21:24.150690 UTC
 ```
 
-**HTTP API**:
+**HTTP API** (only while `devcli monitor --daemon` runs):
 ```bash
 # Raw JSON via API
 curl http://localhost:9090/metrics | jq
 ```
 
+`devcli --json metrics` prints the same document without a server.
+
 ---
 
 ### `ui`
 
-Launch interactive TUI for viewing logs.
+Launch the interactive TUI: status, commands and logs of your apps.
 
 **Usage**:
 ```bash
@@ -515,19 +556,22 @@ devcli ui
 ```
 
 **Features**:
-- View logs for all running processes
-- Real-time log streaming
-- Syntax highlighting
-- Multi-pane view
-- Keyboard navigation
+- Status, Commands and Logs tabs
+- Start, stop and restart apps, run their commands
+- Real-time log streaming, with search
 - ANSI color support
 
-**Keyboard Shortcuts**:
-- `↑/↓` or `j/k` - Scroll
-- `Tab` - Switch between apps
-- `g/G` - Jump to top/bottom
-- `h` - Help overlay
-- `q` - Quit
+**Keyboard Shortcuts** (press `?` in the TUI for the full list):
+- `↑/↓` or `k/j` - Move selection
+- `Tab` - Switch panel focus
+- `1` / `2` / `3` - Status, Commands, Logs tab
+- `Enter` - Start (Status tab), run (Commands tab), open log viewer (Logs tab)
+- `s` / `r` - Stop / restart the selected app
+- `Space` - Expand/collapse a project
+- In the log viewer: `PgUp/PgDn`, `Home/End`, `g/G`, `/` search, `n/N` next/previous match
+- `?` - Help overlay
+- `Esc` - Back / close
+- `q` or `Ctrl+C` - Quit
 
 ---
 
@@ -547,13 +591,21 @@ devcli config init
 # Create default config
 devcli config init
 
-# Output: Created config at ~/.devcli/config.json
+# Output:
+# ✓ Created empty config file at ~/.devcli/config.json
+#
+# Here's an example project configuration you can use as a reference:
+# { "projects": { "example": { "apps": { "my-app": { ... } } } } }
+#
+# Edit the config file to add your projects and apps.
+# Then run 'devcli config validate' to check your configuration.
 ```
 
 **Behavior**:
-- Creates `~/.devcli/config.json`
-- Starts with empty projects
-- Won't overwrite existing file
+- Creates `config.json` in the devcli directory (`DEVCLI_CONFIG_DIR`, else
+  `./.devcli` when it exists, else `~/.devcli`)
+- Writes `{"projects": {}}` and prints an example project to copy
+- Won't overwrite an existing file (exit code 1)
 
 ---
 
@@ -581,10 +633,26 @@ devcli config validate
 
 **Output**:
 ```
-✓ Config is valid
-✓ 3 projects, 8 apps
-✓ No circular dependencies
-✓ All dependencies exist
+Validating configuration...
+
+✓ Configuration is valid!
+  - 3 projects
+  - 8 apps
+```
+
+With problems (exit code 1 when there are errors; warnings alone do not fail):
+```
+Validating configuration...
+
+⚠ Warnings:
+  - [my-project/api] Unknown field 'dependecies' is ignored. Did you mean 'dependencies'?
+
+✗ Errors:
+  - [my-project/api] Default local command 'dev' not found in local commands
+  - [my-project/api] Invalid dependency my-project/database: App 'database' not found in project 'my-project'.
+
+Validation failed with 2 error(s)
+Error: Config validation failed
 ```
 
 ---
@@ -616,17 +684,15 @@ devcli config list --apps-only
 
 **Output**:
 ```
-Projects:
-
-awesome-project:
-  - api (nodejs)
-  - worker (nodejs)
-  - frontend (nodejs)
-  - database (docker)
-
-monitoring:
-  - prometheus (docker)
-  - grafana (docker)
+PROJECT: awesome-project
+  [api] (nodejs)
+    Path: ~/code/awesome-project/apps/api
+    Defaults: local='start'
+    Dependencies:
+      - awesome-project/database
+  [database] (docker)
+    Path: ~/code/awesome-project/docker
+    Defaults: local='start', docker='start'
 ```
 
 ---
@@ -659,27 +725,23 @@ Project: awesome-project
 Type: nodejs
 Path: ~/code/awesome-project/apps/api
 
-Defaults:
-  Local: start
-  Docker: start
+Defaults: local='start'
 
 Dependencies:
   - awesome-project/database
-  - awesome-project/redis
 
-Local Commands:
+LOCAL Commands:
   build: npm run build
   start: npm run dev
   test: npm test
 
-Docker Commands:
-  build: docker compose build api
-  start: docker compose up api
-
 Environment Files:
-  local: .env.dev
-  docker: .env.docker.dev
+  local: .env
 ```
+
+The port, health check and restart policy are printed after the path when
+configured. `--json` gives the full resolved app, including `env_files` and
+`default_stages` (see [AGENTS.md](../AGENTS.md)).
 
 ---
 
@@ -698,8 +760,9 @@ devcli config edit
 ```
 
 **Behavior**:
-- Opens `~/.devcli/config.json` in `$EDITOR`
-- Falls back to `vim` if `$EDITOR` not set
+- Opens the config file in use (see [config init](#config-init)) in
+  `$VISUAL`, else `$EDITOR`
+- Falls back to `vim` if neither is set
 
 ---
 
@@ -759,7 +822,7 @@ devcli config list-commands [app-name] [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Filter by environment
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
 
 ---
 
@@ -786,9 +849,11 @@ devcli env add <app-name> --stage <STAGE> --context <CONTEXT> --file <FILE>
 ```
 
 **Options**:
-- `--stage <STAGE>` - Stage name (dev, qa, prod, etc.)
-- `--context <CONTEXT>` - Context (local, docker, k8s)
-- `--file <FILE>` - Path to env file (relative to app path)
+- `-s, --stage <STAGE>` - Stage: `dev`, `qa`, `preprod`, `prod`, or `base`
+  (a file for every stage); any other value is refused
+- `-c, --context <CONTEXT>` - Context, i.e. the environment: `local`, `docker`,
+  `orbstack`, `docker-compose`, `k8s`, `ci`
+- `-f, --file <FILE>` - Path to env file (relative to app path)
 
 **Examples**:
 ```bash
@@ -834,18 +899,16 @@ devcli env list api
 
 **Output**:
 ```
-Environment Files for api:
+Environment files for awesome-project/api:
 
-dev:
-  local: .env.dev
-  docker: .env.docker.dev
+  base:
+    • local: .env
 
-qa:
-  docker: .env.qa
-  k8s: k8s/qa/env.yaml
+  dev:
+    • local: .env.dev
 
-prod:
-  k8s: k8s/prod/env.yaml
+Default stages:
+  • local: dev
 ```
 
 ---
@@ -864,6 +927,9 @@ devcli env set-default <app-name> --context <CONTEXT> --stage <STAGE>
 devcli env set-default api --context docker --stage dev
 ```
 
+The stage must be `dev`, `qa`, `preprod` or `prod` (`base` is not a stage you
+can start with); anything else is refused with exit code 1.
+
 ---
 
 ## Preferences
@@ -878,15 +944,26 @@ devcli pref set <key> <value>
 ```
 
 **Available Keys**:
-- `default-env` - Default environment (`local`, `docker`, `k8s`)
-- `auto-start-deps` - Auto-start dependencies (`true`, `false`)
-- `docker-platform` - Docker platform (`linux/amd64`, `linux/arm64`)
+- `default-env` - Default environment (`local`, `docker`, `orbstack`,
+  `docker-compose`, `k8s`, `ci`; default `local`)
+- `detached-mode` - `start`/`restart`/`run` return right away instead of
+  staying attached (`true`, `false`; default `false`)
+- `auto-start-deps` - Auto-start dependencies (`true`, `false`; default `true`)
+- `docker-platform` - Docker platform, `os/arch` (`linux/amd64`, `linux/arm64`;
+  default `linux/amd64`)
+- `default-stage` - Stage used when neither `--stage` nor the app's
+  `default_stages` sets one (`dev`, `qa`, `preprod`, `prod`, or `none` to
+  unset; default unset)
+
+Boolean values also accept `yes`/`no` and `1`/`0`.
 
 **Examples**:
 ```bash
 devcli pref set default-env docker
+devcli pref set detached-mode true
 devcli pref set auto-start-deps false
 devcli pref set docker-platform linux/arm64
+devcli pref set default-stage dev
 ```
 
 ---
@@ -902,10 +979,12 @@ devcli pref show
 
 **Output**:
 ```
-Current Preferences:
-  default-env:       local
-  auto-start-deps:   true
-  docker-platform:   linux/amd64
+Current preferences:
+  default-env: local
+  detached-mode: false
+  auto-start-deps: true
+  docker-platform: linux/amd64
+  default-stage: (not set)
 ```
 
 ---
@@ -937,7 +1016,10 @@ devcli auto-add [OPTIONS]
 - `-y, --yes` - Non-interactive: accept detected defaults without prompting
 - `-p, --project <NAME>` - Target project (non-interactive)
 - `-n, --name <NAME>` - App name to register (non-interactive)
-- `--type <TYPE>` - App type override (non-interactive)
+- `--type <TYPE>` - App type override (non-interactive): `nodejs`, `nx`,
+  `nx-workspace`, `rust`, `python`, `docker`, `redis`, `traefik`
+- `--force` - Replace an app that already exists (keeps its dependencies,
+  health check, restart policy and alternative name)
 
 **Examples**:
 ```bash
@@ -993,19 +1075,22 @@ devcli --version
 
 ## Environment Variables
 
-### `RUST_LOG`
+### `LOG_LEVEL`
 
-Control logging verbosity:
+Control logging verbosity, on stderr and in devcli's own log file
+(`~/.devcli/logs/devcli.json.YYYY-MM-DD`): `off`, `error`, `warn`, `info`
+(default), `debug` or `trace`. There are no per-module filters, and
+`RUST_LOG` is not read.
 
 ```bash
 # Debug logs
-RUST_LOG=debug devcli start api
+LOG_LEVEL=debug devcli start api
 
 # Trace (very verbose)
-RUST_LOG=trace devcli start api
+LOG_LEVEL=trace devcli start api
 
-# Module-specific
-RUST_LOG=devcli_core::commands::start=debug devcli start api
+# Quiet
+LOG_LEVEL=off devcli start api
 ```
 
 ### `DEVCLI_CONFIG_DIR`
@@ -1019,6 +1104,21 @@ export DEVCLI_CONFIG_DIR=~/.devcli
 devcli start api
 ```
 
+### `DEVCLI_AGENT`
+
+`1` (or any true value) makes devcli behave as under an AI agent (detached
+`start`/`restart`/`run`, bulk stops refused) for a harness it does not
+recognise; `0` turns agent detection off.
+
+### `DEVCLI_METRICS_ADDR`
+
+Address of the metrics API served by `devcli monitor --daemon` (default
+`127.0.0.1:9090`).
+
+### `NO_COLOR`
+
+Disable colored output, like `--no-color`.
+
 ---
 
 ## Exit Codes
@@ -1027,9 +1127,11 @@ devcli start api
 - `1` - General error, or a negative result:
   - `status`: no tracked process is running
   - `config validate`: the config is invalid
-- `2` - `health-check`: the app is running but unhealthy
+- `2` - `health-check`: the app is running but unhealthy; also a command-line
+  usage error (unknown subcommand or flag) without `--json`
 
-When `--json` is set, errors are reported as `{"error": "..."}` on stderr.
+When `--json` is set, errors are reported as `{"error": "..."}` on stderr, and
+usage errors exit with `1`.
 
 ---
 
