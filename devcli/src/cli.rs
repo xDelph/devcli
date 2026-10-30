@@ -30,7 +30,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: 'local', 'docker', or 'k8s' (overrides preference)"
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides preference)"
         )]
         env: Option<String>,
 
@@ -62,7 +62,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: 'local', 'docker', or 'k8s' (overrides existing config)"
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides existing config)"
         )]
         env: Option<String>,
 
@@ -108,7 +108,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: 'local', 'docker', or 'k8s' (overrides preference)"
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides preference)"
         )]
         env: Option<String>,
 
@@ -139,7 +139,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment filter: 'local', 'docker', 'orbstack', or 'k8s'"
+            help = "Environment filter: local, docker, orbstack, docker-compose (compose), k8s, ci"
         )]
         env: Option<String>,
 
@@ -269,7 +269,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: 'local', 'docker', 'orbstack', or 'k8s'"
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci"
         )]
         env: Option<String>,
     },
@@ -339,7 +339,9 @@ pub enum ConfigAction {
         #[arg(help = "App name (optional - will prompt if not provided)")]
         app_name: Option<String>,
 
-        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        #[arg(
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+        )]
         environment: Option<String>,
 
         #[arg(help = "Command name (optional - will prompt if not provided)")]
@@ -357,7 +359,9 @@ pub enum ConfigAction {
         #[arg(help = "App name (optional - will prompt if not provided)")]
         app_name: Option<String>,
 
-        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        #[arg(
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+        )]
         environment: Option<String>,
 
         #[arg(help = "Command name (optional - will prompt if not provided)")]
@@ -372,7 +376,9 @@ pub enum ConfigAction {
         #[arg(help = "App name (optional - will prompt if not provided)")]
         app_name: Option<String>,
 
-        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        #[arg(
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+        )]
         environment: Option<String>,
 
         #[arg(help = "Command name (optional - will prompt if not provided)")]
@@ -399,7 +405,9 @@ pub enum ConfigAction {
         #[arg(help = "App name (optional - will prompt if not provided)")]
         app_name: Option<String>,
 
-        #[arg(help = "Environment (local, docker, k8s) (optional - will prompt if not provided)")]
+        #[arg(
+            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+        )]
         environment: Option<String>,
 
         #[arg(help = "Command name (optional - will prompt if not provided)")]
@@ -417,7 +425,11 @@ pub enum EnvAction {
         #[arg(help = "App name")]
         app_name: String,
 
-        #[arg(short, long, help = "Stage: dev, qa, preprod, prod (env add also accepts base, for every stage)")]
+        #[arg(
+            short,
+            long,
+            help = "Stage: dev, qa, preprod, prod (env add also accepts base, for every stage)"
+        )]
         stage: String,
 
         #[arg(
