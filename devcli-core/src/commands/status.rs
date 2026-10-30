@@ -90,7 +90,20 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     project_names.sort();
 
     for project_name in project_names {
-        println!("\nPROJECT: {}", project_name);
+        let worktree = grouped
+            .get(&project_name)
+            .and_then(|procs| procs.first())
+            .and_then(|p| worktree_json(&p.metadata));
+        match worktree {
+            Some(w) => println!(
+                "\nPROJECT: {} (worktree {}, branch {}, {})",
+                project_name,
+                w["slug"].as_str().unwrap_or_default(),
+                w["branch"].as_str().unwrap_or("detached"),
+                w["path"].as_str().unwrap_or_default()
+            ),
+            None => println!("\nPROJECT: {}", project_name),
+        }
 
         if let Some(procs) = grouped.get(&project_name) {
             for process in procs {
@@ -218,6 +231,7 @@ async fn status_json(
                     None
                 },
                 "command": p.task.command,
+                "worktree": worktree_json(&p.metadata),
             })
         })
         .collect();
@@ -312,4 +326,16 @@ fn format_uptime(is_running: bool, start_time: chrono::DateTime<Utc>) -> String 
     } else {
         format!("{}m", minutes)
     }
+}
+
+/// The git worktree a process runs from, for `status`; `None` in the
+/// configured checkout.
+fn worktree_json(metadata: &HashMap<String, String>) -> Option<serde_json::Value> {
+    use crate::worktrees::meta;
+    let slug = metadata.get(meta::WORKTREE)?;
+    Some(json!({
+        "slug": slug,
+        "path": metadata.get(meta::WORKTREE_ROOT),
+        "branch": metadata.get(meta::WORKTREE_BRANCH),
+    }))
 }

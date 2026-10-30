@@ -149,7 +149,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     if crate::output::json_enabled() && !silent {
         crate::output::print_json(&serde_json::json!({
-            "started": [actual_app_name],
+            "started": [crate::worktrees::instance_name(&actual_app_name, resolved_app.worktree.as_ref())],
             "environment": environment,
             "detached": true,
         }))?;

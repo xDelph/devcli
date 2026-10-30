@@ -43,3 +43,11 @@ pub fn record(
         metadata.insert(meta::WORKTREE_BRANCH.to_string(), branch.clone());
     }
 }
+
+/// How an instance is named to the user: `api`, or `api@slug` in a worktree.
+pub fn instance_name(app: &str, worktree: Option<&Instance>) -> String {
+    match worktree {
+        Some(instance) => format!("{app}@{}", instance.slug),
+        None => app.to_string(),
+    }
+}

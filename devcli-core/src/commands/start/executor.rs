@@ -324,7 +324,10 @@ async fn start_single_app_process(
         drop(output_rx);
     }
 
-    Ok(app_name)
+    Ok(crate::worktrees::instance_name(
+        &app_name,
+        resolved_app.worktree.as_ref(),
+    ))
 }
 
 /// Helper function for internal use (starting dependencies)
