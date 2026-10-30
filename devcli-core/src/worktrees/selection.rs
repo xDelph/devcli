@@ -24,6 +24,9 @@ pub enum Selection {
     Named {
         app: String,
         project: Option<String>,
+        /// Why the config does not resolve it (with a "did you mean"), for
+        /// when no process matches either.
+        not_found: String,
     },
     /// Every process of this exact project name (`proj` or `proj@slug`).
     Project(String),
@@ -53,9 +56,10 @@ impl Selection {
                 )),
                 // An app removed from the config can still have processes:
                 // those are found by name.
-                Err(_) if !in_config(config, app, project) => Ok(Selection::Named {
+                Err(e) if !in_config(config, app, project) => Ok(Selection::Named {
                     app: app.to_string(),
                     project: project.map(str::to_string),
+                    not_found: e.to_string(),
                 }),
                 // Any other failure (an ambiguous name, git or the worktree
                 // registry failing) used to fall back to matching by name
@@ -86,13 +90,28 @@ impl Selection {
         })
     }
 
+    /// For a selection by name of an app that is not in the config, fail
+    /// when nothing matches either: a typo used to answer "No processes to
+    /// stop" with exit code 0.
+    pub fn check_found(&self, matched: usize) -> Result<()> {
+        if let Selection::Named { not_found, .. } = self
+            && matched == 0
+        {
+            anyhow::bail!("{not_found} No process of that name is tracked either.");
+        }
+        Ok(())
+    }
+
     /// For a selection by name, fail when it matches the processes of
     /// several projects instead of picking all of them.
     pub fn check_unambiguous<'a>(
         &self,
         matched: impl IntoIterator<Item = &'a HashMap<String, String>>,
     ) -> Result<()> {
-        let Selection::Named { app, project: None } = self else {
+        let Selection::Named {
+            app, project: None, ..
+        } = self
+        else {
             return Ok(());
         };
         let mut projects: Vec<&str> = matched
@@ -121,6 +140,7 @@ impl Selection {
             Selection::Named {
                 app: name,
                 project: filter,
+                ..
             } => {
                 let named = app == Some(name)
                     || metadata.get("alternative_name").map(String::as_str) == Some(name);

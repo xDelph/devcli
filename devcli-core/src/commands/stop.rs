@@ -217,6 +217,7 @@ fn filter_processes(
         .filter(|p| selection.matches(&p.metadata))
         .collect();
     selection.check_unambiguous(matched.iter().map(|p| &p.metadata))?;
+    selection.check_found(matched.len())?;
     Ok(matched)
 }
 

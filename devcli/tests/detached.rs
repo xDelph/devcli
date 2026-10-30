@@ -558,3 +558,16 @@ fn start_reports_apps_already_running() {
     assert_eq!(again["started"], serde_json::json!(["web"]));
     assert_eq!(again["already_running"], serde_json::json!(["ticker"]));
 }
+
+/// A name that is neither in the config nor tracked is an error, not
+/// "nothing to stop".
+#[test]
+fn stopping_an_unknown_app_is_an_error() {
+    let sb = Sandbox::new();
+    let out = sb.devcli(&["--json", "stop", "tickr"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = single_json(&out.stderr, &["--json", "stop", "tickr"]);
+    let message = err["error"].as_str().unwrap();
+    assert!(message.contains("Did you mean 'ticker'"), "{message}");
+    assert!(message.contains("No process"), "{message}");
+}
