@@ -21,6 +21,11 @@ shapes, and non-interactive behaviour.
    when devcli detects it runs under an AI agent (exit code 1); listing them
    with `--dry-run` is allowed.
 
+5. **In a git worktree, just run devcli from it.** `devcli start api` run
+   inside a worktree starts *that worktree's* copy of the app, on its own
+   ports, and `stop`/`status`/`logs` act on that copy only. See
+   [Git worktrees](#git-worktrees).
+
 ```bash
 devcli --json status          # parse JSON on stdout
 devcli --json config list
@@ -61,8 +66,12 @@ devcli --json status [APP] [--project P] [--deps]
 { "processes": [
   { "id": "proj.api.local", "app": "api", "project": "proj",
     "environment": "local", "command_variant": null, "pid": 1234,
-    "running": true, "uptime_seconds": 42, "command": "npm run dev" } ] }
+    "running": true, "uptime_seconds": 42, "command": "npm run dev",
+    "worktree": null } ] }
 ```
+
+`worktree` is `{ "slug", "path", "branch" }` for an instance running from a
+git worktree (its `project` is then `proj@slug`).
 
 With `--deps APP`: `{ "project", "app", "running", "pid", "uptime_seconds",
 "dependencies": [{ "project", "app", "running" }] }`.
@@ -78,6 +87,8 @@ devcli --json start api worker --project proj --env local --stage dev
 ```json
 { "started": ["api", "worker"], "environment": "local", "detached": true }
 ```
+
+A worktree instance is reported as `api@slug`.
 
 ### `stop`
 
@@ -188,6 +199,66 @@ are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
 ```json
 { "project": "proj", "app": "api", "type": "nodejs", "path": "/abs/apps/api" }
 ```
+
+## Git worktrees
+
+An app is configured once, with the path of one checkout; devcli runs it
+from **any git worktree of that repository**, wherever the worktree lives
+(`.claude/worktrees/x`, `.worktrees/x`, a sibling directory, ...). Nothing
+is added to the config. A worktree instance is named `project@slug` (slug:
+the worktree's name in git), so its process id, state and log file never
+collide with another checkout's.
+
+| Name | Designates |
+| ---- | ---------- |
+| `api` | the worktree the command runs in, else the configured checkout |
+| `api@slug` | that worktree, from anywhere |
+| `api@` | the configured checkout, from anywhere |
+| `api@*` | every checkout (`start`, `stop`, `status`) |
+
+The suffix also works on `--project` (`--project shop@slug`). From inside a
+worktree, `stop --project shop` only selects that worktree's processes.
+
+Each instance gets its own ports and variables:
+
+| Variable | Value |
+| -------- | ----- |
+| `DEVCLI_WORKTREE` | slug (empty in the configured checkout) |
+| `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists) |
+| `DEVCLI_PORT_OFFSET` | index × 100 |
+| `DEVCLI_WORKTREE_PATH`, `DEVCLI_WORKTREE_BRANCH` | in a worktree |
+| `PORT`, `DEVCLI_PORT` | the app's `port` + offset, when `port` is configured |
+
+Without a `port` in the config, a `PORT` from the app's env files is shifted
+in worktrees. Health checks follow the shifted port. In a fresh worktree
+without env files (they are usually gitignored), the configured checkout's
+are used. Dependencies in the same repository start in the same worktree.
+When a worktree directory is deleted, pm-daemon stops the apps that ran
+from it.
+
+### `worktrees`
+
+```bash
+devcli --json worktrees [--project P]
+```
+
+```json
+{ "repositories": [ { "root": "/abs/repo", "common_dir": "/abs/repo/.git",
+    "projects": ["shop"],
+    "worktrees": [
+      { "slug": null, "index": 0, "port_offset": 0, "path": "/abs/repo",
+        "branch": "main", "configured": true, "current": false,
+        "stale": false, "locked": false,
+        "apps": [{ "project": "shop", "app": "api", "name": "api", "running": true }] },
+      { "slug": "agent-1", "index": 1, "port_offset": 100,
+        "path": "/abs/repo/.claude/worktrees/agent-1", "branch": "agent-1",
+        "configured": false, "current": true, "stale": false, "locked": false,
+        "apps": [{ "project": "shop@agent-1", "app": "api", "name": "api@agent-1",
+                   "running": false }] } ] } ] }
+```
+
+`stale` worktrees were deleted without `git worktree remove`; devcli never
+prunes them.
 
 ## Environment
 

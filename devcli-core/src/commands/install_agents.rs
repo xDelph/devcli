@@ -76,6 +76,8 @@ the user registered with it; prefer it over launching dev servers by hand.
 - Only start, stop and restart the apps your task needs, by name: the user and
   other agents run apps too, and `stop --all` is refused to agents.
 - `devcli --json logs APP --project P -n 200` returns its recent output.
+- In a git worktree, run devcli from inside it: commands act on that
+  worktree's copy of the app (`project@worktree`), on its own ports.
 
 Before scripting devcli further, read the full contract (every command, JSON
 shape and exit code): {reference}";

@@ -227,6 +227,47 @@ Reset preferences to defaults:
 devcli pref reset
 ```
 
+## Git worktrees
+
+Agent harnesses give every sub-agent its own git worktree. devcli runs your
+apps from any worktree of their repository, with nothing added to the
+config:
+
+```bash
+cd ~/code/shop/.claude/worktrees/agent-1
+devcli start api            # this worktree's api, on its own ports
+devcli logs api             # its logs
+devcli stop api             # stops it, never the main checkout's
+
+devcli worktrees            # every worktree, its slot, branch and running apps
+devcli start api@agent-1    # the same instance, from anywhere
+devcli start api@           # the configured checkout, from anywhere
+devcli stop api@*           # every checkout
+```
+
+A worktree instance is the project `shop@agent-1`: its own process, state and
+log file. Worktrees are numbered (slot 1, 2, ...) and keep their number while
+they exist; an app gets `DEVCLI_WORKTREE`, `DEVCLI_WORKTREE_INDEX` and
+`DEVCLI_PORT_OFFSET` (slot × 100). Declare the port an app reads from `$PORT`
+to have devcli shift it:
+
+```json
+{ "path": "~/code/shop/apps/api", "port": 3000, "commands": { "local": { "dev": "npm run dev" } } }
+```
+
+`api` then listens on 3000 in the main checkout and on 3100 in slot 1, and its
+health check follows. Without `port`, a `PORT` from the app's env files is
+shifted. Also handled:
+
+- a fresh worktree has no env files (they are gitignored): the main
+  checkout's are used until the worktree has its own
+- dependencies in the same repository start in the same worktree; shared ones
+  (a database, another repository) stay the configured instance
+- Docker Compose apps get a `COMPOSE_PROJECT_NAME` per worktree
+- deleting a worktree stops the apps that ran from it (pm-daemon)
+- `auto-add` run inside a worktree registers the main checkout's path
+- the TUI lists each worktree instance under its project
+
 ## Using devcli with AI coding agents
 
 devcli speaks JSON and returns meaningful exit codes, so an agent can drive it
