@@ -404,4 +404,16 @@ mod tests {
             .apps
             .contains_key("second"));
     }
+
+    /// The minimal app from the configuration reference loads.
+    #[test]
+    fn test_minimal_documented_config_loads() {
+        let raw = r#"{"projects":{"project-name":{"apps":{"app-name":{
+            "type":"nodejs","path":"~/code/app-name","commands":{}}}}}}"#;
+        let config: crate::config::Config = serde_json::from_str(raw).unwrap();
+        assert!(config.projects["project-name"].apps["app-name"]
+            .defaults
+            .local
+            .is_none());
+    }
 }

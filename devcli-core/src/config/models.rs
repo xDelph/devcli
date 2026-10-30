@@ -197,7 +197,11 @@ pub struct App {
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
 
-    // Which commands to use by default for each environment
+    // Which commands to use by default for each environment.
+    // Optional: an app without defaults is valid (`run <command>` works and
+    // `config validate` reports environments that lack one); requiring the
+    // key made the minimal config shown in the docs fail to load.
+    #[serde(default)]
     pub defaults: Defaults,
 
     // Path to Dockerfile relative to app path (e.g., "Dockerfile", "docker/Dockerfile")
