@@ -486,4 +486,40 @@ mod tests {
 
         kill_and_reap(&shared).await;
     }
+
+    /// A stop abandoned midway (the stopping devcli was killed) is finished
+    /// by pm-daemon; a stop in progress is left alone.
+    #[tokio::test]
+    async fn tick_finishes_stops_whose_stopper_died() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+
+        let mut abandoned = spawn_and_track(&store, sleep_task("abandoned", 30)).await;
+        abandoned
+            .metadata
+            .insert(crate::state::STOPPING_KEY.to_string(), dead.to_string());
+        store.save(&abandoned).unwrap();
+
+        let mut in_progress = spawn_and_track(&store, sleep_task("in-progress", 30)).await;
+        in_progress.metadata.insert(
+            crate::state::STOPPING_KEY.to_string(),
+            std::process::id().to_string(),
+        );
+        store.save(&in_progress).unwrap();
+
+        monitor.tick().await.unwrap();
+        reap_child(abandoned.pid);
+        assert!(store.load("abandoned").unwrap().is_none());
+        assert!(!crate::engine::pid_alive(abandoned.pid));
+        assert!(
+            store.is_running(&in_progress),
+            "a live stopper keeps its entry"
+        );
+
+        kill_and_reap(&in_progress).await;
+    }
 }

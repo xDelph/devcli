@@ -75,7 +75,14 @@ impl Monitor {
 
         for mut proc in processes {
             if proc.is_stopping() {
-                // `stop` owns this entry until it deletes it.
+                // `stop` owns this entry until it deletes it, unless whoever
+                // was stopping it died midway: finish the job, or the app
+                // would run untracked forever.
+                if proc.stopper_gone()
+                    && let Err(e) = self.stop_orphan(&proc).await
+                {
+                    tracing::warn!(id = %proc.id, error = %e, "Failed to finish an abandoned stop");
+                }
                 continue;
             }
 

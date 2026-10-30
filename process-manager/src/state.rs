@@ -260,9 +260,11 @@ impl StateStore {
         let Some(mut process) = self.load(id)? else {
             return Ok(None);
         };
+        // Who is stopping it: if that process dies midway, pm-daemon finishes
+        // the job instead of skipping the entry forever.
         process
             .metadata
-            .insert(STOPPING_KEY.to_string(), "true".to_string());
+            .insert(STOPPING_KEY.to_string(), std::process::id().to_string());
         self.save(&process)?;
         Ok(Some(process))
     }
@@ -529,6 +531,18 @@ impl ManagedProcess {
     pub fn pid_was_reused(&self) -> bool {
         os_start_time(self.pid)
             .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+    }
+
+    /// Whether the process that set the `stopping` flag is gone (killed while
+    /// stopping the app). Entries flagged by older versions (`true`) count as
+    /// abandoned.
+    pub fn stopper_gone(&self) -> bool {
+        match self.metadata.get(STOPPING_KEY) {
+            None => false,
+            Some(value) => value
+                .parse::<u32>()
+                .map_or(true, |pid| !crate::engine::pid_alive(pid)),
+        }
     }
 
     /// Whether another app depends on this owned process.
