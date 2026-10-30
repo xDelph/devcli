@@ -16,6 +16,10 @@ shapes, and non-interactive behaviour.
    fast with a clear error instead of hanging.
 3. **Check the exit code**, not the text.
 4. **Isolate state** with `DEVCLI_CONFIG_DIR` when testing.
+5. **Act on the apps you work on, by name.** The user and other agents run
+   apps too. `stop --all`, and `stop --project P` without an app, are refused
+   when devcli detects it runs under an AI agent (exit code 1); listing them
+   with `--dry-run` is allowed.
 
 ```bash
 devcli --json status          # parse JSON on stdout
@@ -79,9 +83,12 @@ devcli --json start api worker --project proj --env local --stage dev
 
 ```bash
 devcli --json stop api --project proj        # one app
-devcli --json stop --all                     # everything
-devcli --json stop --all --dry-run           # report only, no signals
+devcli --json stop --all --dry-run           # what runs; nothing is stopped
 ```
+
+`stop --all` and `stop --project P` (no app) stop everything, including what
+the user and other agents run: under an AI agent they are refused with
+`{"error": ...}` and exit code 1. Stop the apps you started, by name.
 
 ```json
 { "dry_run": false, "stopped": 1, "failed": 0, "errors": [] }

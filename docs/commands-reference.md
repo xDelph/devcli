@@ -138,6 +138,17 @@ devcli stop --all
 devcli stop api --force
 ```
 
+**Under an AI agent**: `stop --all` and `stop --project P` without an app are
+refused (exit code 1), since they would also stop what the user and other
+agents run. devcli recognises agents by the variables their harnesses set on
+the commands they run (`CLAUDE_CODE_CHILD_SESSION`/`CLAUDECODE`,
+`CODEX_SANDBOX`/`CODEX_THREAD_ID`, `GEMINI_CLI`, `CURSOR_AGENT`, `OPENCODE`,
+`PI_CODING_AGENT`, `AI_AGENT`, ...). `--dry-run` is still allowed. Set
+`DEVCLI_AGENT=1` to apply this to a harness devcli does not recognise, or
+`DEVCLI_AGENT=0` where it misfires (the integrated terminal of Claude Code's
+IDE extensions also sets `CLAUDECODE`). This guards against mistakes; it is not
+a security boundary.
+
 **Behavior**:
 - Sends SIGTERM by default (graceful shutdown)
 - Waits 5 seconds for graceful exit

@@ -72,7 +72,9 @@ the user registered with it; prefer it over launching dev servers by hand.
 - `devcli --json config list` lists the projects and apps devcli knows.
 - `devcli --json status` shows what runs (exit code 1 when nothing does).
 - `devcli --json start APP --project P` starts an app in the background;
-  `devcli --json stop APP --project P` (or `stop --all`) stops it.
+  `devcli --json stop APP --project P` stops it.
+- Only start, stop and restart the apps your task needs, by name: the user and
+  other agents run apps too, and `stop --all` is refused to agents.
 - `devcli --json logs APP --project P -n 200` returns its recent output.
 
 Before scripting devcli further, read the full contract (every command, JSON

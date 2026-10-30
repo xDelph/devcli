@@ -267,6 +267,15 @@ own file:
 - `GEMINI.md`, when the project has one or Gemini CLI is installed: Gemini CLI
   reads `GEMINI.md`, not `AGENTS.md`.
 
+Agents are told to act on the apps they work on, by name, and devcli enforces
+the part that matters: when it detects it runs under an AI agent (from the
+variables agent harnesses set, such as `CLAUDECODE`, `CODEX_SANDBOX`,
+`GEMINI_CLI`, `CURSOR_AGENT`), it refuses `stop --all` and `stop --project P`
+without an app, which would also stop what you and other agents run.
+`DEVCLI_AGENT=1` turns this on for a harness devcli does not recognise,
+`DEVCLI_AGENT=0` turns it off. It guards against mistakes, not against an agent
+determined to kill processes.
+
 The blocks are fenced by HTML-comment markers, so devcli can refresh or remove
 them without touching your own lines; a file devcli created is deleted again on
 uninstall. The previous version of every file it changes is saved under
