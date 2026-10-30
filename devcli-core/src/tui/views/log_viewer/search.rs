@@ -1,5 +1,10 @@
 use super::file_loader::LogLine;
 
+/// Case-fold one character, keeping a 1:1 mapping with the displayed text.
+fn fold_case(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
 /// Represents a match within a line for highlighting purposes
 #[derive(Debug, Clone)]
 pub struct MatchRange {
@@ -37,7 +42,7 @@ impl SearchState {
         }
 
         // Search for the query in each line (case-insensitive)
-        let query_lower = self.query.to_lowercase();
+        let query_lower: Vec<char> = self.query.chars().map(fold_case).collect();
 
         self.results.reserve(content.len() / 20);
 
@@ -48,7 +53,7 @@ impl SearchState {
                 .iter()
                 .map(|s| s.content.as_ref())
                 .collect();
-            let line_lower = formatted_text.to_lowercase();
+            let line_lower: Vec<char> = formatted_text.chars().map(fold_case).collect();
 
             // Find all matches in this line
             let matches = self.find_matches_in_line(&line_lower, &query_lower);
@@ -69,24 +74,30 @@ impl SearchState {
 
     /// Finds all matches of the query in a line using substring matching
     ///
-    /// # Arguments
-    /// * `line_lower` - The line text in lowercase for case-insensitive matching
-    /// * `query_lower` - The search query in lowercase
-    ///
-    /// # Returns
-    /// Vector of MatchRange structs indicating character positions of matches
-    fn find_matches_in_line(&self, line_lower: &str, query_lower: &str) -> Vec<MatchRange> {
+    /// Both sides are case-folded one character at a time, so positions are
+    /// *character* indices into the displayed line - what the highlighter
+    /// uses. They used to be byte offsets into `to_lowercase()`'s output,
+    /// which drifted after any multi-byte character (and lowercasing can even
+    /// change byte lengths). Matches do not overlap: overlapping ranges made
+    /// the highlighter emit the shared text twice ("aa" in "aaaa" rendered
+    /// six characters).
+    fn find_matches_in_line(&self, line_lower: &[char], query_lower: &[char]) -> Vec<MatchRange> {
         let mut matches = Vec::new();
-        let mut start_pos = 0;
+        if query_lower.is_empty() || query_lower.len() > line_lower.len() {
+            return matches;
+        }
 
-        // Find all substring matches in the line
-        while let Some(match_pos) = line_lower[start_pos..].find(query_lower) {
-            let absolute_pos = start_pos + match_pos;
-            matches.push(MatchRange {
-                start: absolute_pos,
-                end: absolute_pos + query_lower.len(),
-            });
-            start_pos = absolute_pos + 1; // Move past this match to find overlapping matches
+        let mut start = 0;
+        while start + query_lower.len() <= line_lower.len() {
+            if line_lower[start..start + query_lower.len()] == *query_lower {
+                matches.push(MatchRange {
+                    start,
+                    end: start + query_lower.len(),
+                });
+                start += query_lower.len();
+            } else {
+                start += 1;
+            }
         }
 
         matches
@@ -118,7 +129,9 @@ impl SearchState {
 
     /// Checks if a line index is in the search results
     pub fn is_match(&self, line_idx: usize) -> bool {
-        self.results.contains(&line_idx)
+        // O(1): called for every rendered line, `results.contains` made each
+        // frame O(lines x matches).
+        self.match_ranges.contains_key(&line_idx)
     }
 
     /// Gets the match ranges for a specific line (for highlighting)
@@ -140,5 +153,32 @@ impl SearchState {
         self.results.clear();
         self.match_ranges.clear();
         self.current_idx = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
+        let state = SearchState::default();
+        let line: Vec<char> = line.chars().map(fold_case).collect();
+        let query: Vec<char> = query.chars().map(fold_case).collect();
+        state
+            .find_matches_in_line(&line, &query)
+            .into_iter()
+            .map(|m| (m.start, m.end))
+            .collect()
+    }
+
+    #[test]
+    fn match_positions_are_character_indices() {
+        // "é" is two bytes: byte offsets would put the match at 7, not 6.
+        assert_eq!(ranges("café: ERROR", "error"), vec![(6, 11)]);
+    }
+
+    #[test]
+    fn matches_do_not_overlap() {
+        assert_eq!(ranges("aaaa", "aa"), vec![(0, 2), (2, 4)]);
     }
 }

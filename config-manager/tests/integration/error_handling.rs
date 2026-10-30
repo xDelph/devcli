@@ -3,8 +3,6 @@
 use config_manager::core::Error;
 use config_manager::loader::{ConfigLoader, JsonLoader};
 
-#[cfg(feature = "encryption")]
-use config_manager::loader::EncryptedLoader;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -38,33 +36,6 @@ fn test_invalid_json_parsing() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, Error::LoadError(_)));
-}
-
-#[cfg(feature = "encryption")]
-#[test]
-fn test_encryption_wrong_password() {
-    let temp_dir = TempDir::new().unwrap();
-    let path = temp_dir.path().join("encrypted.json");
-
-    let config = Config {
-        value: "secret".to_string(),
-    };
-
-    // Save with password1
-    let base1 = JsonLoader::new(&path);
-    let loader1 = EncryptedLoader::new(base1, "password1");
-    loader1.save(&config).unwrap();
-
-    // Try to load with password2
-    let base2 = JsonLoader::new(&path);
-    let loader2 = EncryptedLoader::new(base2, "wrong-password");
-    let result: Result<Config, Error> = loader2.load();
-
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Decryption failed"));
 }
 
 #[test]
@@ -142,37 +113,4 @@ fn test_corruption_recovery() {
     // Should now load successfully
     let loaded: Config = loader.load().unwrap();
     assert_eq!(loaded.value, "recovered");
-}
-
-#[cfg(feature = "schema")]
-#[test]
-fn test_schema_validation_errors() {
-    use config_manager::schema::SchemaValidator;
-    use config_manager::validation::Validator;
-    use schemars::JsonSchema;
-
-    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-    struct ValidatedConfig {
-        #[schemars(range(min = 1, max = 100))]
-        value: u32,
-    }
-
-    let validator = SchemaValidator::<ValidatedConfig>::new();
-
-    // Valid config
-    let valid = ValidatedConfig { value: 50 };
-    let result = validator.validate(&valid);
-    assert!(result.is_valid());
-
-    // Invalid: below minimum
-    let invalid_low = ValidatedConfig { value: 0 };
-    let result = validator.validate(&invalid_low);
-    assert!(!result.is_valid());
-    assert!(!result.errors().is_empty());
-
-    // Invalid: above maximum
-    let invalid_high = ValidatedConfig { value: 101 };
-    let result = validator.validate(&invalid_high);
-    assert!(!result.is_valid());
-    assert!(!result.errors().is_empty());
 }

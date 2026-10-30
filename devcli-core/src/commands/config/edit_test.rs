@@ -204,4 +204,152 @@ mod edit_tests {
         assert_eq!(Stage::Preprod.as_str(), "preprod");
         assert_eq!(Stage::Prod.as_str(), "prod");
     }
+
+    fn config_with_api() -> Config {
+        let api = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm start")
+            .build();
+        ConfigBuilder::new().with_app("proj", "api", api).build()
+    }
+
+    fn some(value: &str) -> Option<String> {
+        Some(value.to_string())
+    }
+
+    /// Every environment the commands accept must work: orbstack,
+    /// docker-compose and ci used to hit `unreachable!()` and panic.
+    #[tokio::test]
+    async fn test_add_set_default_and_remove_for_every_environment() {
+        use crate::commands::config::edit::{
+            config_add_command, config_remove_command, config_set_default,
+        };
+        use crate::config::models::Environment;
+
+        let dir = crate::test_utils::TempConfigDir::new();
+        dir.write_config(&config_with_api());
+
+        for env in Environment::all() {
+            let name = env.as_str();
+            config_add_command(
+                some("api"),
+                some("proj"),
+                some(name),
+                some("go"),
+                some("echo go"),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("add-command {name}: {e}"));
+            config_set_default(some("api"), some("proj"), some(name), some("go"))
+                .await
+                .unwrap_or_else(|e| panic!("set-default {name}: {e}"));
+
+            let config = crate::config::load_config().unwrap();
+            let app = &config.projects["proj"].apps["api"];
+            assert_eq!(
+                app.commands
+                    .get(name)
+                    .and_then(|c| c.get("go"))
+                    .map(String::as_str),
+                Some("echo go"),
+                "{name}"
+            );
+            assert_eq!(
+                app.defaults.get(name).map(String::as_str),
+                Some("go"),
+                "{name}"
+            );
+
+            config_remove_command(some("api"), some("proj"), some(name), some("go"))
+                .await
+                .unwrap_or_else(|e| panic!("remove-command {name}: {e}"));
+            let config = crate::config::load_config().unwrap();
+            let app = &config.projects["proj"].apps["api"];
+            assert!(app.commands.get(name).is_none_or(|c| !c.contains_key("go")));
+            assert_eq!(app.defaults.get(name), None, "default cleared for {name}");
+        }
+    }
+
+    /// Aliases are accepted and stored under the canonical key.
+    #[tokio::test]
+    async fn test_environment_aliases_store_canonical_key() {
+        use crate::commands::config::edit::config_add_command;
+
+        let dir = crate::test_utils::TempConfigDir::new();
+        dir.write_config(&config_with_api());
+
+        config_add_command(
+            some("api"),
+            some("proj"),
+            some("compose"),
+            some("up"),
+            some("docker compose up"),
+        )
+        .await
+        .unwrap();
+        let config = crate::config::load_config().unwrap();
+        let app = &config.projects["proj"].apps["api"];
+        assert!(app
+            .commands
+            .docker_compose
+            .as_ref()
+            .unwrap()
+            .contains_key("up"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_environment_is_an_error() {
+        use crate::commands::config::edit::config_add_command;
+
+        let dir = crate::test_utils::TempConfigDir::new();
+        dir.write_config(&config_with_api());
+        let err = config_add_command(
+            some("api"),
+            some("proj"),
+            some("mars"),
+            some("x"),
+            some("y"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("Invalid environment"));
+    }
+
+    /// `config init` creates the file the other commands read.
+    #[tokio::test]
+    async fn test_config_init_honours_the_config_dir_override() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        crate::commands::config::init::config_init().await.unwrap();
+        assert!(dir.path().join("config.json").exists());
+        assert!(crate::config::load_config().unwrap().projects.is_empty());
+    }
+
+    /// A multi-word $EDITOR (`code -w`) is split like a shell would.
+    #[tokio::test]
+    async fn test_config_edit_runs_an_editor_with_arguments() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        dir.write_config(&config_with_api());
+        let previous_visual = std::env::var_os("VISUAL");
+        let previous_editor = std::env::var_os("EDITOR");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::remove_var("VISUAL") };
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("EDITOR", "sh -c 'echo edited > \"$1.marker\"' sh") };
+
+        let result = crate::commands::config::edit::config_edit().await;
+
+        match previous_visual {
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(v) => unsafe { std::env::set_var("VISUAL", v) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("VISUAL") },
+        }
+        match previous_editor {
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(v) => unsafe { std::env::set_var("EDITOR", v) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("EDITOR") },
+        }
+        result.unwrap();
+        assert!(dir.path().join("config.json.marker").exists());
+    }
 }

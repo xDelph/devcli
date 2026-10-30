@@ -47,10 +47,10 @@ fn managed_from_running(
 
 async fn wait_for_log_content(path: &Path, needle: &str) {
     for _ in 0..20 {
-        if let Ok(content) = tokio::fs::read_to_string(path).await {
-            if content.contains(needle) {
-                return;
-            }
+        if let Ok(content) = tokio::fs::read_to_string(path).await
+            && content.contains(needle)
+        {
+            return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -319,10 +319,13 @@ async fn test_ensure_daemon_running_singleton() {
     };
 
     let original_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var(
-        "PATH",
-        format!("{}:{}", daemon_dir.display(), original_path),
-    );
+    // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", daemon_dir.display(), original_path),
+        )
+    };
 
     let task = sleep_task("daemon-app", 120, None);
     let running = engine::spawn(&task).await.expect("spawn");
@@ -345,6 +348,22 @@ async fn test_ensure_daemon_running_singleton() {
     let lock_path = temp_dir.path().join(".daemon.lock");
     assert!(lock_path.exists());
 
+    // The daemon must lead its own process group (setsid), so a Ctrl+C sent to
+    // the terminal that launched devcli cannot reach it.
+    let daemon_pid = find_daemon_pid(temp_dir.path())
+        .await
+        .expect("pm-daemon running");
+    let daemon_pgid = std::process::Command::new("ps")
+        .args(["-o", "pgid=", "-p", &daemon_pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        daemon_pgid,
+        daemon_pid.to_string(),
+        "pm-daemon shares our process group"
+    );
+
     let _ = engine::terminate(pid, pgid, true).await;
     store.delete("daemon-app").unwrap();
 
@@ -360,6 +379,25 @@ async fn test_ensure_daemon_running_singleton() {
         !daemon_lock_held(&lock_path),
         "pm-daemon should release lock when state store is empty"
     );
+}
+
+async fn find_daemon_pid(state_dir: &Path) -> Option<u32> {
+    let needle = format!("--state-dir {}", state_dir.display());
+    for _ in 0..30 {
+        let output = std::process::Command::new("ps")
+            .args(["-eo", "pid=,command="])
+            .output()
+            .ok()?;
+        let found = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|l| l.contains("pm-daemon") && l.contains(&needle))
+            .and_then(|l| l.split_whitespace().next()?.parse().ok());
+        if found.is_some() {
+            return found;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    None
 }
 
 fn locate_pm_daemon_dir() -> Option<PathBuf> {
@@ -397,4 +435,205 @@ fn daemon_lock_held(lock_path: &Path) -> bool {
         }
         Err(_) => true,
     }
+}
+
+/// A detached child must keep running and logging after the process that
+/// spawned it goes away. Dropping the spawning runtime closes everything it
+/// owned, exactly like the CLI exiting after `devcli start`: with piped output
+/// the child died of SIGPIPE on its next write.
+#[test]
+#[cfg(unix)]
+fn test_detached_output_survives_the_spawner() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("ticker.log");
+
+    let task = Task {
+        id: "ticker".to_string(),
+        command: "sh -c 'i=0; while [ $i -lt 20 ]; do echo tick $i; i=$((i+1)); sleep 0.05; done'"
+            .to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let pid = {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let running = rt.block_on(engine::spawn(&task)).expect("spawn ticker");
+        running.pid
+    };
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if content.contains("tick 19") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child stopped logging once the spawner was gone; log was:\n{content}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let _ = std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status();
+}
+
+/// While the caller keeps the receiver, output of a detached child is still
+/// delivered through `output_rx`, and the channel closes once the child exits.
+#[tokio::test]
+#[cfg(unix)]
+async fn test_detached_output_is_streamed_from_the_log_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("stream.log");
+
+    let task = Task {
+        id: "stream".to_string(),
+        command: "sh -c 'echo first; echo second >&2'".to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn sh");
+    let mut lines = Vec::new();
+    let collected = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(msg) = running.output_rx.recv().await {
+            lines.push(msg.content);
+        }
+    })
+    .await;
+
+    assert!(
+        collected.is_ok(),
+        "channel never closed after the child exited"
+    );
+    assert!(lines.contains(&"first".to_string()), "got {lines:?}");
+    assert!(lines.contains(&"second".to_string()), "got {lines:?}");
+}
+
+/// Invalid UTF-8 on an attached child's output must not stop log capture.
+#[tokio::test]
+#[cfg(unix)]
+async fn test_attached_output_survives_invalid_utf8() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("binary.log");
+
+    let task = Task {
+        id: "binary".to_string(),
+        command: "sh -c \"printf 'bad \\377 byte\\n'; echo AFTER\"".to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: false,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let mut running = engine::spawn(&task).await.expect("spawn sh");
+    let mut lines = Vec::new();
+    while let Some(msg) = running.output_rx.recv().await {
+        lines.push(msg.content);
+    }
+    if let Some(child) = running.child.as_mut() {
+        let _ = child.wait().await;
+    }
+
+    assert!(lines.iter().any(|l| l.starts_with("bad ")), "got {lines:?}");
+    assert!(lines.contains(&"AFTER".to_string()), "got {lines:?}");
+    wait_for_log_content(&log_path, "AFTER").await;
+}
+
+/// A live PID whose process started long after we recorded ours belongs to
+/// someone else: the store must not report it as our running app (which would
+/// make `stop` signal an unrelated process).
+#[tokio::test]
+#[cfg(unix)]
+async fn test_reused_pid_is_not_reported_as_running() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+
+    let task = sleep_task("reused", 30, None);
+    let running = engine::spawn(&task).await.expect("spawn sleep");
+    let (pid, pgid) = (running.pid, running.pgid);
+    drop(running.output_rx);
+
+    let genuine = managed_from_running(task.clone(), pid, None, HashMap::new());
+    assert!(
+        store.is_running(&genuine),
+        "freshly recorded process is ours"
+    );
+
+    let mut stale = genuine.clone();
+    stale.start_time = Utc::now() - chrono::Duration::hours(1);
+    assert!(
+        !store.is_running(&stale),
+        "a process started an hour after our record is not ours"
+    );
+
+    let _ = engine::terminate(pid, pgid, true).await;
+}
+
+/// Rotating the log of a running detached app keeps it logging, from the start
+/// of the truncated file (the child writes in append mode, so no sparse hole).
+#[tokio::test]
+#[cfg(unix)]
+async fn test_log_rotation_while_app_runs() {
+    let temp_dir = TempDir::new().unwrap();
+    let log_path = temp_dir.path().join("rotate.log");
+
+    let task = Task {
+        id: "rotate".to_string(),
+        command: "sh -c 'i=0; while [ $i -lt 100 ]; do echo line $i; i=$((i+1)); sleep 0.02; done'"
+            .to_string(),
+        args: vec![],
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+        env: HashMap::new(),
+        is_detached: true,
+        log_file: Some(log_path.clone()),
+        health_check: HealthCheck::Process {},
+        restart_policy: RestartPolicy {
+            enabled: false,
+            ..RestartPolicy::default()
+        },
+    };
+
+    let running = engine::spawn(&task).await.expect("spawn");
+    drop(running.output_rx);
+    wait_for_log_content(&log_path, "line 10").await;
+
+    assert!(engine::rotate_log_if_large(&log_path, 1).unwrap());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !std::fs::read_to_string(&log_path)
+        .unwrap_or_default()
+        .contains("line 99")
+    {
+        assert!(std::time::Instant::now() < deadline, "app stopped logging");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let content = std::fs::read(&log_path).unwrap();
+    assert_ne!(content.first(), Some(&0u8), "sparse hole after truncation");
+    assert!(!String::from_utf8_lossy(&content).contains("line 0\n"));
+    let rotated = std::fs::read_to_string(temp_dir.path().join("rotate.log.1")).unwrap();
+    assert!(rotated.contains("line 0\n"));
 }

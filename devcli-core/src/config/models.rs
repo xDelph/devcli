@@ -136,11 +136,20 @@ impl Environment {
 // - Debug: Allows printing with {:?} for debugging
 // - Clone: Allows making copies with .clone()
 // - Serialize/Deserialize: Convert to/from JSON
+/// Projects by name, in the order they appear in config.json.
+///
+/// An insertion-ordered map so that a load/save round-trip keeps the file the
+/// way the user wrote it; with a `HashMap` every save reshuffled projects and
+/// apps at random, which made the config impossible to diff or version.
+pub type ProjectMap = indexmap::IndexMap<String, Project>;
+
+/// Apps of a project by name, in file order (see [`ProjectMap`]).
+pub type AppMap = indexmap::IndexMap<String, App>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    // HashMap allows dynamic keys (project names can be anything)
     // String = project name, Project = project data
-    pub projects: HashMap<String, Project>,
+    pub projects: ProjectMap,
 }
 
 // Project groups related apps together
@@ -148,13 +157,17 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     // String = app name, App = app configuration
-    pub apps: HashMap<String, App>,
+    pub apps: AppMap,
 
     // Alternative display name for privacy in screenshots or logs
     // When present, this name is shown in TUI and config commands
     // OPTIONAL: If not set, the actual project name is used
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alternative_name: Option<String>,
+
+    /// Unknown keys, preserved on save (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // App configuration for a single application
@@ -184,7 +197,11 @@ pub struct App {
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
 
-    // Which commands to use by default for each environment
+    // Which commands to use by default for each environment.
+    // Optional: an app without defaults is valid (`run <command>` works and
+    // `config validate` reports environments that lack one); requiring the
+    // key made the minimal config shown in the docs fail to load.
+    #[serde(default)]
     pub defaults: Defaults,
 
     // Path to Dockerfile relative to app path (e.g., "Dockerfile", "docker/Dockerfile")
@@ -218,7 +235,17 @@ pub struct App {
     // OPTIONAL: If not set, no automatic restarts occur
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_policy: Option<RestartPolicy>,
+
+    /// Keys devcli does not know (a newer version's field, or a typo).
+    ///
+    /// Kept so that a save does not silently delete them, and reported by
+    /// `config validate` so a misspelled `"dependecies"` does not go unnoticed.
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
+
+/// Unrecognised keys of a config object, preserved verbatim.
+pub type UnknownFields = serde_json::Map<String, serde_json::Value>;
 
 // Commands for different environments
 // Example: { "local": { "start": "npm start" }, "docker": {...}, "orbstack": {...}, "k8s": {...} }
@@ -307,6 +334,23 @@ impl Commands {
             "ci" => self.ci.as_mut(),
             _ => None,
         }
+    }
+
+    /// The command map of `env` (absent or present).
+    pub fn slot_mut(&mut self, env: Environment) -> &mut Option<HashMap<String, String>> {
+        match env {
+            Environment::Local => &mut self.local,
+            Environment::Docker => &mut self.docker,
+            Environment::OrbStack => &mut self.orbstack,
+            Environment::DockerCompose => &mut self.docker_compose,
+            Environment::K8s => &mut self.k8s,
+            Environment::Ci => &mut self.ci,
+        }
+    }
+
+    /// The command map of `env`, created empty if the app had none yet.
+    pub fn entry(&mut self, env: Environment) -> &mut HashMap<String, String> {
+        self.slot_mut(env).get_or_insert_with(HashMap::new)
     }
 
     /// Returns all environment keys that have commands defined, in a consistent order
@@ -408,16 +452,18 @@ impl Defaults {
         }
     }
 
-    /// Get mutable default command for a specific environment
-    pub fn get_mut(&mut self, env: &str) -> &mut Option<String> {
+    /// The default command slot of `env`.
+    ///
+    /// Typed on purpose: the string-keyed version fell back to `local` for an
+    /// unknown name, silently changing the wrong default.
+    pub fn slot_mut(&mut self, env: Environment) -> &mut Option<String> {
         match env {
-            "local" => &mut self.local,
-            "docker" => &mut self.docker,
-            "orbstack" => &mut self.orbstack,
-            "k8s" | "kubernetes" => &mut self.k8s,
-            "docker-compose" | "compose" => &mut self.docker_compose,
-            "ci" => &mut self.ci,
-            _ => &mut self.local, // Fallback (shouldn't happen)
+            Environment::Local => &mut self.local,
+            Environment::Docker => &mut self.docker,
+            Environment::OrbStack => &mut self.orbstack,
+            Environment::DockerCompose => &mut self.docker_compose,
+            Environment::K8s => &mut self.k8s,
+            Environment::Ci => &mut self.ci,
         }
     }
 }
@@ -427,17 +473,17 @@ impl App {
     /// Falls back to stage-only or base .env if context-specific not found
     pub fn get_env_file(&self, stage: Option<&str>, env: &str) -> Option<String> {
         // Check env_files structure
-        if let Some(ref env_files) = self.env_files {
-            if let Some(stage_name) = stage {
-                // Try stage + environment specific
-                if let Some(stage_map) = env_files.get(stage_name) {
-                    if let Some(path) = stage_map.get(env) {
-                        return Some(path.clone());
-                    }
-                    // Try stage with "all" context
-                    if let Some(path) = stage_map.get("all") {
-                        return Some(path.clone());
-                    }
+        if let Some(ref env_files) = self.env_files
+            && let Some(stage_name) = stage
+        {
+            // Try stage + environment specific
+            if let Some(stage_map) = env_files.get(stage_name) {
+                if let Some(path) = stage_map.get(env) {
+                    return Some(path.clone());
+                }
+                // Try stage with "all" context
+                if let Some(path) = stage_map.get("all") {
+                    return Some(path.clone());
                 }
             }
         }
@@ -453,10 +499,10 @@ impl App {
         preferences_default: Option<&str>,
     ) -> Option<String> {
         // Check default_stages structure
-        if let Some(ref default_stages) = self.default_stages {
-            if let Some(stage) = default_stages.get(env) {
-                return Some(stage.clone());
-            }
+        if let Some(ref default_stages) = self.default_stages
+            && let Some(stage) = default_stages.get(env)
+        {
+            return Some(stage.clone());
         }
 
         // Fall back to preferences default

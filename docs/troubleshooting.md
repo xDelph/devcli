@@ -80,8 +80,8 @@ devcli config init
 # Verify location
 ls -l ~/.devcli/config.json
 
-# Check devcli_CONFIG_DIR override
-echo $devcli_CONFIG_DIR
+# Check DEVCLI_CONFIG_DIR override
+echo $DEVCLI_CONFIG_DIR
 ```
 
 ### Invalid JSON Syntax

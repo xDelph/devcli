@@ -10,7 +10,10 @@ pub struct NodeJsStrategy;
 
 #[derive(Deserialize)]
 struct PackageJson {
-    name: String,
+    /// Optional: private apps often omit it, and requiring it made such a
+    /// package.json fail to parse, so the app was not detected as Node.js.
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
@@ -55,10 +58,9 @@ impl DetectionStrategy for NodeJsStrategy {
         let key_files = vec!["package.json".into()];
 
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "package_name".to_string(),
-            serde_json::json!(package_json.name),
-        );
+        if let Some(ref name) = package_json.name {
+            metadata.insert("package_name".to_string(), serde_json::json!(name));
+        }
         if let Some(ref version) = package_json.version {
             metadata.insert("package_version".to_string(), serde_json::json!(version));
         }
@@ -110,14 +112,8 @@ impl DetectionStrategy for NodeJsStrategy {
 }
 
 fn detect_node_version() -> Option<String> {
-    use std::process::Command;
-
-    Command::new("node")
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|s| s.trim().trim_start_matches('v').to_string())
+    crate::utils::tool_version::tool_version_output("node")
+        .map(|s| s.trim_start_matches('v').to_string())
 }
 
 #[cfg(test)]
@@ -197,6 +193,22 @@ mod tests {
         assert_eq!(
             crate::utils::package_manager::detect_node_package_manager(&ctx),
             "yarn"
+        );
+    }
+
+    #[test]
+    fn test_package_json_without_name_is_still_nodejs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"private": true, "scripts": {"dev": "vite"}}"#,
+        )
+        .unwrap();
+        let ctx = DetectionContext::new(temp.path()).unwrap();
+        let result = NodeJsStrategy.detect(&ctx);
+        assert!(
+            result.is_ok(),
+            "a nameless package.json must still be detected"
         );
     }
 }

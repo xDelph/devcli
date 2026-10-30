@@ -43,14 +43,3 @@ fn missing_subcommand_exits_with_error() {
 
     assert!(!output.status.success());
 }
-
-#[test]
-fn hidden_internal_spawner_not_in_help() {
-    let output = Command::new(devcli_bin())
-        .arg("--help")
-        .output()
-        .expect("run devcli --help");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("internal-spawner"));
-}

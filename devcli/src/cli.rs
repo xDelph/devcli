@@ -68,6 +68,12 @@ pub enum Commands {
 
         #[arg(long, help = "Skip dependency checks")]
         skip_deps: bool,
+
+        #[arg(
+            long,
+            help = "Leave the app running in the background and return immediately (overrides the detached-mode preference)"
+        )]
+        detached: bool,
     },
 
     #[command(about = "Stop one or more running processes")]
@@ -169,24 +175,75 @@ pub enum Commands {
 
         #[arg(long = "type", help = "App type override (e.g., nodejs, docker, rust)")]
         app_type: Option<String>,
+
+        #[arg(
+            long,
+            help = "Replace an app that already exists (keeps its dependencies, health check, restart policy and alternative name)"
+        )]
+        force: bool,
     },
 
-    #[command(about = "Install devcli's agent rules into AGENTS.md so AI agents can use it")]
+    #[command(
+        about = "Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, ...) to use devcli",
+        long_about = "Teach AI coding agents to use devcli.\n\n\
+            By default, writes devcli's rules into ./AGENTS.md (read by Codex, Cursor, OpenCode, \
+            Devin, pi, Copilot and Claude Code), and imports it from the project's CLAUDE.md (when \
+            there is one) and GEMINI.md (when there is one or Gemini CLI is installed).\n\n\
+            With --global, writes a short block into the user-level rules of every agent found \
+            (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md, \
+            ~/.cursor/rules/devcli.mdc, ~/.pi/agent/AGENTS.md, ~/.config/opencode/AGENTS.md, \
+            ~/.config/devin/AGENTS.md), pointing at the full rules in ~/.devcli/AGENTS.md. \
+            Re-run after upgrading devcli to refresh them."
+    )]
     InstallAgents {
-        #[arg(long, help = "Install for the current user (~/.agents/AGENTS.md)")]
+        #[arg(
+            long,
+            conflicts_with = "local",
+            help = "Install into the user-level files of your agents instead of a project"
+        )]
         global: bool,
 
-        #[arg(long, value_name = "PATH", help = "Install into <PATH>/AGENTS.md")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Install into the project at <PATH> (default: current directory)"
+        )]
         local: Option<String>,
+
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            requires = "global",
+            value_parser = ["claude", "codex", "gemini", "cursor", "pi", "opencode", "devin"],
+            help = "With --global: only this agent (repeatable; default: every agent found)"
+        )]
+        agents: Vec<String>,
     },
 
-    #[command(about = "Remove devcli's agent rules from AGENTS.md")]
+    #[command(about = "Remove devcli's agent rules installed by install-agents")]
     UninstallAgents {
-        #[arg(long, help = "Remove from the current user's AGENTS.md")]
+        #[arg(
+            long,
+            conflicts_with = "local",
+            help = "Remove from the user-level files of your agents"
+        )]
         global: bool,
 
-        #[arg(long, value_name = "PATH", help = "Remove from <PATH>/AGENTS.md")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Remove from the project at <PATH> (default: current directory)"
+        )]
         local: Option<String>,
+
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            requires = "global",
+            value_parser = ["claude", "codex", "gemini", "cursor", "pi", "opencode", "devin"],
+            help = "With --global: only this agent (repeatable; default: all of them)"
+        )]
+        agents: Vec<String>,
     },
 
     #[command(about = "Manually check the health of a running app")]
@@ -210,12 +267,6 @@ pub enum Commands {
 
     #[command(about = "Display metrics from the monitor daemon")]
     Metrics,
-
-    #[command(hide = true)]
-    InternalSpawner {
-        #[arg(long, help = "Base64-encoded JSON payload")]
-        payload: String,
-    },
 
     #[command(about = "Manage configuration")]
     Config {
@@ -479,6 +530,7 @@ mod tests {
                 project: Some("qm".into()),
                 env: Some("local".into()),
                 skip_deps: true,
+                detached: false,
             }
         );
 
@@ -544,6 +596,7 @@ mod tests {
                 project: None,
                 name: None,
                 app_type: None,
+                force: false,
             }
         );
     }
@@ -572,16 +625,6 @@ mod tests {
                 .command,
             Commands::Metrics
         ));
-
-        let spawner = Cli::try_parse_from(["devcli", "internal-spawner", "--payload", "dGVzdA=="])
-            .expect("parse internal-spawner")
-            .command;
-        assert_eq!(
-            spawner,
-            Commands::InternalSpawner {
-                payload: "dGVzdA==".into(),
-            }
-        );
     }
 
     #[test]

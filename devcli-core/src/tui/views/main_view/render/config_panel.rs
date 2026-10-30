@@ -1,5 +1,5 @@
 use super::super::{ConfigField, ConfigMode, DeleteType, MainView, PanelFocus};
-use crate::config::loader::load_config;
+use crate::config::loader::load_config_cached;
 use crate::tui::state::AppState;
 use crate::tui::theme::Theme;
 use ratatui::{
@@ -106,160 +106,143 @@ impl MainView {
             ]));
             lines.push(Line::from(""));
 
-            match load_config() {
+            match load_config_cached() {
                 Ok(config) => {
-                    if let Some(project) = config.projects.get(&app.project) {
-                        if let Some(full_app) = project.apps.get(&app.name) {
-                            // Get project alternative_name if present
-                            let project_display_name =
-                                project.alternative_name.as_ref().unwrap_or(&app.project);
-                            lines.push(Line::from(vec![
-                                Span::styled("Project:     ".to_string(), theme.style_text_dim()),
-                                Span::styled(project_display_name.clone(), theme.style_text()),
-                            ]));
+                    if let Some(project) = config.projects.get(&app.project)
+                        && let Some(full_app) = project.apps.get(&app.name)
+                    {
+                        // Get project alternative_name if present
+                        let project_display_name =
+                            project.alternative_name.as_ref().unwrap_or(&app.project);
+                        lines.push(Line::from(vec![
+                            Span::styled("Project:     ".to_string(), theme.style_text_dim()),
+                            Span::styled(project_display_name.clone(), theme.style_text()),
+                        ]));
 
-                            lines.push(Line::from(vec![
-                                Span::styled("Type:        ".to_string(), theme.style_text_dim()),
-                                Span::styled(full_app.app_type.clone(), theme.style_text()),
-                            ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("Type:        ".to_string(), theme.style_text_dim()),
+                            Span::styled(full_app.app_type.clone(), theme.style_text()),
+                        ]));
 
-                            lines.push(Line::from(vec![
-                                Span::styled("Path:        ".to_string(), theme.style_text_dim()),
-                                Span::styled(full_app.path.clone(), theme.style_text()),
-                            ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("Path:        ".to_string(), theme.style_text_dim()),
+                            Span::styled(full_app.path.clone(), theme.style_text()),
+                        ]));
 
-                            lines.push(Line::from(""));
+                        lines.push(Line::from(""));
 
-                            lines.push(Line::from(Span::styled(
-                                "Commands:".to_string(),
-                                Style::default()
-                                    .fg(theme.secondary)
-                                    .add_modifier(Modifier::BOLD),
-                            )));
+                        lines.push(Line::from(Span::styled(
+                            "Commands:".to_string(),
+                            Style::default()
+                                .fg(theme.secondary)
+                                .add_modifier(Modifier::BOLD),
+                        )));
 
-                            let max_name_len = self.calculate_max_command_name_len(full_app);
-                            let mut global_cmd_idx = 0;
+                        let max_name_len = self.calculate_max_command_name_len(full_app);
+                        let mut global_cmd_idx = 0;
 
-                            // Render commands for each environment dynamically
-                            let env_configs = [
-                                ("LOCAL", &full_app.commands.local, &full_app.defaults.local),
-                                (
-                                    "DOCKER",
-                                    &full_app.commands.docker,
-                                    &full_app.defaults.docker,
-                                ),
-                                (
-                                    "ORBSTACK",
-                                    &full_app.commands.orbstack,
-                                    &full_app.defaults.orbstack,
-                                ),
-                                ("K8S", &full_app.commands.k8s, &full_app.defaults.k8s),
-                            ];
-
-                            for (env_name, commands, defaults) in env_configs {
-                                self.render_env_commands(
-                                    &mut lines,
-                                    &mut global_cmd_idx,
-                                    env_name,
-                                    commands,
-                                    defaults,
-                                    max_name_len,
-                                    theme,
-                                );
-                            }
-
-                            lines.push(Line::from(""));
-
-                            // Display env_files configuration
-                            if let Some(env_files) = &full_app.env_files {
-                                lines.push(Line::from(Span::styled(
-                                    "Environment Files:".to_string(),
-                                    Style::default()
-                                        .fg(theme.secondary)
-                                        .add_modifier(Modifier::BOLD),
-                                )));
-
-                                // Sort stages alphabetically for consistent display
-                                let mut sorted_stages: Vec<_> = env_files.iter().collect();
-                                sorted_stages.sort_by_key(|(stage, _)| stage.as_str());
-
-                                for (stage, contexts) in sorted_stages {
-                                    lines.push(Line::from(vec![
-                                        Span::styled("  ".to_string(), Style::default()),
-                                        Span::styled(
-                                            format!("{}: ", stage),
-                                            theme.style_text_primary(),
-                                        ),
-                                    ]));
-
-                                    // Sort contexts alphabetically for consistent display
-                                    let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                                    sorted_contexts.sort_by_key(|(context, _)| context.as_str());
-
-                                    for (context, file_path) in sorted_contexts {
-                                        lines.push(Line::from(vec![
-                                            Span::styled(
-                                                "    • ".to_string(),
-                                                theme.style_text_dim(),
-                                            ),
-                                            Span::styled(
-                                                format!("{}: ", context),
-                                                theme.style_text_secondary(),
-                                            ),
-                                            Span::styled(file_path.clone(), theme.style_text()),
-                                        ]));
-                                    }
-                                }
-                                lines.push(Line::from(""));
-                            }
-
-                            if !full_app.dependencies.is_empty() {
-                                lines.push(Line::from(Span::styled(
-                                    "Dependencies:".to_string(),
-                                    Style::default()
-                                        .fg(theme.secondary)
-                                        .add_modifier(Modifier::BOLD),
-                                )));
-                                for dep in &full_app.dependencies {
-                                    lines.push(Line::from(vec![
-                                        Span::styled("  • ".to_string(), theme.style_text_dim()),
-                                        Span::styled(
-                                            format!("{}/{}", dep.project, dep.app),
-                                            theme.style_text(),
-                                        ),
-                                    ]));
-                                }
-                                lines.push(Line::from(""));
-                            }
-
-                            lines.push(Line::from(""));
-                            lines.push(Line::from(Span::styled(
-                                "Actions:",
-                                Style::default()
-                                    .fg(theme.secondary)
-                                    .add_modifier(Modifier::BOLD),
-                            )));
-                            lines.push(Line::from(vec![
-                                Span::styled("  a", theme.style_text_primary()),
-                                Span::styled(" - Add new command", theme.style_text()),
-                            ]));
-                            lines.push(Line::from(vec![
-                                Span::styled("  e", theme.style_text_primary()),
-                                Span::styled(" - Edit selected command", theme.style_text()),
-                            ]));
-                            lines.push(Line::from(vec![
-                                Span::styled("  f", theme.style_text_primary()),
-                                Span::styled(" - Edit environment files", theme.style_text()),
-                            ]));
-                            lines.push(Line::from(vec![
-                                Span::styled("  E", theme.style_text_primary()),
-                                Span::styled(" - Edit this app", theme.style_text()),
-                            ]));
-                            lines.push(Line::from(vec![
-                                Span::styled("  d", theme.style_text_primary()),
-                                Span::styled(" - Delete this app", theme.style_text()),
-                            ]));
+                        // Render commands for each environment, in the order
+                        // every other part of the TUI uses (Environment::all).
+                        for env in crate::config::models::Environment::all() {
+                            self.render_env_commands(
+                                &mut lines,
+                                &mut global_cmd_idx,
+                                env.display_name(),
+                                full_app.commands.get(env.as_str()),
+                                full_app.defaults.get(env.as_str()),
+                                max_name_len,
+                                theme,
+                            );
                         }
+
+                        lines.push(Line::from(""));
+
+                        // Display env_files configuration
+                        if let Some(env_files) = &full_app.env_files {
+                            lines.push(Line::from(Span::styled(
+                                "Environment Files:".to_string(),
+                                Style::default()
+                                    .fg(theme.secondary)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
+
+                            // Sort stages alphabetically for consistent display
+                            let mut sorted_stages: Vec<_> = env_files.iter().collect();
+                            sorted_stages.sort_by_key(|(stage, _)| stage.as_str());
+
+                            for (stage, contexts) in sorted_stages {
+                                lines.push(Line::from(vec![
+                                    Span::styled("  ".to_string(), Style::default()),
+                                    Span::styled(
+                                        format!("{}: ", stage),
+                                        theme.style_text_primary(),
+                                    ),
+                                ]));
+
+                                // Sort contexts alphabetically for consistent display
+                                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
+                                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
+
+                                for (context, file_path) in sorted_contexts {
+                                    lines.push(Line::from(vec![
+                                        Span::styled("    • ".to_string(), theme.style_text_dim()),
+                                        Span::styled(
+                                            format!("{}: ", context),
+                                            theme.style_text_secondary(),
+                                        ),
+                                        Span::styled(file_path.clone(), theme.style_text()),
+                                    ]));
+                                }
+                            }
+                            lines.push(Line::from(""));
+                        }
+
+                        if !full_app.dependencies.is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                "Dependencies:".to_string(),
+                                Style::default()
+                                    .fg(theme.secondary)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
+                            for dep in &full_app.dependencies {
+                                lines.push(Line::from(vec![
+                                    Span::styled("  • ".to_string(), theme.style_text_dim()),
+                                    Span::styled(
+                                        format!("{}/{}", dep.project, dep.app),
+                                        theme.style_text(),
+                                    ),
+                                ]));
+                            }
+                            lines.push(Line::from(""));
+                        }
+
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(Span::styled(
+                            "Actions:",
+                            Style::default()
+                                .fg(theme.secondary)
+                                .add_modifier(Modifier::BOLD),
+                        )));
+                        lines.push(Line::from(vec![
+                            Span::styled("  a", theme.style_text_primary()),
+                            Span::styled(" - Add new command", theme.style_text()),
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("  e", theme.style_text_primary()),
+                            Span::styled(" - Edit selected command", theme.style_text()),
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("  f", theme.style_text_primary()),
+                            Span::styled(" - Edit environment files", theme.style_text()),
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("  E", theme.style_text_primary()),
+                            Span::styled(" - Edit this app", theme.style_text()),
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("  d", theme.style_text_primary()),
+                            Span::styled(" - Delete this app", theme.style_text()),
+                        ]));
                     }
                 }
                 Err(e) => {
@@ -296,20 +279,11 @@ impl MainView {
     }
 
     fn calculate_max_command_name_len(&self, app: &crate::config::models::App) -> usize {
-        let mut max_len = 15;
-        if let Some(local) = &app.commands.local {
-            max_len = max_len.max(local.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(docker) = &app.commands.docker {
-            max_len = max_len.max(docker.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(orbstack) = &app.commands.orbstack {
-            max_len = max_len.max(orbstack.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        if let Some(k8s) = &app.commands.k8s {
-            max_len = max_len.max(k8s.keys().map(|k| k.len()).max().unwrap_or(0));
-        }
-        max_len
+        crate::config::models::Environment::all()
+            .iter()
+            .filter_map(|env| app.commands.get(env.as_str()))
+            .flat_map(|cmds| cmds.keys().map(String::len))
+            .fold(15, usize::max)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -318,8 +292,8 @@ impl MainView {
         lines: &mut Vec<Line<'static>>,
         global_cmd_idx: &mut usize,
         env_name: &str,
-        commands: &Option<std::collections::HashMap<String, String>>,
-        default: &Option<String>,
+        commands: Option<&std::collections::HashMap<String, String>>,
+        default: Option<&String>,
         max_name_len: usize,
         theme: &Theme,
     ) {
@@ -335,7 +309,7 @@ impl MainView {
             for (name, cmd) in sorted_cmds {
                 let is_selected = *global_cmd_idx == self.selected_config_command_idx
                     && self.focus == PanelFocus::DetailPanel;
-                let is_this_default = default.as_ref() == Some(name);
+                let is_this_default = default == Some(name);
 
                 let (prefix, name_style, cmd_style) = if is_selected {
                     (

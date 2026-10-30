@@ -19,10 +19,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[command(
     name = "app-detector",
     version,
-    about = "Automatically detect application types, frameworks, and deployment environments",
+    about = "Automatically detect application types and deployment environments",
     long_about = "A strategy-based detection platform that discovers:\n  \
-                  • Languages (Rust, Node.js, Python, etc.)\n  \
-                  • Frameworks (React, Django, etc.)\n  \
+                  • Languages (Rust, Node.js, Python)\n  \
+                  • Monorepos (Nx, Cargo and uv workspaces)\n  \
                   • Deployment environments (Docker, Kubernetes, etc.)\n  \
                   • Available commands and configurations"
 )]
@@ -249,14 +249,9 @@ fn build_detection_config(
 ) -> DetectionConfig {
     let mut config = DetectionConfig {
         max_depth,
-        ignore_patterns: vec![
-            ".git".to_string(),
-            "node_modules".to_string(),
-            "target".to_string(),
-        ],
+        ignore_patterns: app_detector::context::default_ignore_patterns(),
         enabled_categories: None,
         disabled_strategies: HashSet::new(),
-        parallel: false,
         enable_workspace_detection: true,
         max_workspace_depth: 2,
     };

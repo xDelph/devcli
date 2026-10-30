@@ -10,7 +10,4 @@ pub use log_viewer::LogViewerView;
 pub use main_view::{ConfigField, ConfigForm, ConfigMode, MainTab, MainView, PanelFocus};
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod main_view_tests;

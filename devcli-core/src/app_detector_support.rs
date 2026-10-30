@@ -64,14 +64,12 @@ pub fn build_detected_app(path: &Path, report: &DetectionReport) -> Result<Detec
     let app_name = resolve_app_name(report, path, &app_type)?;
 
     let mut local_commands = extract_local_commands(report);
-    if app_type == "nx" {
-        if let Some(nx_env) = report.get("nx-env") {
-            if let DetectionData::NxEnv(info) = &nx_env.data {
-                if !info.commands.is_empty() {
-                    local_commands = Some(info.commands.clone());
-                }
-            }
-        }
+    if app_type == "nx"
+        && let Some(nx_env) = report.get("nx-env")
+        && let DetectionData::NxEnv(info) = &nx_env.data
+        && !info.commands.is_empty()
+    {
+        local_commands = Some(info.commands.clone());
     }
 
     let docker_commands = extract_docker_commands(report);
@@ -132,38 +130,38 @@ pub fn resolve_app_type(report: &DetectionReport, path: &Path) -> Result<String>
 /// Extract app name from report metadata or config files.
 pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -> Result<String> {
     if let Some(name) = report.app_name() {
-        if (app_type == "nodejs" || app_type == "nx") && name.contains('/') {
-            if let Some(short) = name.split('/').next_back() {
-                return Ok(short.to_string());
-            }
+        if (app_type == "nodejs" || app_type == "nx")
+            && name.contains('/')
+            && let Some(short) = name.split('/').next_back()
+        {
+            return Ok(short.to_string());
         }
         return Ok(name);
     }
 
-    if app_type == "nodejs" || app_type == "nx" {
-        if let Ok(content) = fs::read_to_string(path.join("package.json")) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(name) = json.get("name").and_then(|v| v.as_str()) {
-                    if name.contains('/') {
-                        if let Some(short) = name.split('/').next_back() {
-                            return Ok(short.to_string());
-                        }
-                    }
-                    return Ok(name.to_string());
-                }
-            }
+    if (app_type == "nodejs" || app_type == "nx")
+        && let Ok(content) = fs::read_to_string(path.join("package.json"))
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(name) = json.get("name").and_then(|v| v.as_str())
+    {
+        if name.contains('/')
+            && let Some(short) = name.split('/').next_back()
+        {
+            return Ok(short.to_string());
         }
+        return Ok(name.to_string());
     }
 
-    if app_type == "python" {
-        if let Ok(content) = fs::read_to_string(path.join("pyproject.toml")) {
-            for line in content.lines() {
-                if line.starts_with("name") && line.contains('=') {
-                    if let Some(name) = line.split('=').nth(1) {
-                        let name = name.trim().trim_matches('"').trim_matches('\'');
-                        return Ok(name.to_string());
-                    }
-                }
+    if app_type == "python"
+        && let Ok(content) = fs::read_to_string(path.join("pyproject.toml"))
+    {
+        for line in content.lines() {
+            if line.starts_with("name")
+                && line.contains('=')
+                && let Some(name) = line.split('=').nth(1)
+            {
+                let name = name.trim().trim_matches('"').trim_matches('\'');
+                return Ok(name.to_string());
             }
         }
     }
@@ -200,7 +198,7 @@ pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::Hash
         return None;
     }
 
-    let expanded = app_detector::utils::workspace::expand_workspace_members(path, &members);
+    let expanded = app_detector::utils::workspace::expand_cargo_workspace(path, &content);
     Some(
         expanded
             .into_iter()
@@ -267,12 +265,11 @@ pub fn workspace_child_paths(report: &DetectionReport) -> Vec<PathBuf> {
 
 /// Relative dockerfile path when app-detector found Docker support.
 pub fn resolve_dockerfile_path(path: &Path, report: &DetectionReport) -> Option<String> {
-    if let Some(result) = report.get("docker") {
-        if let DetectionData::DockerEnv(info) = &result.data {
-            if let Some(df) = info.dockerfiles.first() {
-                return Some(df.to_string_lossy().replace('\\', "/"));
-            }
-        }
+    if let Some(result) = report.get("docker")
+        && let DetectionData::DockerEnv(info) = &result.data
+        && let Some(df) = info.dockerfiles.first()
+    {
+        return Some(df.to_string_lossy().replace('\\', "/"));
     }
 
     find_dockerfile(path).ok().flatten().and_then(|dockerfile| {
@@ -283,47 +280,31 @@ pub fn resolve_dockerfile_path(path: &Path, report: &DetectionReport) -> Option<
     })
 }
 
+pub use app_detector::defaults::pick_default_command;
+
 pub fn suggest_local_default(
     app_type: &str,
     commands: &Option<HashMap<String, String>>,
 ) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    match app_type {
-        "nodejs" | "nx" => {
-            if cmds.contains_key("serve") {
-                return Some("serve".to_string());
-            }
-            if cmds.contains_key("start") {
-                return Some("start".to_string());
-            }
-            if cmds.contains_key("dev") {
-                return Some("dev".to_string());
-            }
-        }
-        "python" | "redis" | "traefik" if cmds.contains_key("start") => {
-            return Some("start".to_string());
-        }
-        _ => {}
-    }
-    cmds.keys().next().cloned()
+    let preferred: &[&str] = match app_type {
+        "nodejs" | "nx" => &["serve", "start", "dev"],
+        // `run` is the dev loop; `start` is the release build.
+        "rust" => &["run", "start"],
+        _ => &["start", "dev", "serve", "run"],
+    };
+    pick_default_command(commands.as_ref(), preferred)
 }
 
 pub fn suggest_docker_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    if cmds.contains_key("run") {
-        Some("run".to_string())
-    } else {
-        cmds.keys().next().cloned()
-    }
+    pick_default_command(commands.as_ref(), &["run", "up", "start"])
 }
 
 pub fn suggest_orbstack_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
-    let cmds = commands.as_ref()?;
-    if cmds.contains_key("run") {
-        Some("run".to_string())
-    } else {
-        cmds.keys().next().cloned()
-    }
+    pick_default_command(commands.as_ref(), &["run", "up", "start"])
+}
+
+pub fn suggest_k8s_default(commands: &Option<HashMap<String, String>>) -> Option<String> {
+    pick_default_command(commands.as_ref(), &["apply", "up", "install"])
 }
 
 /// Fallback Dockerfile lookup (used when a strategy didn't report dockerfiles).
@@ -332,21 +313,38 @@ fn find_dockerfile(path: &Path) -> Result<Option<PathBuf>> {
         return Ok(Some(path.join("Dockerfile")));
     }
 
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                let subdir_dockerfile = entry.path().join("Dockerfile");
-                if subdir_dockerfile.exists() {
-                    return Ok(Some(subdir_dockerfile));
-                }
+    // Dependency and build directories ship Dockerfiles of their own
+    // (node_modules/<pkg>/Dockerfile), which are not this app's.
+    let skip = |entry: &fs::DirEntry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "vendor" | "dist" | "build" | "venv" | "__pycache__"
+            )
+    };
 
-                if let Ok(subentries) = fs::read_dir(entry.path()) {
-                    for subentry in subentries.flatten() {
-                        if subentry.path().is_dir() {
-                            let nested = subentry.path().join("Dockerfile");
-                            if nested.exists() {
-                                return Ok(Some(nested));
-                            }
+    let mut entries: Vec<fs::DirEntry> = fs::read_dir(path)
+        .map(|entries| entries.flatten().filter(|e| !skip(e)).collect())
+        .unwrap_or_default();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        if entry.path().is_dir() {
+            let subdir_dockerfile = entry.path().join("Dockerfile");
+            if subdir_dockerfile.exists() {
+                return Ok(Some(subdir_dockerfile));
+            }
+
+            if let Ok(subentries) = fs::read_dir(entry.path()) {
+                let mut subentries: Vec<fs::DirEntry> =
+                    subentries.flatten().filter(|e| !skip(e)).collect();
+                subentries.sort_by_key(|e| e.file_name());
+                for subentry in subentries {
+                    if subentry.path().is_dir() {
+                        let nested = subentry.path().join("Dockerfile");
+                        if nested.exists() {
+                            return Ok(Some(nested));
                         }
                     }
                 }
@@ -557,5 +555,39 @@ mod tests {
 
         assert_eq!(detect_app_type(dir.path()).unwrap(), "nodejs");
         assert_eq!(extract_app_name(dir.path(), "nodejs").unwrap(), "pkg");
+    }
+
+    fn named(names: &[&str]) -> Option<HashMap<String, String>> {
+        Some(
+            names
+                .iter()
+                .map(|n| (n.to_string(), format!("cmd {n}")))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn k8s_default_is_never_destructive() {
+        assert_eq!(
+            suggest_k8s_default(&named(&["delete", "apply", "logs"])).as_deref(),
+            Some("apply")
+        );
+        assert_eq!(suggest_k8s_default(&named(&["delete", "uninstall"])), None);
+    }
+
+    #[test]
+    fn rust_apps_default_to_run() {
+        assert_eq!(
+            suggest_local_default("rust", &named(&["build", "test", "run", "start"])).as_deref(),
+            Some("run")
+        );
+    }
+
+    #[test]
+    fn node_without_dev_scripts_does_not_default_to_deploy() {
+        assert_eq!(
+            suggest_local_default("nodejs", &named(&["deploy", "lint"])).as_deref(),
+            Some("lint")
+        );
     }
 }

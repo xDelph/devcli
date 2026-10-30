@@ -24,6 +24,7 @@ pub struct StopCommandArgs {
 // Main implementation of the stop command
 #[tracing::instrument(skip(args), fields(app_name = ?args.app_name, project = ?args.project, all = args.all, force = args.force))]
 pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
+    refuse_bulk_stop_for_agents(&args, crate::utils::agent::detect())?;
     let store = state_store()?;
     let silent = args.silent;
     store.cleanup_dead()?;
@@ -94,7 +95,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    if !silent && !crate::output::json_enabled() {
+    if crate::output::human(silent) {
         display_stop_summary(&processes_to_stop)?;
     }
 
@@ -112,8 +113,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
                     })
                 })
                 .collect();
+            // Same keys as a real stop (nothing was stopped), plus the target set.
             crate::output::print_json(&serde_json::json!({
                 "dry_run": true,
+                "stopped": 0,
+                "failed": 0,
+                "errors": [],
                 "count": entries.len(),
                 "processes": entries,
             }))?;
@@ -132,7 +137,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
             .await
         {
             Ok(_) => {
-                if !silent && !crate::output::json_enabled() {
+                if crate::output::human(silent) {
                     let app_name = process
                         .metadata
                         .get("app_config_name")
@@ -157,7 +162,7 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         }
     }
 
-    if !silent && !crate::output::json_enabled() {
+    if crate::output::human(silent) {
         println!("\nStop Summary:");
         println!("  ✓ Successfully stopped: {}", stopped_count);
         if !errors.is_empty() {
@@ -195,7 +200,7 @@ fn filter_processes(
 
     if args.all {
         filtered.extend(processes);
-    } else if let Some(ref app_name) = actual_app_name {
+    } else if let Some(app_name) = actual_app_name {
         for process in processes {
             let matches_app = process.metadata.get("app_config_name").map(String::as_str)
                 == Some(app_name.as_str())
@@ -224,6 +229,31 @@ fn filter_processes(
     }
 
     Ok(filtered)
+}
+
+/// An agent stops the apps it works on, by name. `stop --all` and a stop of
+/// a whole project would also take down what the user and other agents run,
+/// so they are refused when devcli detects it runs under an AI agent.
+/// Listing them (`--dry-run`) is fine, and devcli's own callers (the TUI,
+/// `restart`) are not concerned.
+fn refuse_bulk_stop_for_agents(args: &StopCommandArgs, agent: Option<&str>) -> Result<()> {
+    let bulk = args.all || (args.app_name.is_none() && args.project.is_some());
+    let (true, false, false, Some(agent)) = (bulk, args.dry_run, args.silent, agent) else {
+        return Ok(());
+    };
+    let what = if args.all {
+        "`stop --all`".to_string()
+    } else {
+        format!(
+            "stopping every app of project '{}'",
+            args.project.as_deref().unwrap_or_default()
+        )
+    };
+    anyhow::bail!(
+        "{what} is not allowed when devcli runs under an AI agent ({agent}): it would also \
+         stop apps the user and other agents are running. Stop the apps you started by \
+         name: devcli --json stop APP --project PROJECT"
+    )
 }
 
 // Display summary of processes that will be stopped
@@ -271,13 +301,21 @@ fn display_stop_summary(processes: &[process_manager::state::ManagedProcess]) ->
 
 // Stop a single process with proper signal handling
 #[tracing::instrument(skip(process, store, output_tx), fields(id = %process.id, pid = process.pid, force = force))]
-async fn stop_single_process(
+pub(crate) async fn stop_single_process(
     process: &process_manager::state::ManagedProcess,
     force: bool,
     store: &process_manager::StateStore,
     silent: bool,
     output_tx: Option<&OutputChannel>,
 ) -> Result<()> {
+    // Flag the entry first so pm-daemon does not restart the app while we take
+    // it down, and act on the entry as it is now: the daemon may have restarted
+    // the app (new PID) since the caller looked it up.
+    let Some(current) = store.mark_stopping(&process.id)? else {
+        return Ok(());
+    };
+    let process = &current;
+
     let display_name = process
         .metadata
         .get("app_config_name")
@@ -322,16 +360,58 @@ async fn stop_single_process(
     let _ = engine::terminate(process.pid, process.pgid, true).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    if let Some(reloaded) = store.load(&process.id)? {
-        if store.is_running(&reloaded) {
-            anyhow::bail!(
-                "Process '{}' (PID: {}) is still running after SIGKILL",
-                display_name,
-                process.pid
-            );
-        }
+    if let Some(reloaded) = store.load(&process.id)?
+        && store.is_running(&reloaded)
+    {
+        anyhow::bail!(
+            "Process '{}' (PID: {}) is still running after SIGKILL",
+            display_name,
+            process.pid
+        );
     }
 
     store.delete(&process.id)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod agent_guard_tests {
+    use super::*;
+
+    fn args(app: Option<&str>, project: Option<&str>, all: bool, dry_run: bool) -> StopCommandArgs {
+        StopCommandArgs {
+            app_name: app.map(str::to_string),
+            project: project.map(str::to_string),
+            all,
+            force: false,
+            dry_run,
+            silent: false,
+            output_tx: None,
+        }
+    }
+
+    #[test]
+    fn agents_cannot_stop_everything() {
+        let agent = Some("Claude Code");
+        let err = refuse_bulk_stop_for_agents(&args(None, None, true, false), agent).unwrap_err();
+        assert!(err.to_string().contains("stop --all"), "{err}");
+        assert!(
+            refuse_bulk_stop_for_agents(&args(None, Some("shop"), false, false), agent).is_err()
+        );
+
+        // Named apps, and listing, are fine.
+        assert!(
+            refuse_bulk_stop_for_agents(&args(Some("api"), Some("shop"), false, false), agent)
+                .is_ok()
+        );
+        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, true), agent).is_ok());
+    }
+
+    #[test]
+    fn people_and_devcli_itself_still_can() {
+        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, false), None).is_ok());
+        let mut tui = args(None, Some("shop"), false, false);
+        tui.silent = true;
+        assert!(refuse_bulk_stop_for_agents(&tui, Some("Claude Code")).is_ok());
+    }
 }

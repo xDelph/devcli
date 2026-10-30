@@ -161,13 +161,15 @@ impl ProjectAppResolver {
         project: &str,
         app_name: &str,
     ) -> std::result::Result<ResolvedApp, CmError> {
-        let proj = config
-            .projects
-            .get(project)
-            .ok_or_else(|| CmError::NotFound {
-                id: project.to_string(),
-                suggestion: None,
-            })?;
+        let proj = config.projects.get(project).ok_or_else(|| {
+            // A missing *project* used to come back as NotFound{id: project},
+            // which every caller rendered as "App '<project>' not found".
+            let names: Vec<String> = config.projects.keys().cloned().collect();
+            let hint = fuzzy_match(project, &names, 3)
+                .map(|p| format!(" Did you mean '{p}'?"))
+                .unwrap_or_default();
+            CmError::Custom(format!("Project '{project}' not found in config.{hint}"))
+        })?;
 
         // Prefer exact app key, then alternative_name within this project
         if let Some(app) = proj.apps.get(app_name) {
@@ -188,19 +190,24 @@ impl ProjectAppResolver {
             }
         }
 
+        let names: Vec<String> = proj.apps.keys().cloned().collect();
         Err(CmError::NotFound {
-            id: app_name.to_string(),
-            suggestion: self.suggest(config, app_name),
+            id: format!("{project}/{app_name}"),
+            suggestion: fuzzy_match(app_name, &names, 3),
         })
     }
 
     fn collect_matches(&self, config: &Config, app_name: &str) -> Vec<(String, String, App)> {
         let mut matches = Vec::new();
         for (project_name, project) in &config.projects {
+            // Within one project an exact key wins over an alias, as it does for
+            // `--project` resolution, so one project contributes one candidate.
+            if let Some(app) = project.apps.get(app_name) {
+                matches.push((project_name.clone(), app_name.to_string(), app.clone()));
+                continue;
+            }
             for (actual_app_name, app) in &project.apps {
-                let name_matches = actual_app_name == app_name;
-                let alt_matches = app.alternative_name.as_deref() == Some(app_name);
-                if name_matches || alt_matches {
+                if app.alternative_name.as_deref() == Some(app_name) {
                     matches.push((project_name.clone(), actual_app_name.clone(), app.clone()));
                 }
             }
@@ -255,7 +262,11 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
                 })
             }
             _ => {
-                let candidates: Vec<String> = matches.iter().map(|(p, _, _)| p.clone()).collect();
+                // `project/app`, not just the project: two apps of one project can
+                // answer to the same alias, and a project name alone then cannot
+                // say which one was picked.
+                let candidates: Vec<String> =
+                    matches.iter().map(|(p, a, _)| format!("{p}/{a}")).collect();
                 Err(CmError::Ambiguous {
                     id: id.to_string(),
                     candidates,
@@ -281,8 +292,24 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
 }
 
 /// Map config-manager resolution errors to the public CLI messages.
+/// Error for a name matching several apps (`candidates` are `project/app`).
+pub fn ambiguous_app_error(app_name: &str, candidates: &[String]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "App name '{}' is ambiguous: it matches {}. Use --project or name it as project/app.",
+        app_name,
+        candidates.join(", ")
+    )
+}
+
 pub fn map_resolve_error(err: CmError, app_name: &str) -> anyhow::Error {
     match err {
+        CmError::NotFound { id, suggestion } if id.contains('/') => {
+            let (project, app) = id.split_once('/').unwrap_or(("", app_name));
+            let hint = suggestion
+                .map(|s| format!(" Did you mean '{s}'?"))
+                .unwrap_or_default();
+            anyhow::anyhow!("App '{}' not found in project '{}'.{}", app, project, hint)
+        }
         CmError::NotFound { suggestion, .. } => {
             if let Some(similar) = suggestion {
                 anyhow::anyhow!(
@@ -294,11 +321,7 @@ pub fn map_resolve_error(err: CmError, app_name: &str) -> anyhow::Error {
                 anyhow::anyhow!("App '{}' not found in config.", app_name)
             }
         }
-        CmError::Ambiguous { candidates, .. } => anyhow::anyhow!(
-            "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
-            app_name,
-            candidates.join(", ")
-        ),
+        CmError::Ambiguous { candidates, .. } => ambiguous_app_error(app_name, &candidates),
         other => anyhow::anyhow!("{other}"),
     }
 }
@@ -355,7 +378,10 @@ fn map_dependency_error(err: CmError) -> anyhow::Error {
         ),
         CmError::NotFound { id, suggestion } => {
             if let Some((project, app)) = id.split_once('/') {
-                anyhow::anyhow!("App '{}' not found in project '{}'.", app, project)
+                let hint = suggestion
+                    .map(|s| format!(" Did you mean '{s}'?"))
+                    .unwrap_or_default();
+                anyhow::anyhow!("App '{}' not found in project '{}'.{}", app, project, hint)
             } else if let Some(similar) = suggestion {
                 anyhow::anyhow!(
                     "App '{}' not found in config. Did you mean '{}'?",
@@ -390,9 +416,19 @@ impl Validator<Config> for DevCliConfigValidator {
         let mut result = ValidationResult::new();
         let mut seen_app_names: HashSet<String> = HashSet::new();
 
+        validate_names(&mut result, config);
+
         for (project_name, project) in &config.projects {
+            warn_unknown_fields(
+                &mut result,
+                project_name,
+                &project.extra,
+                KNOWN_PROJECT_KEYS,
+            );
+
             for (app_name, app) in &project.apps {
                 let field = format!("{project_name}/{app_name}");
+                warn_unknown_fields(&mut result, &field, &app.extra, KNOWN_APP_KEYS);
 
                 if seen_app_names.contains(app_name) {
                     result.add_warning(ValidationWarning::new(
@@ -439,6 +475,104 @@ impl Validator<Config> for DevCliConfigValidator {
     }
 }
 
+/// Names that cannot be addressed, and aliases that make addressing ambiguous.
+fn validate_names(result: &mut ValidationResult, config: &Config) {
+    // Every name an app answers to, with the apps answering to it.
+    let mut answers_to: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for (project_name, project) in &config.projects {
+        // `project/app` is how apps are addressed on the command line and in
+        // dependency errors; a `/` inside a name splits at the wrong place.
+        if project_name.contains('/') {
+            result.add_error(ValidationError::new(
+                project_name.as_str(),
+                format!("Project name '{project_name}' must not contain '/'"),
+            ));
+        }
+        for (app_name, app) in &project.apps {
+            let field = format!("{project_name}/{app_name}");
+            if app_name.contains('/') {
+                result.add_error(ValidationError::new(
+                    field.clone(),
+                    format!("App name '{app_name}' must not contain '/'"),
+                ));
+            }
+            answers_to
+                .entry(app_name.as_str())
+                .or_default()
+                .push(field.clone());
+            if let Some(alias) = app.alternative_name.as_deref()
+                && alias != app_name
+            {
+                answers_to.entry(alias).or_default().push(field);
+            }
+        }
+    }
+
+    for (project_name, project) in &config.projects {
+        for (app_name, app) in &project.apps {
+            let Some(alias) = app.alternative_name.as_deref() else {
+                continue;
+            };
+            let me = format!("{project_name}/{app_name}");
+            let others: Vec<&str> = answers_to
+                .get(alias)
+                .into_iter()
+                .flatten()
+                .filter(|f| **f != me)
+                .map(String::as_str)
+                .collect();
+            if !others.is_empty() {
+                result.add_warning(ValidationWarning::new(
+                    me.clone(),
+                    format!(
+                        "Alternative name '{alias}' is also used by {}: `devcli start {alias}` is ambiguous",
+                        others.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Keys of a project object that devcli understands.
+const KNOWN_PROJECT_KEYS: &[&str] = &["apps", "alternative_name"];
+
+/// Keys of an app object that devcli understands.
+const KNOWN_APP_KEYS: &[&str] = &[
+    "type",
+    "alternative_name",
+    "path",
+    "commands",
+    "dependencies",
+    "defaults",
+    "dockerfile_path",
+    "env_files",
+    "default_stages",
+    "health_check",
+    "restart_policy",
+];
+
+/// Warn about keys devcli does not know: they are kept on save, but are most
+/// often a typo (`"dependecies"`) whose setting then silently has no effect.
+fn warn_unknown_fields(
+    result: &mut ValidationResult,
+    field: &str,
+    extra: &crate::config::models::UnknownFields,
+    known: &[&str],
+) {
+    for key in extra.keys() {
+        let hint = config_manager::utils::find_closest_match(key, known, 3)
+            .map(|k| format!(" Did you mean '{k}'?"))
+            .unwrap_or_default();
+        result.add_warning(ValidationWarning::new(
+            field,
+            format!("Unknown field '{key}' is ignored.{hint}"),
+        ));
+    }
+}
+
 fn validate_app(result: &mut ValidationResult, field: &str, config: &Config, app: &App) {
     let path = expand_path(&app.path);
     if !path.exists() {
@@ -448,40 +582,38 @@ fn validate_app(result: &mut ValidationResult, field: &str, config: &Config, app
         ));
     }
 
-    let has_local = app
-        .commands
-        .local
-        .as_ref()
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
-    let has_docker = app
-        .commands
-        .docker
-        .as_ref()
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
+    // Every environment, not just local/docker: an app with only k8s or
+    // docker-compose commands was reported as having "No commands defined",
+    // and defaults of the other four environments were never checked.
+    let mut has_commands = false;
+    for env in crate::config::models::Environment::all() {
+        let name = env.as_str();
+        let commands = app.commands.get(name);
+        has_commands |= commands.is_some_and(|m| !m.is_empty());
+        validate_env_defaults(result, field, name, commands, app.defaults.get(name));
+    }
 
-    if !has_local && !has_docker {
+    if !has_commands {
         result.add_error(ValidationError::new(
             field,
             "No commands defined (need at least one environment)",
         ));
     }
 
-    validate_env_defaults(
-        result,
-        field,
-        "local",
-        &app.commands.local,
-        &app.defaults.local,
-    );
-    validate_env_defaults(
-        result,
-        field,
-        "docker",
-        &app.commands.docker,
-        &app.defaults.docker,
-    );
+    // Env files pinned in the config must exist, or the app silently starts
+    // without their variables.
+    if path.exists() {
+        for (stage, by_env) in app.env_files.iter().flatten() {
+            for (env, file) in by_env {
+                if !path.join(file).exists() {
+                    result.add_warning(ValidationWarning::new(
+                        field,
+                        format!("Env file '{file}' (env_files.{stage}.{env}) does not exist"),
+                    ));
+                }
+            }
+        }
+    }
 
     for dep in &app.dependencies {
         if let Err(e) = crate::config::resolver::get_app_by_project(config, &dep.project, &dep.app)
@@ -498,27 +630,38 @@ fn validate_env_defaults(
     result: &mut ValidationResult,
     field: &str,
     env: &str,
-    commands: &Option<std::collections::HashMap<String, String>>,
-    default: &Option<String>,
+    commands: Option<&std::collections::HashMap<String, String>>,
+    default: Option<&String>,
 ) {
-    let Some(commands) = commands else {
-        return;
-    };
-    if commands.is_empty() {
-        return;
-    }
+    let commands = commands.filter(|c| !c.is_empty());
 
-    match default {
-        Some(default_cmd) if !commands.contains_key(default_cmd) => {
+    match (commands, default) {
+        (Some(commands), Some(default_cmd)) if !commands.contains_key(default_cmd) => {
             result.add_error(ValidationError::new(
                 field,
                 format!("Default {env} command '{default_cmd}' not found in {env} commands"),
             ));
         }
-        None => {
+        (None, Some(default_cmd)) => {
+            result.add_error(ValidationError::new(
+                field,
+                format!("Default {env} command '{default_cmd}' set but no {env} commands defined"),
+            ));
+        }
+        // `start` needs a default; historically only local/docker were checked,
+        // so keep the others a warning rather than failing existing configs.
+        (Some(_), None) if matches!(env, "local" | "docker") => {
             result.add_error(ValidationError::new(
                 field,
                 format!("{env} commands defined but no defaults.{env} specified"),
+            ));
+        }
+        (Some(_), None) => {
+            result.add_warning(ValidationWarning::new(
+                field,
+                format!(
+                    "{env} commands defined but no defaults.{env}: `devcli start --env {env}` will fail"
+                ),
             ));
         }
         _ => {}
@@ -840,5 +983,171 @@ mod tests {
         let result = DevCliConfigValidator::new().validate(&config);
         assert!(result.is_valid());
         assert!(result.warning_count() >= 1);
+    }
+
+    fn messages(result: &ValidationResult) -> (Vec<String>, Vec<String>) {
+        (
+            result
+                .errors()
+                .iter()
+                .map(|e| e.message().to_string())
+                .collect(),
+            result
+                .warnings()
+                .iter()
+                .map(|w| w.message().to_string())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn validate_accepts_apps_with_only_non_local_environments() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+        let mut app = AppBuilder::new("nodejs", path)
+            .with_k8s_command("apply", "kubectl apply -f k8s")
+            .with_k8s_default("apply")
+            .build();
+        app.commands.docker_compose = Some(
+            [("up".to_string(), "docker compose up".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let config = ConfigBuilder::new().with_app("p", "api", app).build();
+
+        let (errors, warnings) = messages(&DevCliConfigValidator::new().validate(&config));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no defaults.docker-compose")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn validate_checks_defaults_of_every_environment() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+        let mut app = AppBuilder::new("nodejs", path)
+            .with_local_command("start", "npm start")
+            .with_local_default("start")
+            .with_orbstack_command("run", "docker run app")
+            .with_orbstack_default("missing")
+            .build();
+        app.defaults.ci = Some("test".to_string());
+        let config = ConfigBuilder::new().with_app("p", "api", app).build();
+
+        let (errors, _) = messages(&DevCliConfigValidator::new().validate(&config));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Default orbstack command 'missing' not found")),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Default ci command 'test' set but no ci commands")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_slashes_and_flags_alias_collisions() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().to_str().unwrap();
+        let app = |alias: Option<&str>| {
+            let mut app = AppBuilder::new("nodejs", path)
+                .with_local_command("start", "npm start")
+                .with_local_default("start")
+                .build();
+            app.alternative_name = alias.map(str::to_string);
+            app
+        };
+        let config = ConfigBuilder::new()
+            .with_app("a/b", "api", app(None))
+            .with_app("p", "web", app(Some("api")))
+            .build();
+
+        let (errors, warnings) = messages(&DevCliConfigValidator::new().validate(&config));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Project name 'a/b' must not contain '/'")),
+            "{errors:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("Alternative name 'api' is also used by a/b/api")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn missing_dependency_project_and_app_are_reported_as_such() {
+        let app = |dep_project: &str, dep_app: &str| {
+            AppBuilder::new("nodejs", "/tmp")
+                .with_local_command("start", "npm start")
+                .with_dependency(dep_project, dep_app)
+                .build()
+        };
+        let redis = AppBuilder::new("redis", "/tmp")
+            .with_local_command("start", "redis-server")
+            .build();
+        let config = ConfigBuilder::new()
+            .with_app("infra", "redis", redis)
+            .with_app("p", "api", app("infar", "redis"))
+            .with_app("p", "web", app("infra", "rediss"))
+            .build();
+
+        let api = ProjectAppResolver::new()
+            .resolve_with_filter(&config, "api", Some("p"))
+            .unwrap();
+        let err = resolve_dependency_chain(&config, &api)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Project 'infar' not found"), "{err}");
+        assert!(err.contains("Did you mean 'infra'?"), "{err}");
+
+        let web = ProjectAppResolver::new()
+            .resolve_with_filter(&config, "web", Some("p"))
+            .unwrap();
+        let err = resolve_dependency_chain(&config, &web)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("App 'rediss' not found in project 'infra'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ambiguity_candidates_name_the_app_and_prefer_exact_keys() {
+        let app = |alias: Option<&str>| {
+            let mut app = AppBuilder::new("nodejs", "/tmp").build();
+            app.alternative_name = alias.map(str::to_string);
+            app
+        };
+        let config = ConfigBuilder::new()
+            // In p1 the exact key `api` shadows `web`'s alias `api`.
+            .with_app("p1", "api", app(None))
+            .with_app("p1", "web", app(Some("api")))
+            .with_app("p2", "backend", app(Some("api")))
+            .build();
+
+        match ProjectAppResolver::new()
+            .resolve(&config, "api")
+            .unwrap_err()
+        {
+            CmError::Ambiguous { candidates, .. } => {
+                assert_eq!(
+                    candidates,
+                    vec!["p1/api".to_string(), "p2/backend".to_string()]
+                );
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
     }
 }

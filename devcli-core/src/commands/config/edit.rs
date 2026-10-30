@@ -5,9 +5,9 @@
 //! `config add-command`, `config remove-command`, `config set-default`, and
 //! `config edit-command` command functionality.
 
+use crate::config::models::Environment;
 use crate::config::{load_config, resolve_app, save_config};
 use crate::Result;
-use std::collections::HashMap;
 use std::env;
 use std::process::Command;
 
@@ -15,7 +15,7 @@ use std::process::Command;
 ///
 /// Example: `devcli config edit`
 ///
-/// Opens the config file in $EDITOR (or vim if not set).
+/// Opens the config file in $VISUAL / $EDITOR (or vim if neither is set).
 /// After editing, suggests running validate to check changes.
 ///
 /// # Errors
@@ -23,32 +23,37 @@ use std::process::Command;
 /// Returns an error if:
 /// - Config file doesn't exist
 /// - Editor command fails
-/// - Cannot determine HOME directory
 pub async fn config_edit() -> Result<()> {
-    // Build path to config file
-    let home = env::var("HOME")?;
-    let config_path = std::path::PathBuf::from(home)
-        .join(".devcli")
-        .join("config.json");
+    // The same file every other command reads: honours DEVCLI_CONFIG_DIR and a
+    // project-local ./.devcli, unlike a hard-coded ~/.devcli/config.json.
+    let config_path = crate::config::loader::get_config_path()?;
 
     // Make sure config exists
     if !config_path.exists() {
         anyhow::bail!("Config file not found. Run 'devcli config init' to create one.");
     }
 
-    // Get editor from environment variable
-    // .unwrap_or_else() provides a default if EDITOR is not set
-    // The closure (|_| ...) is only called if env::var fails
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let editor = env::var("VISUAL")
+        .or_else(|_| env::var("EDITOR"))
+        .ok()
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| "vim".to_string());
 
-    // Launch the editor as a subprocess
-    // Command::new() creates a new command to run
-    // .arg() adds an argument (the file path)
-    // .status() runs the command and waits for it to finish
-    let status = Command::new(&editor).arg(&config_path).status()?;
+    // `EDITOR="code -w"` / `"subl -n -w"` are common: split like a shell would
+    // instead of looking for a program literally named "code -w".
+    let parts = shell_words::split(&editor)
+        .map_err(|e| anyhow::anyhow!("Cannot parse editor command '{}': {}", editor, e))?;
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("Editor command is empty"))?;
+
+    let status = Command::new(program)
+        .args(args)
+        .arg(&config_path)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to launch editor '{}': {}", editor, e))?;
 
     // Check if the editor exited successfully
-    // .success() returns true if exit code was 0
     if !status.success() {
         anyhow::bail!("Editor exited with error");
     }
@@ -93,21 +98,8 @@ pub async fn config_add_command(
         crate::commands::config::prompt_for_app(&config, project.as_deref())?
     };
 
-    let environment = if let Some(env) = environment {
-        // Validate provided environment
-        use crate::config::models::Environment;
-        if Environment::from_string(&env).is_none() {
-            anyhow::bail!(
-                "Invalid environment '{}'. Must be one of: {}.",
-                env,
-                Environment::all_names()
-            );
-        }
-        env
-    } else {
-        // Prompt for environment
-        crate::commands::config::prompt_for_environment()?
-    };
+    let env = resolve_environment(environment)?;
+    let environment = env.as_str();
 
     let command_name = if let Some(name) = command_name {
         name
@@ -137,39 +129,9 @@ pub async fn config_add_command(
         })?;
 
     // Add command to the appropriate environment
-    match environment.as_str() {
-        "local" => {
-            if app.commands.local.is_none() {
-                app.commands.local = Some(HashMap::new());
-            }
-            app.commands
-                .local
-                .as_mut()
-                .expect("local commands should be Some after initialization")
-                .insert(command_name.clone(), command_value.clone());
-        }
-        "docker" => {
-            if app.commands.docker.is_none() {
-                app.commands.docker = Some(HashMap::new());
-            }
-            app.commands
-                .docker
-                .as_mut()
-                .expect("docker commands should be Some after initialization")
-                .insert(command_name.clone(), command_value.clone());
-        }
-        "k8s" => {
-            if app.commands.k8s.is_none() {
-                app.commands.k8s = Some(HashMap::new());
-            }
-            app.commands
-                .k8s
-                .as_mut()
-                .expect("k8s commands should be Some after initialization")
-                .insert(command_name.clone(), command_value.clone());
-        }
-        _ => unreachable!(),
-    }
+    app.commands
+        .entry(env)
+        .insert(command_name.clone(), command_value.clone());
 
     // Save the updated config
     save_config(&config)?;
@@ -213,19 +175,8 @@ pub async fn config_remove_command(
         crate::commands::config::prompt_for_app(&config, project.as_deref())?
     };
 
-    let environment = if let Some(env) = environment {
-        use crate::config::models::Environment;
-        if Environment::from_string(&env).is_none() {
-            anyhow::bail!(
-                "Invalid environment '{}'. Must be one of: {}.",
-                env,
-                Environment::all_names()
-            );
-        }
-        env
-    } else {
-        crate::commands::config::prompt_for_environment()?
-    };
+    let env = resolve_environment(environment)?;
+    let environment = env.as_str();
 
     // Get the app to check available commands
     let app = config
@@ -245,7 +196,7 @@ pub async fn config_remove_command(
     let command_name = if let Some(name) = command_name {
         name
     } else {
-        crate::commands::config::prompt_for_command(app, &environment)?
+        crate::commands::config::prompt_for_command(app, environment)?
     };
 
     // Get mutable reference to the app
@@ -264,30 +215,11 @@ pub async fn config_remove_command(
         })?;
 
     // Remove command from the appropriate environment
-    let removed = match environment.as_str() {
-        "local" => {
-            if let Some(commands) = &mut app.commands.local {
-                commands.remove(&command_name).is_some()
-            } else {
-                false
-            }
-        }
-        "docker" => {
-            if let Some(commands) = &mut app.commands.docker {
-                commands.remove(&command_name).is_some()
-            } else {
-                false
-            }
-        }
-        "k8s" => {
-            if let Some(commands) = &mut app.commands.k8s {
-                commands.remove(&command_name).is_some()
-            } else {
-                false
-            }
-        }
-        _ => unreachable!(),
-    };
+    let removed = app
+        .commands
+        .slot_mut(env)
+        .as_mut()
+        .is_some_and(|commands| commands.remove(&command_name).is_some());
 
     if !removed {
         anyhow::bail!(
@@ -300,21 +232,12 @@ pub async fn config_remove_command(
     }
 
     // Check if this was the default command and warn user
-    let was_default = match environment.as_str() {
-        "local" => app.defaults.local.as_ref() == Some(&command_name),
-        "docker" => app.defaults.docker.as_ref() == Some(&command_name),
-        "k8s" => app.defaults.k8s.as_ref() == Some(&command_name),
-        _ => false,
-    };
+    let default = app.defaults.slot_mut(env);
+    let was_default = default.as_ref() == Some(&command_name);
 
     if was_default {
         // Clear the default since the command no longer exists
-        match environment.as_str() {
-            "local" => app.defaults.local = None,
-            "docker" => app.defaults.docker = None,
-            "k8s" => app.defaults.k8s = None,
-            _ => unreachable!(),
-        }
+        *default = None;
         println!(
             "⚠ Warning: '{}' was the default {} command. Default cleared.",
             command_name, environment
@@ -362,19 +285,8 @@ pub async fn config_set_default(
         crate::commands::config::prompt_for_app(&config, project.as_deref())?
     };
 
-    let environment = if let Some(env) = environment {
-        use crate::config::models::Environment;
-        if Environment::from_string(&env).is_none() {
-            anyhow::bail!(
-                "Invalid environment '{}'. Must be one of: {}.",
-                env,
-                Environment::all_names()
-            );
-        }
-        env
-    } else {
-        crate::commands::config::prompt_for_environment()?
-    };
+    let env = resolve_environment(environment)?;
+    let environment = env.as_str();
 
     // Get the app to check available commands
     let app = config
@@ -394,7 +306,7 @@ pub async fn config_set_default(
     let command_name = if let Some(name) = command_name {
         name
     } else {
-        crate::commands::config::prompt_for_command(app, &environment)?
+        crate::commands::config::prompt_for_command(app, environment)?
     };
 
     // Get mutable reference to the app
@@ -413,27 +325,10 @@ pub async fn config_set_default(
         })?;
 
     // Verify the command exists in the specified environment
-    let command_exists = match environment.as_str() {
-        "local" => app
-            .commands
-            .local
-            .as_ref()
-            .map(|commands| commands.contains_key(&command_name))
-            .unwrap_or(false),
-        "docker" => app
-            .commands
-            .docker
-            .as_ref()
-            .map(|commands| commands.contains_key(&command_name))
-            .unwrap_or(false),
-        "k8s" => app
-            .commands
-            .k8s
-            .as_ref()
-            .map(|commands| commands.contains_key(&command_name))
-            .unwrap_or(false),
-        _ => unreachable!(),
-    };
+    let command_exists = app
+        .commands
+        .get(environment)
+        .is_some_and(|commands| commands.contains_key(&command_name));
 
     if !command_exists {
         anyhow::bail!("Command '{}' not found in {} environment for {}/{}. Add it first with 'config add-command'.", 
@@ -441,12 +336,7 @@ pub async fn config_set_default(
     }
 
     // Set the default command
-    match environment.as_str() {
-        "local" => app.defaults.local = Some(command_name.clone()),
-        "docker" => app.defaults.docker = Some(command_name.clone()),
-        "k8s" => app.defaults.k8s = Some(command_name.clone()),
-        _ => unreachable!(),
-    }
+    *app.defaults.slot_mut(env) = Some(command_name.clone());
 
     // Save the updated config
     save_config(&config)?;
@@ -489,19 +379,8 @@ pub async fn config_edit_command(
         crate::commands::config::prompt_for_app(&config, project.as_deref())?
     };
 
-    let environment = if let Some(env) = environment {
-        use crate::config::models::Environment;
-        if Environment::from_string(&env).is_none() {
-            anyhow::bail!(
-                "Invalid environment '{}'. Must be one of: {}.",
-                env,
-                Environment::all_names()
-            );
-        }
-        env
-    } else {
-        crate::commands::config::prompt_for_environment()?
-    };
+    let env = resolve_environment(environment)?;
+    let environment = env.as_str();
 
     // Get the app to check available commands
     let app = config
@@ -521,33 +400,15 @@ pub async fn config_edit_command(
     let command_name = if let Some(name) = command_name {
         name
     } else {
-        crate::commands::config::prompt_for_command(app, &environment)?
+        crate::commands::config::prompt_for_command(app, environment)?
     };
 
     // Get current command value
-    let current_value = {
-        match environment.as_str() {
-            "local" => app
-                .commands
-                .local
-                .as_ref()
-                .and_then(|commands| commands.get(&command_name))
-                .cloned(),
-            "docker" => app
-                .commands
-                .docker
-                .as_ref()
-                .and_then(|commands| commands.get(&command_name))
-                .cloned(),
-            "k8s" => app
-                .commands
-                .k8s
-                .as_ref()
-                .and_then(|commands| commands.get(&command_name))
-                .cloned(),
-            _ => unreachable!(),
-        }
-    };
+    let current_value = app
+        .commands
+        .get(environment)
+        .and_then(|commands| commands.get(&command_name))
+        .cloned();
 
     let current_value = current_value.ok_or_else(|| {
         anyhow::anyhow!("Command '{}' not found in {} environment for {}/{}. Add it first with 'config add-command'.", 
@@ -589,36 +450,17 @@ pub async fn config_edit_command(
             )
         })?;
 
-    match environment.as_str() {
-        "local" => {
-            app.commands
-                .local
-                .as_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No local commands defined for {}", resolved_app_name)
-                })?
-                .insert(command_name.clone(), new_value.to_string());
-        }
-        "docker" => {
-            app.commands
-                .docker
-                .as_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No docker commands defined for {}", resolved_app_name)
-                })?
-                .insert(command_name.clone(), new_value.to_string());
-        }
-        "k8s" => {
-            app.commands
-                .k8s
-                .as_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No k8s commands defined for {}", resolved_app_name)
-                })?
-                .insert(command_name.clone(), new_value.to_string());
-        }
-        _ => unreachable!(),
-    }
+    app.commands
+        .slot_mut(env)
+        .as_mut()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No {} commands defined for {}",
+                environment,
+                resolved_app_name
+            )
+        })?
+        .insert(command_name.clone(), new_value.to_string());
 
     // Save the updated config
     save_config(&config)?;
@@ -630,6 +472,26 @@ pub async fn config_edit_command(
     println!("  New value: {}", new_value);
 
     Ok(())
+}
+
+/// Parse `--env` (aliases such as `compose` / `kubernetes` accepted), or prompt
+/// for it when absent.
+///
+/// The commands used to validate against all six environments but then only
+/// handle local/docker/k8s, hitting `unreachable!()` - a panic - for orbstack,
+/// docker-compose and ci.
+fn resolve_environment(environment: Option<String>) -> Result<Environment> {
+    let name = match environment {
+        Some(name) => name,
+        None => crate::commands::config::prompt_for_environment()?,
+    };
+    Environment::from_string(&name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid environment '{}'. Must be one of: {}.",
+            name,
+            Environment::all_names()
+        )
+    })
 }
 
 #[cfg(test)]

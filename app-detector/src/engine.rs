@@ -25,9 +25,6 @@ pub struct DetectionConfig {
     /// Specific strategies to disable
     pub disabled_strategies: HashSet<String>,
 
-    /// Run strategies in parallel
-    pub parallel: bool,
-
     /// Enable hierarchical workspace detection for monorepos (default: true)
     pub enable_workspace_detection: bool,
 
@@ -39,14 +36,9 @@ impl Default for DetectionConfig {
     fn default() -> Self {
         Self {
             max_depth: 3,
-            ignore_patterns: vec![
-                ".git".to_string(),
-                "node_modules".to_string(),
-                "target".to_string(),
-            ],
+            ignore_patterns: crate::context::default_ignore_patterns(),
             enabled_categories: None,
             disabled_strategies: HashSet::new(),
-            parallel: false,
             enable_workspace_detection: true,
             max_workspace_depth: 2,
         }
@@ -100,7 +92,11 @@ impl DetectionEngine {
         config: &DetectionConfig,
         scope: DetectionScope,
     ) -> Result<DetectionReport> {
-        let context = DetectionContext::with_scope(path, scope.clone())?;
+        // The file-tree limits come from the config: they used to be hard-coded
+        // in the context, so `max_depth` / `ignore_patterns` (and the CLI's
+        // `--max-depth` / `--ignore`) had no effect.
+        let context = DetectionContext::with_scope(path, scope.clone())?
+            .with_tree_limits(config.max_depth, config.ignore_patterns.clone());
         let mut report = DetectionReport::new(context.root_path.clone());
 
         tracing::debug!(
@@ -320,10 +316,10 @@ impl DetectionEngine {
                 }
 
                 // Check if category is enabled
-                if let Some(ref enabled) = config.enabled_categories {
-                    if !enabled.contains(&s.category()) {
-                        return false;
-                    }
+                if let Some(ref enabled) = config.enabled_categories
+                    && !enabled.contains(&s.category())
+                {
+                    return false;
                 }
 
                 // Check if strategy is explicitly disabled
@@ -354,10 +350,10 @@ impl DetectionEngine {
                 }
 
                 // Check if category is enabled
-                if let Some(ref enabled) = config.enabled_categories {
-                    if !enabled.contains(&s.category()) {
-                        return false;
-                    }
+                if let Some(ref enabled) = config.enabled_categories
+                    && !enabled.contains(&s.category())
+                {
+                    return false;
                 }
 
                 // Check if strategy is explicitly disabled
@@ -563,5 +559,21 @@ mod tests {
 
         // Should be ordered by priority
         assert_eq!(order, vec!["high", "medium", "low"]);
+    }
+
+    #[test]
+    fn config_tree_limits_reach_the_context() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        std::fs::write(dir.path().join("a/b/c/deep.py"), "x = 1").unwrap();
+        std::fs::create_dir_all(dir.path().join("skipme")).unwrap();
+        std::fs::write(dir.path().join("skipme/main.py"), "x = 1").unwrap();
+
+        let shallow = DetectionContext::with_scope(dir.path(), DetectionScope::root(2))
+            .unwrap()
+            .with_tree_limits(1, vec!["skipme".to_string()]);
+        let files = shallow.list_files();
+        assert!(!files.iter().any(|f| f.ends_with("deep.py")), "{files:?}");
+        assert!(!files.iter().any(|f| f.ends_with("main.py")), "{files:?}");
     }
 }

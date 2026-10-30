@@ -111,16 +111,16 @@ where
         let path = self.expanded_path();
 
         // Create parent directories if needed
-        if self.create_dirs {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    Error::SaveError(format!(
-                        "Failed to create directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
-            }
+        if self.create_dirs
+            && let Some(parent) = path.parent()
+        {
+            fs::create_dir_all(parent).map_err(|e| {
+                Error::SaveError(format!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
         }
 
         // Serialize to YAML
@@ -128,7 +128,7 @@ where
             .map_err(|e| Error::SaveError(format!("Failed to serialize YAML: {}", e)))?;
 
         // Write to file
-        fs::write(&path, content).map_err(|e| {
+        crate::utils::fs::write_atomic(&path, content.as_bytes()).map_err(|e| {
             Error::SaveError(format!("Failed to write to {}: {}", path.display(), e))
         })?;
 

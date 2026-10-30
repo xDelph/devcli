@@ -60,6 +60,70 @@ impl AppState {
     /// Callers that want the cleanup do it explicitly; the TUI already does,
     /// just before building the state.
     pub fn from_config_with_store(config: &Config, store: &StateStore) -> Result<Self> {
+        Self::build(config, |project, app| {
+            let process = find_process(store, project, app, None)?;
+            Ok(RuntimeSnapshot::from_process(store, process.as_ref()))
+        })
+    }
+
+    /// Re-read the app list after a config edit, keeping what the user sees.
+    ///
+    /// The config editor used to replace the whole state with a fresh one:
+    /// collapsed projects expanded again, view history and messages were lost,
+    /// the selection jumped when apps were added or removed (it was kept by
+    /// index), and every process was probed again while the UI lock was held.
+    /// Now only the app list is rebuilt; runtime data of apps that still exist
+    /// is carried over (new apps get theirs at the next status poll), and the
+    /// selection follows the selected app by name.
+    pub fn refresh_from_config(&mut self, config: &Config) -> Result<()> {
+        let fresh = Self::build(config, |_, _| Ok(RuntimeSnapshot::stopped()))?;
+        let selected_project = self.selected_project().map(|p| p.name.clone());
+        let selected_app = self.selected_app().map(|a| a.name.clone());
+
+        let mut projects = fresh.projects;
+        for project in &mut projects {
+            let Some(old_project) = self.projects.iter().find(|p| p.name == project.name) else {
+                continue;
+            };
+            project.expanded = old_project.expanded;
+            for app in &mut project.apps {
+                if let Some(old) = old_project.apps.iter().find(|a| a.name == app.name) {
+                    app.status = old.status.clone();
+                    app.active_stage = old.active_stage.clone();
+                    app.restart_count = old.restart_count;
+                    app.last_exit_code = old.last_exit_code;
+                    app.health_status = old.health_status.clone();
+                }
+            }
+        }
+        self.projects = projects;
+
+        let project_idx = selected_project
+            .and_then(|name| self.projects.iter().position(|p| p.name == name))
+            .unwrap_or(self.selected_project_idx)
+            .min(self.projects.len().saturating_sub(1));
+        let app_idx = self
+            .projects
+            .get(project_idx)
+            .map(|p| {
+                selected_app
+                    .and_then(|name| p.apps.iter().position(|a| a.name == name))
+                    .unwrap_or(self.selected_app_idx)
+                    .min(p.apps.len().saturating_sub(1))
+            })
+            .unwrap_or(0);
+        self.selected_project_idx = project_idx;
+        self.selected_app_idx = app_idx;
+        self.status_updated = true;
+        Ok(())
+    }
+
+    /// Build the projects/apps from `config`, asking `runtime` for each app's
+    /// runtime data.
+    fn build(
+        config: &Config,
+        mut runtime: impl FnMut(&str, &str) -> Result<RuntimeSnapshot>,
+    ) -> Result<Self> {
         let mut projects: Vec<ProjectState> = Vec::new();
 
         // Iterate through each project in the config
@@ -68,45 +132,14 @@ impl AppState {
 
             // Iterate through each app in the project
             for (app_name, app_config) in &project_config.apps {
-                // Determine status and runtime details from process-manager state.
-                let process_info = find_process(store, project_name, app_name, None)?;
-                let status = process_info
-                    .as_ref()
-                    .map(|info| AppStatus::from_process(store, info))
-                    .unwrap_or(AppStatus::Stopped);
-
-                // Get the active stage from the running process (if any)
-                let active_stage = process_info
-                    .as_ref()
-                    .and_then(|info| info.metadata.get("stage").cloned());
-
-                // Extract restart count and exit code
-                let restart_count = process_info
-                    .as_ref()
-                    .map(|info| info.runtime.restart_count)
-                    .unwrap_or(0);
-                let last_exit_code = process_info
-                    .as_ref()
-                    .and_then(|info| info.runtime.last_exit_code);
-
-                // Determine health status
-                let health_status = if let Some(info) = process_info.as_ref() {
-                    if info.runtime.health_failures > 0 {
-                        HealthStatus::Unhealthy {
-                            failures: info.runtime.health_failures,
-                            last_check: info.runtime.last_health_check.unwrap_or_else(Utc::now),
-                        }
-                    } else if info.runtime.last_health_check.is_some() {
-                        // Health check has run and is passing
-                        HealthStatus::Healthy
-                    } else {
-                        // No health check has run yet
-                        HealthStatus::Unknown
-                    }
-                } else {
-                    // No process info available
-                    HealthStatus::Unknown
-                };
+                // Status and runtime details (from process-manager state).
+                let RuntimeSnapshot {
+                    status,
+                    active_stage,
+                    restart_count,
+                    last_exit_code,
+                    health_status,
+                } = runtime(project_name, app_name)?;
 
                 let app_state = AppStateData {
                     name: app_name.clone(),
@@ -173,17 +206,11 @@ impl AppState {
     fn extract_commands(app: &App) -> HashMap<String, Vec<CommandInfo>> {
         let mut commands = HashMap::new();
 
-        // Extract commands for each environment dynamically from the app's commands
-        // Check all possible environment fields
-        let env_maps = [
-            ("local", &app.commands.local),
-            ("docker", &app.commands.docker),
-            ("orbstack", &app.commands.orbstack),
-            ("k8s", &app.commands.k8s),
-        ];
-
-        for (env_key, env_cmds_opt) in env_maps {
-            if let Some(env_cmds) = env_cmds_opt {
+        // Every environment: docker-compose and ci commands used to be left
+        // out, so they could not be run from the TUI at all.
+        for env in crate::config::models::Environment::all() {
+            let env_key = env.as_str();
+            if let Some(env_cmds) = app.commands.get(env_key) {
                 let mut cmd_list: Vec<CommandInfo> = env_cmds
                     .iter()
                     .map(|(name, cmd)| CommandInfo {
@@ -214,9 +241,13 @@ impl AppState {
     }
 
     /// Moves selection to the next item
+    ///
+    /// A collapsed project is a single row: its apps are skipped (they used to
+    /// be walked through invisibly, so the cursor seemed stuck).
     pub fn select_next(&mut self) {
         if let Some(project) = self.projects.get(self.selected_project_idx) {
-            if self.selected_app_idx < project.apps.len().saturating_sub(1) {
+            let last_app = project.apps.len().saturating_sub(1);
+            if project.expanded && self.selected_app_idx < last_app {
                 self.selected_app_idx += 1;
             } else if self.selected_project_idx < self.projects.len().saturating_sub(1) {
                 // Move to next project
@@ -226,15 +257,23 @@ impl AppState {
         }
     }
 
-    /// Moves selection to the previous item
+    /// Moves selection to the previous item (collapsed projects: one row)
     pub fn select_previous(&mut self) {
-        if self.selected_app_idx > 0 {
+        let expanded = self
+            .projects
+            .get(self.selected_project_idx)
+            .is_some_and(|p| p.expanded);
+        if expanded && self.selected_app_idx > 0 {
             self.selected_app_idx -= 1;
         } else if self.selected_project_idx > 0 {
-            // Move to previous project
+            // Move to previous project: its last app, or its row if collapsed
             self.selected_project_idx -= 1;
             if let Some(project) = self.projects.get(self.selected_project_idx) {
-                self.selected_app_idx = project.apps.len().saturating_sub(1);
+                self.selected_app_idx = if project.expanded {
+                    project.apps.len().saturating_sub(1)
+                } else {
+                    0
+                };
             }
         }
     }
@@ -243,6 +282,10 @@ impl AppState {
     pub fn toggle_project_expansion(&mut self) {
         if let Some(project) = self.projects.get_mut(self.selected_project_idx) {
             project.expanded = !project.expanded;
+            if !project.expanded {
+                // The selection collapses onto the project row.
+                self.selected_app_idx = 0;
+            }
         }
     }
 
@@ -286,6 +329,72 @@ impl AppState {
     /// Clears environment selection request
     pub fn clear_env_selection_requested(&mut self) {
         self.env_selection_requested = false;
+    }
+}
+
+/// Everything about an app that changes while it runs, read from its
+/// process-manager entry. Shared by the initial state and the status poller,
+/// which used to refresh only `status` and left restarts, exit code, health
+/// and active stage frozen at their values when the TUI started.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeSnapshot {
+    pub status: AppStatus,
+    pub active_stage: Option<String>,
+    pub restart_count: u32,
+    pub last_exit_code: Option<i32>,
+    pub health_status: HealthStatus,
+}
+
+impl RuntimeSnapshot {
+    /// Runtime data of an app with no process.
+    pub fn stopped() -> Self {
+        Self {
+            status: AppStatus::Stopped,
+            active_stage: None,
+            restart_count: 0,
+            last_exit_code: None,
+            health_status: HealthStatus::Unknown,
+        }
+    }
+
+    pub fn from_process(
+        store: &StateStore,
+        process: Option<&process_manager::state::ManagedProcess>,
+    ) -> Self {
+        let Some(info) = process else {
+            return Self::stopped();
+        };
+
+        let health_status = if info.runtime.health_failures > 0 {
+            HealthStatus::Unhealthy {
+                failures: info.runtime.health_failures,
+                last_check: info.runtime.last_health_check.unwrap_or_else(Utc::now),
+            }
+        } else if info.runtime.last_health_check.is_some() {
+            // Health check has run and is passing
+            HealthStatus::Healthy
+        } else {
+            // No health check has run yet
+            HealthStatus::Unknown
+        };
+
+        Self {
+            status: AppStatus::from_process(store, info),
+            active_stage: info.metadata.get("stage").cloned(),
+            restart_count: info.runtime.restart_count,
+            last_exit_code: info.runtime.last_exit_code,
+            health_status,
+        }
+    }
+
+    /// Equal apart from the running time, which differs on every poll and
+    /// would otherwise make each poll look like a change.
+    pub fn same_state(&self, other: &Self) -> bool {
+        self.status.same_state(&other.status)
+            && self.active_stage == other.active_stage
+            && self.restart_count == other.restart_count
+            && self.last_exit_code == other.last_exit_code
+            && self.health_status == other.health_status
     }
 }
 
@@ -423,6 +532,34 @@ impl AppStatus {
         }
     }
 
+    /// Same status, ignoring `uptime`.
+    pub fn same_state(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                AppStatus::Running {
+                    pid,
+                    start_time,
+                    environment,
+                    command_variant,
+                    ..
+                },
+                AppStatus::Running {
+                    pid: other_pid,
+                    start_time: other_start,
+                    environment: other_env,
+                    command_variant: other_variant,
+                    ..
+                },
+            ) => {
+                pid == other_pid
+                    && start_time == other_start
+                    && environment == other_env
+                    && command_variant == other_variant
+            }
+            _ => self == other,
+        }
+    }
+
     /// Returns true if the app is running
     pub fn is_running(&self) -> bool {
         matches!(self, AppStatus::Running { .. })
@@ -510,5 +647,102 @@ mod tests {
         let main1 = ViewType::Main;
         let main2 = ViewType::Main;
         assert_eq!(main1, main2);
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
+
+    fn state() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b1", app())
+            .with_app("b", "b2", app())
+            .build();
+        (
+            AppState::from_config_with_store(&config, &store).unwrap(),
+            dir,
+        )
+    }
+
+    fn at(state: &AppState) -> (String, usize) {
+        (
+            state.projects[state.selected_project_idx].name.clone(),
+            state.selected_app_idx,
+        )
+    }
+
+    #[test]
+    fn collapsed_projects_are_a_single_row() {
+        let (mut state, _dir) = state();
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        state.selected_project_idx = a;
+        state.selected_app_idx = 1;
+
+        state.toggle_project_expansion(); // collapse "a"
+        assert_eq!(at(&state), ("a".to_string(), 0));
+
+        state.select_next(); // skips a's hidden apps
+        assert_eq!(at(&state).0, "b");
+
+        state.select_previous(); // back onto a's row, not its last hidden app
+        assert_eq!(at(&state), ("a".to_string(), 0));
+    }
+
+    #[test]
+    fn config_refresh_keeps_ui_state_and_follows_the_selection() {
+        let (mut state, _dir) = state();
+        let b = state.projects.iter().position(|p| p.name == "b").unwrap();
+        state.selected_project_idx = b;
+        state.selected_app_idx = 1; // b2
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        state.projects[a].expanded = false;
+        state.view_history.push(ViewType::Main);
+        state.projects[b].apps[1].restart_count = 7;
+
+        // b gains an app sorted before b2.
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b0", app())
+            .with_app("b", "b1", app())
+            .with_app("b", "b2", app())
+            .build();
+        state.refresh_from_config(&config).unwrap();
+
+        let selected = state.selected_app().unwrap();
+        assert_eq!(
+            (selected.project.as_str(), selected.name.as_str()),
+            ("b", "b2")
+        );
+        assert_eq!(selected.restart_count, 7);
+        let a = state.projects.iter().position(|p| p.name == "a").unwrap();
+        assert!(!state.projects[a].expanded);
+        assert_eq!(state.view_history.len(), 1);
+    }
+
+    #[test]
+    fn commands_of_every_environment_reach_the_tui() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StateStore::new(dir.path().to_path_buf()).unwrap();
+        let mut app = AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "npm start")
+            .build();
+        app.commands.docker_compose =
+            Some([("up".to_string(), "docker compose up".to_string())].into());
+        app.commands.ci = Some([("test".to_string(), "npm test".to_string())].into());
+        let config = ConfigBuilder::new().with_app("p", "api", app).build();
+
+        let state = AppState::from_config_with_store(&config, &store).unwrap();
+        let commands = &state.projects[0].apps[0].commands;
+        assert!(commands.contains_key("docker-compose"), "{commands:?}");
+        assert!(commands.contains_key("ci"), "{commands:?}");
     }
 }

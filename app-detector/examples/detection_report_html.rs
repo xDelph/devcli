@@ -569,10 +569,10 @@ fn render_card_app_types(report: &DetectionReport) -> String {
                     if let Some(pm) = i.metadata.get("package_manager") {
                         ex.push(format!("pkg mgr: {}", pm.as_str().unwrap_or("")));
                     }
-                    if let Some(ts) = i.metadata.get("typescript") {
-                        if ts.as_bool() == Some(true) {
-                            ex.push("TypeScript".to_string());
-                        }
+                    if let Some(ts) = i.metadata.get("typescript")
+                        && ts.as_bool() == Some(true)
+                    {
+                        ex.push("TypeScript".to_string());
                     }
                     (i.name.clone(), v, ex)
                 }

@@ -6,28 +6,25 @@ pub mod app_color_manager;
 pub mod file_loader;
 pub mod json_formatter;
 pub mod search;
+pub mod selector;
+mod single_view;
 pub mod syntax_highlighter;
 pub mod viewport;
+
+pub use single_view::SingleLogView;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use std::path::PathBuf;
 
-use self::{
-    app_color_manager::AppColorManager,
-    file_loader::{FileLoader, LogLine},
-    json_formatter::JsonFormatter,
-    search::SearchState,
-    syntax_highlighter::SyntaxHighlighter,
-    viewport::ViewportState,
-};
+use self::app_color_manager::AppColorManager;
 
 /// Result of handling input in LogViewerView
 #[derive(Debug, PartialEq)]
@@ -37,6 +34,8 @@ pub enum LogInputResult {
 
     RequestAddPanel,
     RequestSelectLog,
+    /// Something went wrong that the user should see (shown in the error bar).
+    Error(String),
 }
 
 /// Item in the log selection list
@@ -310,9 +309,7 @@ impl LogViewerView {
                 // The renderer re-normalizes the scroll from the cursor, so we
                 // only need to keep the cursor inside the content.
                 for panel in &mut self.panels {
-                    if panel.viewport.cursor_line + 1 >= panel.total_lines {
-                        panel.viewport.cursor_line = panel.total_lines.saturating_sub(1);
-                    }
+                    panel.clamp_cursor();
                 }
 
                 return Ok(LogInputResult::Handled);
@@ -427,18 +424,23 @@ impl LogViewerView {
                     .candidates
                     .get(self.selection_state.selected_idx)
                 {
-                    match self.selection_state.mode {
-                        SelectionMode::Replace(idx) => {
-                            // If empty, treat replace as add (start state)
-                            if self.panels.is_empty() {
-                                self.add_panel(path.clone())?;
-                            } else {
-                                self.replace_panel(idx, path.clone())?;
-                            }
+                    let path = path.clone();
+                    let opened = match self.selection_state.mode {
+                        // If empty, treat replace as add (start state)
+                        SelectionMode::Replace(_) if self.panels.is_empty() => {
+                            self.add_panel(path.clone())
                         }
-                        SelectionMode::Add => {
-                            self.add_panel(path.clone())?;
-                        }
+                        SelectionMode::Replace(idx) => self.replace_panel(idx, path.clone()),
+                        SelectionMode::Add => self.add_panel(path.clone()),
+                    };
+                    // A log that cannot be opened (deleted since it was listed,
+                    // unreadable) used to propagate up and quit the whole TUI.
+                    if let Err(e) = opened {
+                        self.selection_state.active = false;
+                        return Ok(LogInputResult::Error(format!(
+                            "Cannot open {}: {e}",
+                            path.display()
+                        )));
                     }
                 }
                 self.selection_state.active = false;
@@ -454,884 +456,45 @@ impl LogViewerView {
     }
 
     /// Refreshes log content for all panels
+    ///
+    /// A panel that fails to refresh no longer stops the ones after it.
     pub fn refresh(&mut self) -> Result<bool> {
         let mut any_updated = false;
         for panel in &mut self.panels {
-            if panel.refresh()? {
-                any_updated = true;
+            match panel.refresh() {
+                Ok(updated) => any_updated |= updated,
+                Err(e) => {
+                    tracing::debug!(path = %panel.log_path.display(), error = %e, "log refresh failed");
+                }
             }
         }
         Ok(any_updated)
     }
 }
 
-/// Single log panel viewer
-/// Handles display logic for a single log file
-pub struct SingleLogView {
-    /// Path to the log file being viewed
-    log_path: PathBuf,
-    /// All loaded log lines (lazy loaded in chunks)
-    content: Vec<LogLine>,
-    /// Viewport state (cursor, scroll position)
-    viewport: ViewportState,
-    /// Search state (query, results)
-    search: SearchState,
-    /// Syntax highlighting resources
-    highlighter: SyntaxHighlighter,
-    /// Total number of lines in the file (for display)
-    total_lines: usize,
-    /// Whether to show the JSON beautifier panel
-    show_json_panel: bool,
-    /// Last file size to detect changes
-    last_file_size: u64,
-    /// App name extracted from log file path
-    app_name: String,
-    /// Color assigned to this app for consistent display
-    app_color: Color,
-}
-
-impl SingleLogView {
-    /// Creates a new log viewer for the specified file
-    /// Loads the file content and prepares it for display
-    ///
-    /// # Arguments
-    /// * `log_path` - Path to the log file
-    /// * `app_name` - Name of the app (extracted from file path)
-    /// * `app_color` - Color assigned to this app for consistent display
-    pub fn new(log_path: PathBuf, app_name: String, app_color: Color) -> Result<Self> {
-        crate::debug!(
-            "[LogViewer] SingleLogView::new() called for path: {:?}, app: {}, color: {:?}",
-            log_path,
-            app_name,
-            app_color
-        );
-        let highlighter = SyntaxHighlighter::new();
-
-        // Load content using FileLoader
-        let content = FileLoader::load(&log_path, &highlighter.syntax_set, &highlighter.theme)?;
-        let total_lines = content.len();
-
-        // Initialize viewport state
-        let viewport = ViewportState::new(total_lines);
-
-        // Get initial file size
-        let last_file_size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-
-        Ok(Self {
-            log_path,
-            content,
-            viewport,
-            search: SearchState::default(),
-            highlighter,
-            total_lines,
-            show_json_panel: false,
-            last_file_size,
-            app_name,
-            app_color,
-        })
-    }
-
-    /// Renders the log viewer to the terminal
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
-        // Set background for the entire log viewer area
-        let background = Block::default().style(Style::default().bg(Color::Rgb(0, 0, 0)));
-        frame.render_widget(background, area);
-
-        // Create the main layout with header and content
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(0),    // Content
-                                       // Footer removed from here, handled by parent
-            ])
-            .split(area);
-
-        // Render header with file name and position
-        self.render_header(frame, chunks[0], is_active);
-
-        // Split content area if JSON panel is visible
-        if self.show_json_panel && self.is_current_line_json() {
-            let content_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(50), // Log content
-                    Constraint::Percentage(50), // JSON panel
-                ])
-                .split(chunks[1]);
-
-            // Viewport adjustment disabled - render_content handles scroll with wrapping
-            // let visible_height = content_chunks[0].height.saturating_sub(2) as usize;
-            // self.viewport
-            //     .adjust_viewport(visible_height, self.total_lines);
-
-            // Render log content on left
-            self.render_content(frame, content_chunks[0], is_active);
-
-            // Render JSON panel on right
-            self.render_json_panel(frame, content_chunks[1]);
-        } else {
-            // Viewport adjustment disabled - render_content handles scroll with wrapping
-            // let visible_height = chunks[1].height.saturating_sub(2) as usize;
-            // self.viewport
-            //     .adjust_viewport(visible_height, self.total_lines);
-
-            // Render log content full width
-            self.render_content(frame, chunks[1], is_active);
-        }
-
-        // Footer rendering removed from here
-    }
-
-    /// Renders the header showing file name and current position with colored app name
-    fn render_header(&self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let filename = self
-            .log_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Unknown");
-
-        // Parse filename: {project}_{app}_{context}_{date}.log
-        let parts: Vec<&str> = filename.splitn(4, '_').collect();
-        let (project, context_date) = if parts.len() >= 4 {
-            let proj = parts[0];
-            let context = parts[2];
-            let date = parts[3].replace(".log", "");
-            (proj.to_string(), format!("{} [{}]", context, date))
-        } else {
-            ("Unknown".to_string(), filename.replace(".log", ""))
-        };
-
-        let current_line = self.viewport.cursor_line + 1;
-
-        // Create title with colored app name
-        let title_spans = vec![
-            Span::styled(format!("{} - ", project), Style::default().fg(Color::White)),
-            Span::styled(
-                format!("[{}]", self.app_name),
-                Style::default()
-                    .fg(self.app_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(
-                    " {} (Line {}/{})",
-                    context_date, current_line, self.total_lines
-                ),
-                Style::default().fg(Color::White),
-            ),
-        ];
-
-        // Active panel gets a distinct border color
-        let border_color = if is_active {
-            Color::Green
-        } else {
-            Color::DarkGray
-        };
-
-        let header = Paragraph::new(Line::from(title_spans))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(border_color)),
-            )
-            .style(Style::default().bg(Color::Rgb(0, 0, 0)));
-
-        frame.render_widget(header, area);
-    }
-
-    /// Calculates how many visual rows a log line will occupy when wrapped
-    fn calculate_wrapped_rows(&self, log_line: &LogLine, available_width: usize) -> usize {
-        // The rendered line is: line-number prefix + "[app] " + content spans.
-        // A width-only `div_ceil` is NOT enough: ratatui's `Wrap` breaks on
-        // *word* boundaries (WordWrapper), which can produce more rows than the
-        // width math (fewer words fit per row depending on where they break).
-        // Undercounting kept the last rows of the log unreachable, so we
-        // emulate the exact packing algorithm (trim=false, ASCII width 1).
-        let mut content = format!("{:>5} | [{}] ", "", self.app_name);
-        for span in &log_line.formatted {
-            content.push_str(&span.content);
-        }
-        wrapped_row_count(std::slice::from_ref(&content), available_width)
-    }
-
-    /// Applies search highlighting to formatted spans
-    /// Highlights matched text with bright background colors
-    ///
-    /// # Arguments
-    /// * `formatted_spans` - The original formatted spans from the log line
-    /// * `match_ranges` - Character ranges within the line that match the search query
-    /// * `bg_color` - Background color to apply to non-highlighted text
-    /// * `is_current_result` - Whether this is the currently selected search result
-    ///
-    /// # Returns
-    /// Vector of spans with search highlighting applied
-    fn apply_search_highlighting(
-        &self,
-        formatted_spans: &[ratatui::text::Span],
-        match_ranges: &[search::MatchRange],
-        bg_color: Color,
-        is_current_result: bool,
-    ) -> Vec<Span<'static>> {
-        let mut result_spans = Vec::new();
-        let mut char_pos = 0;
-
-        for span in formatted_spans {
-            let span_start = char_pos;
-            let span_end = char_pos + span.content.chars().count(); // Use char count, not byte length
-
-            // Find matches that overlap with this span
-            let overlapping_matches: Vec<_> = match_ranges
-                .iter()
-                .filter(|m| m.start < span_end && m.end > span_start)
-                .collect();
-
-            if overlapping_matches.is_empty() {
-                // No matches in this span, just apply background
-                let mut style = span.style;
-                style.bg = Some(bg_color);
-                result_spans.push(Span::styled(span.content.to_string(), style));
-            } else {
-                // Split span to highlight matches
-                let mut current_pos = 0;
-                let span_chars: Vec<char> = span.content.chars().collect();
-
-                for &match_range in &overlapping_matches {
-                    let match_start_in_span = match_range.start.saturating_sub(span_start);
-                    let match_end_in_span =
-                        (match_range.end.saturating_sub(span_start)).min(span_chars.len());
-
-                    // Add text before match
-                    if current_pos < match_start_in_span {
-                        let before_text: String = span_chars[current_pos..match_start_in_span]
-                            .iter()
-                            .collect();
-                        let mut style = span.style;
-                        style.bg = Some(bg_color);
-                        result_spans.push(Span::styled(before_text, style));
-                    }
-
-                    // Add highlighted match
-                    if match_start_in_span < match_end_in_span {
-                        let match_text: String = span_chars[match_start_in_span..match_end_in_span]
-                            .iter()
-                            .collect();
-                        let highlight_color = if is_current_result {
-                            Color::Rgb(255, 255, 0) // Bright yellow for current result
-                        } else {
-                            Color::Rgb(200, 200, 100) // Dimmer yellow for other matches
-                        };
-
-                        let mut style = span.style;
-                        style.bg = Some(highlight_color);
-                        style.fg = Some(Color::Black); // Black text on yellow background
-                        style = style.add_modifier(Modifier::BOLD);
-                        result_spans.push(Span::styled(match_text, style));
-                    }
-
-                    current_pos = match_end_in_span;
-                }
-
-                // Add remaining text after last match
-                if current_pos < span_chars.len() {
-                    let after_text: String = span_chars[current_pos..].iter().collect();
-                    let mut style = span.style;
-                    style.bg = Some(bg_color);
-                    result_spans.push(Span::styled(after_text, style));
-                }
-            }
-
-            char_pos = span_end;
-        }
-
-        result_spans
-    }
-
-    /// Renders the main log content with line numbers and text wrapping
-    ///
-    /// This method handles text wrapping by:
-    /// 1. Calculating visual row positions for each logical line
-    /// 2. Determining scroll offset to keep cursor visible
-    /// 3. Rendering all lines with proper highlighting and wrapping
-    fn render_content(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let available_width = area.width.saturating_sub(2) as usize;
-        let visible_height = area.height.saturating_sub(2) as usize;
-
-        // Calculate visual row position for each logical line
-        // This accounts for text wrapping - a long line may span multiple visual rows
-        let mut visual_row_positions: Vec<usize> = Vec::new();
-        let mut current_visual_row = 0;
-
-        for log_line in &self.content {
-            visual_row_positions.push(current_visual_row);
-            let wrapped_rows = self.calculate_wrapped_rows(log_line, available_width);
-            current_visual_row += wrapped_rows;
-        }
-
-        // A shrunk/rotated file can leave the cursor past the content — never
-        // let the selection point into the void (keeps the highlight visible).
-        let max_cursor = self.content.len().saturating_sub(1);
-        if self.viewport.cursor_line > max_cursor {
-            self.viewport.cursor_line = max_cursor;
-        }
-
-        // Get visual row position for cursor (emulation-wrapped). The EXACT
-        // total comes from `Paragraph::line_count` below — ratatui's own
-        // WordWrapper — which is the ground truth used to clamp the scroll so
-        // the last rows of the log are always reachable.
-        let cursor_visual_row_est = visual_row_positions
-            .get(self.viewport.cursor_line)
-            .copied()
-            .unwrap_or(0);
-
-        // Build text with ALL lines
-        let mut text = Text::default();
-
-        for (i, log_line) in self.content.iter().enumerate() {
-            let bg_color = if i == self.viewport.cursor_line {
-                // Deliberately bright: a too-dark band (previous Rgb(40, 40, 60))
-                // was invisible on the black background, so the selected line
-                // seemed to have no highlight at all.
-                if is_active {
-                    Color::Rgb(90, 90, 135)
-                } else {
-                    Color::Rgb(55, 55, 85)
-                }
-            } else {
-                Color::Rgb(0, 0, 0)
-            };
-
-            let line_num_str = format!("{:>5} | ", log_line.line_number);
-            let line_num_span = if self.search.is_current_result(i) {
-                // Current search result gets bright yellow with arrow
-                let cursor_str = format!("{:>5} ▶ ", log_line.line_number);
-                Span::styled(
-                    cursor_str,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if self.search.is_match(i) {
-                // Other search matches get dimmer yellow
-                Span::styled(
-                    line_num_str.clone(),
-                    Style::default()
-                        .fg(Color::Rgb(200, 200, 100))
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if i == self.viewport.cursor_line {
-                let cursor_str = format!("{:>5} > ", log_line.line_number);
-                Span::styled(cursor_str, Style::default().fg(Color::Cyan))
-            } else {
-                Span::styled(line_num_str.clone(), Style::default().fg(Color::DarkGray))
-            };
-
-            let mut spans = vec![line_num_span];
-
-            // Add colored app name prefix: [appName]
-            let app_name_span = Span::styled(
-                format!("[{}] ", self.app_name),
-                Style::default()
-                    .fg(self.app_color)
-                    .add_modifier(Modifier::BOLD)
-                    .bg(bg_color),
-            );
-            spans.push(app_name_span);
-
-            // Apply search highlighting if this line has matches
-            let content_spans = if let Some(match_ranges) = self.search.get_match_ranges(i) {
-                self.apply_search_highlighting(
-                    &log_line.formatted,
-                    match_ranges,
-                    bg_color,
-                    self.search.is_current_result(i),
-                )
-            } else {
-                // No search matches, just apply background color
-                log_line
-                    .formatted
-                    .iter()
-                    .map(|s| {
-                        let mut style = s.style;
-                        style.bg = Some(bg_color);
-                        Span::styled(s.content.clone(), style)
-                    })
-                    .collect()
-            };
-
-            spans.extend(content_spans);
-
-            // Calculate the current line width to add padding for full-width background
-            let current_width: usize = spans.iter().map(|span| span.content.len()).sum();
-            let remaining_width = available_width.saturating_sub(current_width);
-
-            // Add padding span to fill the remaining width with background color
-            if remaining_width > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(remaining_width),
-                    Style::default().bg(bg_color),
-                ));
-            }
-
-            let line = Line::from(spans).style(Style::default().bg(bg_color));
-            text.lines.push(line);
-        }
-
-        let border_color = if is_active {
-            Color::White
-        } else {
-            Color::DarkGray
-        };
-
-        // Use wrapping - scroll by visual rows
-        let paragraph = Paragraph::new(text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(border_color))
-                    .style(Style::default().bg(Color::Rgb(0, 0, 0))),
-            )
-            .style(Style::default().bg(Color::Rgb(0, 0, 0)))
-            .wrap(ratatui::widgets::Wrap { trim: false });
-
-        // Ground truth: total wrapped rows exactly as ratatui renders them
-        // (WordWrapper). Using the width-only estimate kept the last rows of
-        // the log unreachable, because word-boundary wrapping packs more rows
-        // than the width math predicts.
-        let total_visual_rows = paragraph.line_count(available_width as u16); // usize
-        let cursor_visual_row = cursor_visual_row_est.min(total_visual_rows.saturating_sub(1));
-        let max_scroll = total_visual_rows.saturating_sub(visible_height);
-        // When the cursor is on the very last line, pin the view to the exact
-        // bottom so the newest log rows are always visible.
-        let at_last_line = self.viewport.cursor_line + 1 >= self.content.len();
-
-        // Standard (pager-like) scrolling:
-        // - cursor inside the visible range: keep the current scroll position
-        // - cursor leaves the top: re-anchor so it becomes the first visible row
-        // - cursor leaves the bottom: re-anchor so it becomes the last visible row
-        let current_top = self.viewport.last_visual_scroll.min(max_scroll);
-        let scroll_offset = if total_visual_rows <= visible_height {
-            // Everything fits on screen - never hide the first lines
-            0
-        } else if cursor_visual_row < current_top {
-            cursor_visual_row
-        } else if cursor_visual_row >= current_top + visible_height {
-            if at_last_line {
-                max_scroll
-            } else {
-                (cursor_visual_row + 1)
-                    .saturating_sub(visible_height)
-                    .min(max_scroll)
-            }
-        } else {
-            current_top
-        };
-
-        // Remember scroll position for next frame
-        self.viewport.last_visual_scroll = scroll_offset;
-
-        frame.render_widget(paragraph.scroll((scroll_offset as u16, 0)), area);
-    }
-
-    /// Checks if the current cursor line contains JSON
-    fn is_current_line_json(&self) -> bool {
-        self.content
-            .get(self.viewport.cursor_line)
-            .map(|line| line.is_json)
-            .unwrap_or(false)
-    }
-
-    /// Renders the JSON beautifier panel showing prettified JSON
-    fn render_json_panel(&self, frame: &mut Frame, area: Rect) {
-        let json_content = if let Some(log_line) = self.content.get(self.viewport.cursor_line) {
-            if log_line.is_json {
-                // Parse and prettify the JSON
-                match serde_json::from_str::<serde_json::Value>(log_line.raw.trim()) {
-                    Ok(json) => match serde_json::to_string_pretty(&json) {
-                        Ok(pretty) => {
-                            // Apply syntax highlighting to prettified JSON
-                            JsonFormatter::format_prettified_json(
-                                &pretty,
-                                &self.highlighter.syntax_set,
-                                &self.highlighter.theme,
-                            )
-                        }
-                        Err(_) => vec![Line::from("Error: Failed to format JSON")],
-                    },
-                    Err(e) => vec![Line::from(format!("Error: Invalid JSON - {}", e))],
-                }
-            } else {
-                vec![Line::from("Not a JSON line")]
-            }
-        } else {
-            vec![Line::from("No line selected")]
-        };
-
-        let panel = Paragraph::new(json_content)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("JSON Beautifier")
-                    .border_style(Style::default().fg(Color::Green)),
-            )
-            .style(Style::default().fg(Color::White).bg(Color::Rgb(0, 0, 0)));
-
-        frame.render_widget(panel, area);
-    }
-
-    /// Returns status text for the unified footer
-    pub fn get_status_text(&self) -> String {
-        if self.search.active {
-            // Show search input with match count and navigation help
-            let match_info = if !self.search.results.is_empty() {
-                format!(
-                    " [{} matches] ({}/{}) - ↑↓/jk/Enter: Navigate  Esc: Exit",
-                    self.search.results.len(),
-                    self.search.current_idx + 1,
-                    self.search.results.len()
-                )
-            } else if !self.search.query.is_empty() {
-                " [No matches] - Esc: Exit".to_string()
-            } else {
-                " - Type to search, Esc: Exit".to_string()
-            };
-
-            format!("Search: {}{}", self.search.query, match_info)
-        } else {
-            let json_hint = if self.is_current_line_json() {
-                if self.show_json_panel {
-                    "  J: Hide JSON"
-                } else {
-                    "  J: Show JSON"
-                }
-            } else {
-                ""
-            };
-
-            // Layout is managed by parent, so we assume active context keys are relevant
-            format!(
-                "Tab: Switch  n: New Panel  w: Close Panel  L: Change Log  Esc: Exit  {}/jk: Scroll  /: Search  {}",
-                "\u{2191}\u{2193}", // Arrows up/down
-                json_hint
-            )
-        }
-    }
-
-    /// Handles keyboard input
-    /// Returns result indicating action taken
-    pub fn handle_input(&mut self, key: KeyEvent) -> Result<LogInputResult> {
-        if self.search.active {
-            // Handle search mode input
-            self.handle_search_input(key)
-        } else {
-            // Handle normal navigation input
-            self.handle_navigation_input(key)
-        }
-    }
-
-    /// Handles input when in search mode
-    fn handle_search_input(&mut self, key: KeyEvent) -> Result<LogInputResult> {
-        match key.code {
-            KeyCode::Backspace => {
-                // Remove last character from search query
-                self.search.query.pop();
-                if let Some(idx) = self.search.perform_search(&self.content) {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Enter => {
-                // Cycle to next search result
-                if let Some(idx) = self.search.next_result() {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Esc => {
-                // Exit search mode and clear all highlighting
-                self.search.active = false;
-                self.search.clear_results();
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                // Next search result (Down arrow or j)
-                if let Some(idx) = self.search.next_result() {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                // Previous search result (Up arrow or k)
-                if let Some(idx) = self.search.previous_result() {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            KeyCode::Char(c) if c.is_ascii() => {
-                // Add character to search query (allow all printable ASCII characters including 'n')
-                self.search.query.push(c);
-                if let Some(idx) = self.search.perform_search(&self.content) {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            _ => Ok(LogInputResult::Ignored),
-        }
-    }
-
-    /// Handles input when in normal navigation mode
-    fn handle_navigation_input(&mut self, key: KeyEvent) -> Result<LogInputResult> {
-        match key.code {
-            // Shift+Down - jump down by 10
-            KeyCode::Down
-                if key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::SHIFT) =>
-            {
-                self.viewport.scroll_down(10, self.total_lines);
-                Ok(LogInputResult::Handled)
-            }
-            // Shift+Up - jump up by 10
-            KeyCode::Up
-                if key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::SHIFT) =>
-            {
-                self.viewport.scroll_up(10);
-                Ok(LogInputResult::Handled)
-            }
-            // Scroll down one line
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.viewport.scroll_down(1, self.total_lines);
-                Ok(LogInputResult::Handled)
-            }
-            // Scroll up one line
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.viewport.scroll_up(1);
-                Ok(LogInputResult::Handled)
-            }
-            // Page down
-            KeyCode::PageDown => {
-                self.viewport.scroll_down(20, self.total_lines);
-                Ok(LogInputResult::Handled)
-            }
-            // Page up
-            KeyCode::PageUp => {
-                self.viewport.scroll_up(20);
-                Ok(LogInputResult::Handled)
-            }
-            // Jump to top
-            KeyCode::Home | KeyCode::Char('g') => {
-                self.viewport.jump_top();
-                Ok(LogInputResult::Handled)
-            }
-            // Jump to bottom
-            KeyCode::End | KeyCode::Char('G') => {
-                self.viewport.jump_bottom(self.total_lines);
-                Ok(LogInputResult::Handled)
-            }
-            // Enter search mode
-            KeyCode::Char('/') => {
-                self.search.active = true;
-                self.search.query.clear();
-                self.search.results.clear();
-                self.search.current_idx = 0;
-                Ok(LogInputResult::Handled)
-            }
-            // 'n' for Add Panel -- CHANGED FROM NEXT SEARCH RESULT
-            KeyCode::Char('n') => Ok(LogInputResult::RequestAddPanel),
-            // Previous search result
-            KeyCode::Char('N') => {
-                // Reuse N for next result in non-search mode?
-                // Or keep it for previous result if search is active (it's not here)
-                // Let's implement Next Search Result on another key if needed
-                // Currently n is hijacked for panel.
-                // We'll leave N for Previous Search Result if someone used / before
-                if let Some(idx) = self.search.previous_result() {
-                    self.viewport.cursor_line = idx;
-                }
-                Ok(LogInputResult::Handled)
-            }
-            // Add Select Log shortcut (L)
-            KeyCode::Char('L') => Ok(LogInputResult::RequestSelectLog),
-            // Toggle JSON panel
-            KeyCode::Char('J') => {
-                self.show_json_panel = !self.show_json_panel;
-                Ok(LogInputResult::Handled)
-            }
-            _ => Ok(LogInputResult::Ignored),
-        }
-    }
-
-    /// Returns the path to the log file
-    pub fn log_path(&self) -> &PathBuf {
-        &self.log_path
-    }
-
-    /// Refreshes the log file content if it has changed
-    /// Returns true if the content was updated
-    pub fn refresh(&mut self) -> Result<bool> {
-        // Check if file size has changed
-        let current_size = std::fs::metadata(&self.log_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        if current_size == self.last_file_size {
-            // No changes
-            return Ok(false);
-        }
-
-        // Remember if we were at the bottom before refresh
-        let was_at_bottom = self.viewport.cursor_line + 1 >= self.total_lines;
-
-        // Reload the file
-        let new_content = FileLoader::load(
-            &self.log_path,
-            &self.highlighter.syntax_set,
-            &self.highlighter.theme,
-        )?;
-        let new_total_lines = new_content.len();
-
-        // Update content
-        self.content = new_content;
-        self.total_lines = new_total_lines;
-        self.last_file_size = current_size;
-
-        // Shrunk/rotated file: clamp a cursor that fell past the new content
-        // so the selection stays visible.
-        self.viewport.clamp_cursor(new_total_lines);
-
-        // If we were at the bottom, stay at the bottom (auto-scroll)
-        if was_at_bottom && new_total_lines > 0 {
-            self.viewport.jump_bottom(new_total_lines);
-        }
-
-        Ok(true)
-    }
-}
-
-/// Counts how many visual rows a set of logical lines occupies when wrapped by
-/// ratatui's `WordWrapper` (`Wrap { trim: false }`, ASCII width 1).
-///
-/// Faithful port of `ratatui_widgets::reflow::WordWrapper::process_input`
-/// reduced to width bookkeeping (only the row count is needed). Tested in
-/// `mod tests` against the real ratatui renderer.
-fn wrapped_row_count(contents: &[String], available_width: usize) -> usize {
-    let max = available_width.max(1);
-    let mut total = 0usize;
-
-    for text in contents {
-        let mut count = 0usize; // wrapped rows for this logical line
-        let mut line_width = 0usize;
-        let mut word_width = 0usize;
-        let mut ws_width = 0usize;
-        let mut pending_line = 0usize;
-        let mut pending_ws: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-        let mut non_ws_prev = false;
-
-        for ch in text.chars() {
-            let is_ws = ch.is_whitespace();
-            // Cell width as unicode-width sees it: tabs/control chars have
-            // width 0, regular printable chars 1 (CJK/emoji are approximated).
-            let w = if ch == '\t' || ch.is_control() { 0 } else { 1 };
-            if w > max {
-                continue;
-            }
-
-            let word_found = non_ws_prev && is_ws;
-            // trim is false, so the trimmed_* overflow branches never trigger
-            let untrimmed_overflow = pending_line == 0 && word_width + ws_width + w > max;
-
-            if word_found || untrimmed_overflow {
-                // pending line always keeps whitespace when trim is false
-                pending_line += ws_width + word_width;
-                line_width += ws_width + word_width;
-                pending_ws.clear();
-                ws_width = 0;
-                word_width = 0;
-            }
-
-            let line_full = line_width >= max;
-            let pending_word_overflow = w > 0 && line_width + ws_width + word_width >= max;
-
-            if line_full || pending_word_overflow {
-                count += 1;
-                // ratatui computes the remaining *wrapped-row* width from the
-                // flushed line BEFORE resetting it (max - flushed_width)
-                let mut remaining = max.saturating_sub(line_width);
-                pending_line = 0;
-                line_width = 0;
-
-                // drain leading whitespace that fits on the wrapped row
-                while let Some(&front_w) = pending_ws.front() {
-                    if front_w > remaining {
-                        break;
-                    }
-                    ws_width -= front_w;
-                    remaining -= front_w;
-                    pending_ws.pop_front();
-                }
-
-                if is_ws && pending_ws.is_empty() {
-                    continue;
-                }
-            }
-
-            if is_ws {
-                ws_width += w;
-                pending_ws.push_back(w);
-            } else {
-                word_width += w;
-            }
-            non_ws_prev = !is_ws;
-        }
-
-        // flush the remaining tail (pending whitespace + word)
-        pending_line = ws_width + word_width;
-        if pending_line != 0 {
-            count += 1;
-        }
-        if count == 0 {
-            count = 1; // an empty logical line still renders as one row
-        }
-        total += count;
-    }
-
-    total
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The width-based emulation is only used to position the cursor reveal;
-    /// the scroll clamp uses ratatui's own `line_count`. These sanity tests
-    /// pin the emulation's invariants (never 0, never less than the width
-    /// lower bound, monotonic with width).
     #[test]
-    fn wrapped_row_count_sanity() {
-        let one = "hello world".to_string();
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&one), 100), 1);
-        assert_eq!(wrapped_row_count(&[String::new()], 40), 1);
+    fn selecting_a_vanished_log_reports_instead_of_failing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        // long single word spills to the width lower bound at least
-        let long = "x".repeat(41);
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&long), 10), 5);
-
-        // wider width never yields more rows
-        assert!(
-            wrapped_row_count(std::slice::from_ref(&long), 30)
-                <= wrapped_row_count(std::slice::from_ref(&long), 10)
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut viewer = LogViewerView::new(vec![]).unwrap();
+        viewer.start_log_selection(
+            vec![SelectionItem::Option {
+                label: "gone".to_string(),
+                path: dir.path().join("gone.log"),
+            }],
+            SelectionMode::Add,
         );
-
-        // empty content is 0 rows, not crash
-        assert_eq!(wrapped_row_count(&[], 10), 0);
-    }
-
-    #[test]
-    fn wrapped_row_count_matches_width_bound_for_plain_words() {
-        // For spacing-free text the emulation matches simple width math
-        let line = "abcd".repeat(10); // 40 chars, no whitespace
-        assert_eq!(wrapped_row_count(std::slice::from_ref(&line), 13), 4);
+        let result = viewer
+            .handle_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .expect("must not fail the TUI");
+        assert!(
+            matches!(result, LogInputResult::Error(ref m) if m.contains("gone.log")),
+            "{result:?}"
+        );
     }
 }

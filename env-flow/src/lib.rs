@@ -35,7 +35,8 @@
 //!
 //! // Auto-detect stage and context from the process environment
 //! let vars = EnvFlow::from_dir(".").auto_detect().load().unwrap();
-//! vars.apply(); // push all vars into std::env
+//! // SAFETY: single-threaded, before anything else reads the environment.
+//! unsafe { vars.apply() }; // push all vars into std::env
 //! ```
 //!
 //! # Loading modes
@@ -524,7 +525,8 @@ mod integration_tests {
         write(d.path(), ".env", "PORT=${APP_PORT:-3000}\n");
 
         // Make sure APP_PORT is not in env
-        std::env::remove_var("APP_PORT");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::remove_var("APP_PORT") };
 
         let vars = EnvFlow::from_dir(d.path()).load().unwrap();
         assert_eq!(vars.get("PORT"), Some("3000"));

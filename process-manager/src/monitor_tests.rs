@@ -7,7 +7,7 @@ mod tests {
     use crate::health::HealthCheckEngine;
     use crate::monitor::Monitor;
     use crate::restart::RestartCoordinator;
-    use crate::state::{ManagedProcess, ProcessRuntime, StateStore};
+    use crate::state::{ManagedProcess, ProcessRuntime, StateStore, OWNER_PID_KEY};
     use crate::{HealthCheck, RestartPolicy, Task};
     use chrono::Utc;
     use std::collections::HashMap;
@@ -54,6 +54,7 @@ mod tests {
             Arc::new(HealthCheckEngine::new()),
             Arc::new(RestartCoordinator::new(base_dir)),
         )
+        .with_health_grace(Duration::ZERO)
     }
 
     /// Reap an exited child so the kernel stops listing it as a zombie.
@@ -278,5 +279,154 @@ mod tests {
         let monitor = monitor_for(store, temp_dir.path().to_path_buf());
 
         assert!(!monitor.tick().await.unwrap());
+    }
+
+    /// An app stopped (entry removed) while its restart waits out the backoff
+    /// must not be respawned behind the user's back.
+    #[tokio::test]
+    async fn test_restart_is_abandoned_when_entry_removed_during_backoff() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let marker = temp_dir.path().join("respawned");
+
+        let mut task = sleep_task("stopped-during-backoff", 120);
+        task.restart_policy.initial_backoff_secs = 1;
+        task.command = format!("sh -c 'touch {}; sleep 120'", marker.display());
+        let running = spawn_and_track(&store, task).await;
+        wait_until(|| marker.exists(), Duration::from_secs(10)).await;
+        std::fs::remove_file(&marker).unwrap();
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        // The restart task is now sleeping through its 1s backoff.
+        store.delete("stopped-during-backoff").unwrap();
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+
+        assert!(!marker.exists(), "the stopped app was respawned");
+        assert!(store.load("stopped-during-backoff").unwrap().is_none());
+    }
+
+    /// An entry flagged by `stop` is not treated as a crash.
+    #[tokio::test]
+    async fn test_tick_leaves_stopping_entries_alone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let running = spawn_and_track(&store, sleep_task("being-stopped", 120)).await;
+        store.mark_stopping("being-stopped").unwrap().unwrap();
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let entry = store.load("being-stopped").unwrap().unwrap();
+        assert_eq!(entry.pid, running.pid, "a stopping app was restarted");
+        assert_eq!(entry.runtime.restart_count, 0);
+    }
+
+    /// Health failures are not counted while the app is still starting up.
+    #[tokio::test]
+    async fn test_health_failures_ignored_during_startup_grace() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"))
+            .with_health_grace(Duration::from_secs(60));
+
+        let running = spawn_and_track(&store, failing_health_task("slow-boot", 120)).await;
+        for _ in 0..4 {
+            monitor.tick().await.unwrap();
+        }
+
+        let entry = store.load("slow-boot").unwrap().unwrap();
+        assert_eq!(entry.runtime.health_failures, 0);
+        assert_eq!(entry.pid, running.pid, "restarted during its grace period");
+
+        kill_and_reap(&running).await;
+        store.delete("slow-boot").unwrap();
+    }
+
+    /// A process the daemon restarted reports its exit code, and a clean exit
+    /// (code 0) is then not treated as a crash.
+    #[tokio::test]
+    async fn test_clean_exit_of_a_restarted_process_is_not_restarted() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let flag = temp_dir.path().join("second-run");
+
+        // First run sleeps (we kill it = a crash); the restarted run exits 0.
+        let mut task = sleep_task("clean-exit", 120);
+        task.command = format!(
+            "sh -c 'if [ -e {flag} ]; then exit 0; fi; touch {flag}; sleep 120'",
+            flag = flag.display()
+        );
+        let running = spawn_and_track(&store, task).await;
+        wait_until(|| flag.exists(), Duration::from_secs(10)).await;
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        wait_until(
+            || {
+                store
+                    .load("clean-exit")
+                    .ok()
+                    .flatten()
+                    .is_some_and(|p| p.runtime.last_exit_code == Some(0))
+            },
+            Duration::from_secs(15),
+        )
+        .await;
+
+        // The restarted instance exited 0: the policy declines another restart.
+        monitor.tick().await.unwrap();
+        wait_until(
+            || store.load("clean-exit").unwrap().is_none(),
+            Duration::from_secs(10),
+        )
+        .await;
+    }
+
+    /// pm-daemon stops the processes of an attached `devcli start` that died
+    /// without stopping them, and leaves those of a live owner alone.
+    #[tokio::test]
+    async fn tick_stops_processes_whose_owner_is_gone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut orphan = spawn_and_track(&store, sleep_task("orphan", 30)).await;
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+        orphan
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        store.save(&orphan).unwrap();
+
+        let mut owned = spawn_and_track(&store, sleep_task("owned", 30)).await;
+        owned
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), std::process::id().to_string());
+        store.save(&owned).unwrap();
+
+        monitor.tick().await.unwrap();
+        reap_child(orphan.pid);
+
+        assert!(
+            store.load("orphan").unwrap().is_none(),
+            "orphan entry removed"
+        );
+        assert!(
+            !crate::engine::pid_alive(orphan.pid),
+            "orphan process stopped"
+        );
+        assert!(store.is_running(&owned), "owned process left running");
+
+        kill_and_reap(&owned).await;
     }
 }

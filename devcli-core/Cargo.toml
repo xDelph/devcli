@@ -10,26 +10,30 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+libc.workspace = true
+indexmap = { version = "2.2", features = ["serde"] }
 chrono.workspace = true
 dirs = "5.0"
 futures = "0.3"
 colored = "2.1"
-inquire = "0.7"
+inquire = "0.9"
 # unstable-rendered-line-info enables Paragraph::line_count (exact wrapped-row
-# count, used by the log viewer scroll clamp). Pinned by Cargo.lock; ratatui has
-# more options in 0.30-beta where line_count is still unstable.
-ratatui = { version = "0.30.0-beta.0", features = ["unstable-rendered-line-info"] }
-ratatui-widgets = "0.3.0-beta.0"
-crossterm = "0.27"
-syntect = "5.1"
-base64 = "0.22.1"
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "json"] }
+# count, used by the log viewer and the command popup for scrolling).
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+# Same crossterm as ratatui's backend, so there is one copy of it (and of its
+# raw-mode and event state) in the binary.
+crossterm = "0.29"
+# Only the bundled syntaxes/themes are used (JSON log highlighting). The
+# default feature set also pulls the YAML/plist/HTML loaders, and with them
+# the unmaintained yaml-rust (RUSTSEC-2024-0320).
+syntect = { version = "5.1", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-appender = "0.2"
 process-manager = { path = "../process-manager" }
 env-flow = { path = "../env-flow" }
-app-detector = { path = "../app-detector" }
+app-detector = { path = "../app-detector", default-features = false }
 config-manager = { path = "../config-manager" }
 shell-words = "1.1"
 

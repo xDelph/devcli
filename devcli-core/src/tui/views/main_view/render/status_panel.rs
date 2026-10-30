@@ -84,6 +84,8 @@ impl MainView {
                     // Build items with blank separators between date groups
                     let mut items: Vec<ListItem> = Vec::new();
                     let mut last_date_category: Option<String> = None;
+                    // Item index of the selected log (separators shift indices).
+                    let mut selected_item = None;
 
                     for (i, log) in logs.iter().enumerate() {
                         // Get the date category (Today, Yesterday, X days ago, or YYYY-MM-DD)
@@ -122,6 +124,9 @@ impl MainView {
 
                         let label =
                             crate::tui::log_manager::LogManager::format_log_label(file_name);
+                        if i == self.selected_log_idx {
+                            selected_item = Some(items.len());
+                        }
                         items.push(ListItem::new(label).style(style));
                     }
 
@@ -131,7 +136,11 @@ impl MainView {
                             .title("Logs")
                             .border_style(border_style),
                     );
-                    frame.render_widget(list, log_area);
+                    // Stateful, so the list scrolls to keep the selection in
+                    // view; a plain List left it below the bottom edge.
+                    let mut list_state =
+                        ratatui::widgets::ListState::default().with_selected(selected_item);
+                    frame.render_stateful_widget(list, log_area, &mut list_state);
                 }
             } else {
                 let placeholder = Paragraph::new("Error reading logs")
@@ -194,12 +203,15 @@ impl MainView {
 
         if let crate::tui::state::AppStatus::Running {
             pid,
-            uptime,
+            start_time,
             environment,
             command_variant,
             ..
         } = &app.status
         {
+            // Computed at render time: the stored uptime is only as fresh as
+            // the last poll.
+            let uptime = &chrono::Utc::now().signed_duration_since(*start_time);
             lines.push(Line::from(vec![
                 Span::styled("PID:         ", theme.style_text_dim()),
                 Span::styled(pid.to_string(), theme.style_text()),
@@ -328,18 +340,18 @@ impl MainView {
         }
 
         // Show last exit code if app is stopped and has one
-        if !app.status.is_running() {
-            if let Some(exit_code) = app.last_exit_code {
-                let exit_color = if exit_code == 0 {
-                    theme.text
-                } else {
-                    theme.error
-                };
-                lines.push(Line::from(vec![
-                    Span::styled("Exit Code:   ", theme.style_text_dim()),
-                    Span::styled(exit_code.to_string(), Style::default().fg(exit_color)),
-                ]));
-            }
+        if !app.status.is_running()
+            && let Some(exit_code) = app.last_exit_code
+        {
+            let exit_color = if exit_code == 0 {
+                theme.text
+            } else {
+                theme.error
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Exit Code:   ", theme.style_text_dim()),
+                Span::styled(exit_code.to_string(), Style::default().fg(exit_color)),
+            ]));
         }
 
         if !app.dependencies.is_empty() {

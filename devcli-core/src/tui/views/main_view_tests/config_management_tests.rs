@@ -21,12 +21,13 @@ struct TestConfigGuard {
 impl TestConfigGuard {
     fn new() -> Self {
         // Use the *shared* env lock, not a private one: the loader tests clear
-        // devcli_CONFIG_DIR, and two different mutexes would not exclude each
+        // DEVCLI_CONFIG_DIR, and two different mutexes would not exclude each
         // other, so save_config could still land on the real ~/.devcli.
         let _lock = crate::test_utils::env_guard();
-        let original_dir = std::env::var("devcli_CONFIG_DIR").ok();
+        let original_dir = std::env::var("DEVCLI_CONFIG_DIR").ok();
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("devcli_CONFIG_DIR", temp_dir.path());
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", temp_dir.path()) };
         Self {
             _lock,
             _temp_dir: temp_dir,
@@ -38,8 +39,10 @@ impl TestConfigGuard {
 impl Drop for TestConfigGuard {
     fn drop(&mut self) {
         match &self.original_dir {
-            Some(dir) => std::env::set_var("devcli_CONFIG_DIR", dir),
-            None => std::env::remove_var("devcli_CONFIG_DIR"),
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(dir) => unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", dir) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("DEVCLI_CONFIG_DIR") },
         }
     }
 }
@@ -49,8 +52,8 @@ fn setup_test_config_dir() -> TestConfigGuard {
 }
 
 fn create_test_config() -> Config {
-    let mut projects = HashMap::new();
-    let mut apps = HashMap::new();
+    let mut projects = crate::config::models::ProjectMap::new();
+    let mut apps = crate::config::models::AppMap::new();
 
     let mut local_cmds = HashMap::new();
     local_cmds.insert("start".to_string(), "npm start".to_string());
@@ -58,6 +61,7 @@ fn create_test_config() -> Config {
     apps.insert(
         "test-app".to_string(),
         App {
+            extra: Default::default(),
             app_type: "nodejs".to_string(),
             alternative_name: None,
             path: "/test/path".to_string(),
@@ -87,6 +91,7 @@ fn create_test_config() -> Config {
     projects.insert(
         "test-project".to_string(),
         Project {
+            extra: Default::default(),
             apps,
             alternative_name: None,
         },

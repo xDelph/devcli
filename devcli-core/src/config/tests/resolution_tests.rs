@@ -65,15 +65,16 @@ mod tests {
     #[test]
     fn test_resolve_ambiguous_app_with_project_filter() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         // Create "api" in two different projects
         for project_name in &["project1", "project2"] {
-            let mut apps = HashMap::new();
+            let mut apps = crate::config::models::AppMap::new();
             apps.insert(
                 "api".to_string(),
                 App {
+                    extra: Default::default(),
                     app_type: "nodejs".to_string(),
                     path: "/tmp/api".to_string(),
                     commands: Commands {
@@ -106,6 +107,7 @@ mod tests {
             config.projects.insert(
                 project_name.to_string(),
                 Project {
+                    extra: Default::default(),
                     apps,
                     alternative_name: None,
                 },
@@ -129,10 +131,10 @@ mod tests {
     // Helper: single project with an app that has an alternative_name
     fn config_with_alternate_named_app() -> Config {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
-        let mut projects = HashMap::new();
-        let mut apps = HashMap::new();
+        let mut projects = crate::config::models::ProjectMap::new();
+        let mut apps = crate::config::models::AppMap::new();
 
         let mut api = AppBuilder::new("nodejs", "/tmp/api")
             .with_local_command("start", "npm start")
@@ -144,6 +146,7 @@ mod tests {
         projects.insert(
             "p1".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },

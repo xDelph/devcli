@@ -4,7 +4,7 @@
 
 use crate::tui::theme::Theme;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::Alignment,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -54,7 +54,7 @@ impl HelpOverlay {
         let size = frame.area();
 
         // Create a centered popup area (70% width, 80% height)
-        let popup_area = Self::centered_rect(70, 80, size);
+        let popup_area = crate::tui::utils::layout::centered_rect(70, 80, size);
 
         // Clear the area behind the popup for proper modal effect
         frame.render_widget(Clear, popup_area);
@@ -234,35 +234,6 @@ impl HelpOverlay {
             ),
             Span::styled(description, theme.style_text()),
         ]));
-    }
-
-    /// Helper function to create a centered rectangle
-    /// Used for positioning the popup in the middle of the screen
-    ///
-    /// # Arguments
-    /// * `percent_x` - Width as percentage of screen (0-100)
-    /// * `percent_y` - Height as percentage of screen (0-100)
-    /// * `r` - The full screen area
-    fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-        // Create vertical layout: top margin, content, bottom margin
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ])
-            .split(r);
-
-        // Create horizontal layout within the middle section
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ])
-            .split(popup_layout[1])[1]
     }
 }
 

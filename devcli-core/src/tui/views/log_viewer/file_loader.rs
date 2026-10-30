@@ -24,40 +24,55 @@ pub struct FileLoader;
 impl FileLoader {
     /// Loads the log file and processes it for display
     pub fn load(path: &Path, syntax_set: &SyntaxSet, theme: &Theme) -> Result<Vec<LogLine>> {
-        let content_str = std::fs::read_to_string(path)?;
-        let lines: Vec<&str> = content_str.lines().collect();
-        let total_lines = lines.len();
+        // Bytes, decoded lossily: apps write whatever bytes they like, and one
+        // invalid UTF-8 sequence used to make the whole log fail to open.
+        let content_str = String::from_utf8_lossy(&std::fs::read(path)?).into_owned();
+        Ok(Self::parse_lines(&content_str, 1, syntax_set, theme))
+    }
 
-        let mut content = Vec::with_capacity(total_lines);
-        for (idx, line) in lines.iter().enumerate() {
-            // Parse ANSI codes to get styled spans
-            let ansi_spans = ansi::parse_ansi_codes(line);
+    /// Parse `text` into display lines numbered from `first_line_number`.
+    pub fn parse_lines(
+        text: &str,
+        first_line_number: usize,
+        syntax_set: &SyntaxSet,
+        theme: &Theme,
+    ) -> Vec<LogLine> {
+        text.lines()
+            .enumerate()
+            .map(|(idx, line)| Self::parse_line(line, first_line_number + idx, syntax_set, theme))
+            .collect()
+    }
 
-            // Extract raw text for JSON detection and storage
-            let raw_text: String = ansi_spans.iter().map(|s| s.content.as_ref()).collect();
+    fn parse_line(
+        line: &str,
+        line_number: usize,
+        syntax_set: &SyntaxSet,
+        theme: &Theme,
+    ) -> LogLine {
+        // Parse ANSI codes to get styled spans
+        let ansi_spans = ansi::parse_ansi_codes(line);
 
-            // Normalize whitespace - replace multiple spaces/tabs with single space
-            let normalized = Self::normalize_whitespace(&raw_text);
+        // Extract raw text for JSON detection and storage
+        let raw_text: String = ansi_spans.iter().map(|s| s.content.as_ref()).collect();
 
-            let is_json = Self::detect_json(&normalized);
-            let formatted = if is_json {
-                // Prettify and highlight JSON
-                JsonFormatter::format_json_line(&normalized, syntax_set, theme)
-            } else {
-                // Use the ANSI-parsed spans for regular lines
-                // Re-parse with normalized text to maintain ANSI colors
-                ansi::parse_ansi_codes(line)
-            };
+        // Normalize whitespace - replace multiple spaces/tabs with single space
+        let normalized = Self::normalize_whitespace(&raw_text);
 
-            content.push(LogLine {
-                raw: normalized,
-                formatted,
-                line_number: idx + 1, // 1-indexed for display
-                is_json,
-            });
+        let is_json = Self::detect_json(&normalized);
+        let formatted = if is_json {
+            // Prettify and highlight JSON
+            JsonFormatter::format_json_line(&normalized, syntax_set, theme)
+        } else {
+            // Use the ANSI-parsed spans for regular lines
+            ansi_spans
+        };
+
+        LogLine {
+            raw: normalized,
+            formatted,
+            line_number, // 1-indexed for display
+            is_json,
         }
-
-        Ok(content)
     }
 
     /// Normalizes whitespace in a line by replacing multiple spaces/tabs with single space

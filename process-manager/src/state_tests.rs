@@ -348,4 +348,177 @@ mod tests {
         let mtime_after_delete = std::fs::metadata(&status_path).unwrap().modified().unwrap();
         assert!(mtime_after_delete >= mtime_after_save);
     }
+
+    /// Readers must never observe a half-written entry while it is rewritten.
+    #[test]
+    fn test_concurrent_save_never_hides_the_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().to_path_buf();
+        let store = StateStore::new(dir.clone()).unwrap();
+        let mut process = create_test_process("busy-app", 4242);
+        // A large entry makes a torn write far more likely to be observed.
+        for i in 0..4000 {
+            process.metadata.insert(format!("k{i}"), "v".repeat(64));
+        }
+        store.save(&process).unwrap();
+
+        let writer = std::thread::spawn(move || {
+            let store = StateStore::new(dir).unwrap();
+            for _ in 0..300 {
+                store.save(&process).unwrap();
+            }
+        });
+
+        while !writer.is_finished() {
+            let listed = store.list().unwrap();
+            assert_eq!(listed.len(), 1, "entry vanished during a concurrent save");
+        }
+        writer.join().unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind");
+    }
+
+    /// Deleting an entry someone else already removed is not an error.
+    #[test]
+    fn test_delete_twice_is_ok() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        store.save(&create_test_process("gone", 1)).unwrap();
+        store.delete("gone").unwrap();
+        store.delete("gone").unwrap();
+        assert!(store.load("gone").unwrap().is_none());
+    }
+
+    /// State entries and their directory are private to the user.
+    #[test]
+    #[cfg(unix)]
+    fn test_state_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().join("processes");
+        let store = StateStore::new(dir.clone()).unwrap();
+        store.save(&create_test_process("secret-app", 1)).unwrap();
+
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let file_mode = std::fs::metadata(dir.join("secret-app.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
+    }
+
+    /// `mark_stopping` flags the entry and hands back its current content.
+    #[test]
+    fn test_mark_stopping_returns_current_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        assert!(store.mark_stopping("missing").unwrap().is_none());
+
+        store.save(&create_test_process("app", 111)).unwrap();
+        // Someone (pm-daemon) restarted it meanwhile.
+        store.save(&create_test_process("app", 222)).unwrap();
+
+        let current = store.mark_stopping("app").unwrap().unwrap();
+        assert_eq!(current.pid, 222);
+        assert!(current.is_stopping());
+        assert!(store.load("app").unwrap().unwrap().is_stopping());
+    }
+
+    /// While a daemon runs, a crashed app it will restart is left to it.
+    #[test]
+    fn test_cleanup_dead_leaves_restartable_entries_to_the_daemon() {
+        use fs2::FileExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        let mut dead = create_test_process("crashed", 2_000_000_000);
+        dead.task.restart_policy.enabled = true;
+        store.save(&dead).unwrap();
+
+        // Pretend to be the daemon.
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(temp_dir.path().join(".daemon.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        assert!(store.cleanup_dead().unwrap().is_empty());
+        assert!(store.load("crashed").unwrap().is_some());
+
+        // No daemon: nothing will restart it, so it is cleaned up.
+        FileExt::unlock(&lock).unwrap();
+        assert_eq!(store.cleanup_dead().unwrap(), vec!["crashed".to_string()]);
+    }
+
+    /// Only one monitor lock can be held per state directory.
+    #[test]
+    fn test_daemon_lock_is_exclusive() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let first = store.try_lock_daemon().unwrap();
+        assert!(first.is_some());
+        assert!(store.daemon_running());
+        assert!(store.try_lock_daemon().unwrap().is_none());
+
+        drop(first);
+        // Other tests in this binary fork concurrently; a child holds a copy of
+        // the lock descriptor until it execs, so allow the release a moment.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while store.daemon_running() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!store.daemon_running());
+        assert!(store.try_lock_daemon().unwrap().is_some());
+    }
+
+    /// PID of a process that has already exited (and been reaped).
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    /// An entry is orphaned once the attached `devcli start` owning it is gone,
+    /// including when the owner's PID now belongs to a younger process.
+    #[test]
+    fn test_owner_gone() {
+        let mut process = create_test_process("owned", std::process::id());
+        assert!(!process.owner_gone(), "no owner: never orphaned");
+
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), std::process::id().to_string());
+        assert_eq!(process.owner_pid(), Some(std::process::id()));
+        assert!(!process.owner_gone(), "the owner (this test) is alive");
+
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_pid().to_string());
+        assert!(process.owner_gone(), "the owner exited");
+
+        // A live PID that started after the entry is not the owner.
+        let mut younger = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), younger.id().to_string());
+        process.start_time = Utc::now() - chrono::Duration::minutes(5);
+        let reused = process.owner_gone();
+        let _ = younger.kill();
+        let _ = younger.wait();
+        assert!(reused, "the owner's PID was reused");
+    }
 }

@@ -18,24 +18,24 @@ use std::path::{Path, PathBuf};
 pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
     let path = path.as_ref();
 
-    if path.starts_with("~") {
-        if let Some(home) = env::var_os("HOME") {
-            let path_str = path.to_string_lossy();
+    if path.starts_with("~")
+        && let Some(home) = env::var_os("HOME")
+    {
+        let path_str = path.to_string_lossy();
 
-            let without_tilde = if let Some(rest) = path_str.strip_prefix("~/") {
-                rest
-            } else if let Some(rest) = path_str.strip_prefix('~') {
-                rest
-            } else {
-                &path_str
-            };
+        let without_tilde = if let Some(rest) = path_str.strip_prefix("~/") {
+            rest
+        } else if let Some(rest) = path_str.strip_prefix('~') {
+            rest
+        } else {
+            &path_str
+        };
 
-            let mut result = PathBuf::from(home);
-            if !without_tilde.is_empty() {
-                result.push(without_tilde);
-            }
-            return result;
+        let mut result = PathBuf::from(home);
+        if !without_tilde.is_empty() {
+            result.push(without_tilde);
         }
+        return result;
     }
 
     path.to_path_buf()
@@ -51,7 +51,8 @@ pub fn expand_tilde<P: AsRef<Path>>(path: P) -> PathBuf {
 /// use config_manager::utils::expand_env_vars;
 /// use std::env;
 ///
-/// env::set_var("CONFIG_DIR", "/etc/myapp");
+/// // SAFETY: single-threaded doc example.
+/// unsafe { env::set_var("CONFIG_DIR", "/etc/myapp") };
 /// let expanded = expand_env_vars("$CONFIG_DIR/config.json");
 /// assert_eq!(expanded.to_str().unwrap(), "/etc/myapp/config.json");
 /// ```
@@ -131,7 +132,8 @@ pub fn expand_env_vars<P: AsRef<Path>>(path: P) -> PathBuf {
 /// use config_manager::utils::path;
 /// use std::env;
 ///
-/// env::set_var("APP", "myapp");
+/// // SAFETY: single-threaded doc example.
+/// unsafe { env::set_var("APP", "myapp") };
 /// let expanded = path::expand_all("~/$APP/config.json");
 /// // Result: /home/username/myapp/config.json
 /// ```
@@ -192,7 +194,8 @@ mod tests {
 
     #[test]
     fn test_expand_env_vars() {
-        env::set_var("TEST_VAR", "test_value");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var("TEST_VAR", "test_value") };
 
         let expanded = expand_env_vars("$TEST_VAR/config.json");
         assert_eq!(expanded, PathBuf::from("test_value/config.json"));
@@ -216,7 +219,8 @@ mod tests {
 
     #[test]
     fn test_expand_path_alias() {
-        env::set_var("CM_PATH_ALIAS", "alias_val");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var("CM_PATH_ALIAS", "alias_val") };
         let expanded = expand_path("$CM_PATH_ALIAS/x");
         assert_eq!(expanded, PathBuf::from("alias_val/x"));
     }

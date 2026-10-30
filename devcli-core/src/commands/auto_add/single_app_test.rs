@@ -261,4 +261,138 @@ mod tests {
         assert!(app_types.contains(&"redis"));
         assert!(app_types.contains(&"traefik"));
     }
+
+    fn node_app(dir: &std::path::Path, name: &str) {
+        fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"{name}","scripts":{{"dev":"node x.js"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    fn add_args(path: &std::path::Path, name: &str) -> crate::commands::auto_add::AutoAddArgs {
+        crate::commands::auto_add::AutoAddArgs {
+            path: Some(path.to_string_lossy().into_owned()),
+            yes: true,
+            project: Some("proj".to_string()),
+            name: Some(name.to_string()),
+            app_type: Some("nodejs".to_string()),
+            force: false,
+        }
+    }
+
+    /// A config that fails to parse must be left alone, not replaced by a
+    /// config holding only the new app.
+    #[tokio::test]
+    async fn test_auto_add_refuses_to_overwrite_an_unparseable_config() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
+        let config_path = config_dir.path().join("config.json");
+        let broken = r#"{"projects":{"proj":{"apps":{"keep":{"type":"nodejs","path":"/tmp","commands":{},"defaults":{}}},}}}"#;
+        fs::write(&config_path, broken).unwrap();
+
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "newapp");
+
+        let err = crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "newapp"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("before adding apps"), "{err}");
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), broken);
+    }
+
+    /// Without any config file, auto-add creates one.
+    #[tokio::test]
+    async fn test_auto_add_creates_the_config_when_missing() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "first");
+
+        crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "first"))
+            .await
+            .unwrap();
+        let config = crate::config::load_config().unwrap();
+        assert!(config.projects["proj"].apps.contains_key("first"));
+        assert!(config_dir.path().join("config.json").exists());
+    }
+
+    /// Re-running auto-add on an existing app is refused without --force, and
+    /// --force keeps what the user configured by hand.
+    #[tokio::test]
+    async fn test_auto_add_does_not_clobber_an_existing_app() {
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "api");
+
+        crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "api"))
+            .await
+            .unwrap();
+        let mut config = crate::config::load_config().unwrap();
+        {
+            let app = config.projects["proj"].apps.get_mut("api").unwrap();
+            app.alternative_name = Some("Backend".to_string());
+            app.dependencies.push(crate::config::models::Dependency {
+                project: "infra".to_string(),
+                app: "db".to_string(),
+            });
+        }
+        crate::config::save_config(&config).unwrap();
+
+        let err = crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "api"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("--force"), "{err}");
+
+        let mut forced = add_args(app_dir.path(), "api");
+        forced.force = true;
+        crate::commands::auto_add::auto_add_command(forced)
+            .await
+            .unwrap();
+        let config = crate::config::load_config().unwrap();
+        let app = &config.projects["proj"].apps["api"];
+        assert_eq!(app.alternative_name.as_deref(), Some("Backend"));
+        assert_eq!(app.dependencies.len(), 1);
+    }
+
+    /// A Python service with a virtualenv and an `app/` package is one app.
+    #[test]
+    fn test_python_service_with_venv_and_package_is_a_single_app() {
+        let root = create_temp_dir();
+        fs::write(
+            root.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("main.py"), "print('hi')\n").unwrap();
+        fs::create_dir_all(root.path().join("app")).unwrap();
+        fs::write(root.path().join("app/__init__.py"), "").unwrap();
+        fs::write(root.path().join("app/routes.py"), "x = 1\n").unwrap();
+        let site = root.path().join(".venv/lib/python3.12/site-packages/pkg");
+        fs::create_dir_all(&site).unwrap();
+        fs::write(site.join("mod.py"), "y = 2\n").unwrap();
+        fs::create_dir_all(root.path().join("venv/lib")).unwrap();
+        fs::write(root.path().join("venv/lib/z.py"), "z = 3\n").unwrap();
+
+        let apps = discover_all_apps(root.path()).unwrap();
+        assert_eq!(
+            apps.len(),
+            1,
+            "{:?}",
+            apps.iter().map(|a| &a.path).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_add_rejects_unknown_types() {
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "api");
+        let mut args = add_args(app_dir.path(), "api");
+        args.app_type = Some("nodjs".to_string());
+
+        let err = crate::commands::auto_add::auto_add_command(args)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Did you mean 'nodejs'?"), "{err}");
+    }
 }

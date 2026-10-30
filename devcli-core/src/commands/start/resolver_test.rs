@@ -47,6 +47,7 @@ mod tests {
     #[test]
     fn test_get_available_environments_empty() {
         let app = App {
+            extra: Default::default(),
             path: ".".to_string(),
             commands: Commands::new(),
             defaults: Defaults::new(),

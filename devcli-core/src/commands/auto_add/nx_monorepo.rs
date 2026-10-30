@@ -2,9 +2,8 @@
 // Handles detection of multiple apps in Nx workspaces
 // Provides interactive selection for adding multiple apps at once
 
-use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
+use crate::config::{save_config, App, Commands, Defaults};
 use crate::Result;
-use std::collections::HashMap;
 
 use super::interactive::{
     confirm_default_yes, interactive_nx_app_selection, prompt_app_name, prompt_project_selection,
@@ -14,7 +13,7 @@ use super::interactive::{
 // Handle detection and addition of apps in an Nx monorepo
 // Scans apps/ and packages/ directories for Nx projects
 // Allows the user to select which apps to add interactively
-pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> {
+pub async fn handle_nx_monorepo(workspace_root: &std::path::Path, force: bool) -> Result<()> {
     // Use the detection module to find all apps in apps/ and packages/ directories
     let detected_apps = crate::detection::detect_nx_apps(workspace_root)?;
 
@@ -30,9 +29,8 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
     }
 
     // Load existing config or create a new empty one
-    let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
-    });
+    let mut config = crate::config::loader::load_config_or_new()?;
+    let mut added_this_run: std::collections::HashSet<String> = Default::default();
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
@@ -82,7 +80,11 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
         }
 
         let env_files = if !available_envs.is_empty() {
-            let app_path = std::path::Path::new(&detected.path);
+            // `detected.path` is stored tilde-contracted (`~/code/app`): expand it,
+            // or env-file discovery looks for a literal `~` directory and finds
+            // nothing.
+            let expanded_path = crate::utils::path::expand_path(&detected.path);
+            let app_path = expanded_path.as_path();
             if let Ok(detected_env_files) =
                 crate::detection::detect_env_files(app_path, detected.dockerfile_path.as_deref())
             {
@@ -106,6 +108,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
 
         // Build the App struct from detected data
         let app = App {
+            extra: Default::default(),
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -120,10 +123,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
                 orbstack: detected.suggested_orbstack_default.clone(),
-                k8s: detected
-                    .k8s_commands
-                    .as_ref()
-                    .and_then(|cmds| cmds.keys().next().cloned()),
+                k8s: crate::app_detector_support::suggest_k8s_default(&detected.k8s_commands),
                 ..Default::default()
             },
             dockerfile_path: detected.dockerfile_path.clone(),
@@ -134,19 +134,16 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path) -> Result<()> 
             restart_policy: None,
         };
 
-        // Insert the app into the config
-        // This creates the project if it doesn't exist, then adds the app
-        config
-            .projects
-            .entry(project_name.clone())
-            .or_insert_with(|| Project {
-                apps: HashMap::new(),
-                alternative_name: None,
-            })
-            .apps
-            .insert(app_name.clone(), app);
-
-        println!("✓ Added {}\n", app_name);
+        // `apps/web` and `libs/web` both become "web": keep the first.
+        if !added_this_run.insert(app_name.clone()) {
+            println!("⚠ Skipped {app_name}: another selected app has the same name\n");
+            continue;
+        }
+        match super::single_app::upsert_app(&mut config, &project_name, &app_name, app, force) {
+            Ok(true) => println!("✓ Updated {}\n", app_name),
+            Ok(false) => println!("✓ Added {}\n", app_name),
+            Err(e) => println!("⚠ Skipped {app_name}: {e}\n"),
+        }
     }
 
     // Save the updated config to disk

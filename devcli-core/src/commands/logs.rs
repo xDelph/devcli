@@ -83,10 +83,16 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
     let tail = tail_lines(&path, args.lines)?;
 
     if json {
+        // AGENTS.md documents `environment` on every successful answer; when the
+        // caller did not filter, report the environment of the file we read.
+        let environment = args
+            .environment
+            .clone()
+            .or_else(|| environment_from_log_name(&path, &resolved.project, &resolved.app_name));
         output::print_json(&LogsOutput {
-            project: resolved.project,
-            app: resolved.app_name,
-            environment: args.environment,
+            project: resolved.project.clone(),
+            app: resolved.app_name.clone(),
+            environment,
             file: Some(path.display().to_string()),
             lines: tail,
         })?;
@@ -97,7 +103,14 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
     }
 
     if args.follow {
-        follow(&path, json)?;
+        follow(
+            &path,
+            &resolved.project,
+            &resolved.app_name,
+            args.environment.as_deref(),
+            json,
+        )
+        .await?;
     }
 
     Ok(())
@@ -106,10 +119,6 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
 /// Find the most recently modified log file for an app.
 fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Result<Option<PathBuf>> {
     let dir = logs_dir()?;
-    let prefix = match environment {
-        Some(env) => format!("{project}_{app}_{env}_"),
-        None => format!("{project}_{app}_"),
-    };
 
     let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(&dir).context("Failed to read log directory")? {
@@ -118,11 +127,11 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
         if !path.is_file() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.starts_with(&prefix) || !name.ends_with(".log") {
-            continue;
+        // Parse the name instead of matching a prefix: `proj_api_` is also a
+        // prefix of app `api_worker`'s logs.
+        match environment_from_log_name(&path, project, app) {
+            Some(env) if environment.is_none_or(|wanted| wanted == env) => {}
+            _ => continue,
         }
         let modified = entry
             .metadata()
@@ -133,6 +142,14 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
 
     candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     Ok(candidates.into_iter().next().map(|(_, path)| path))
+}
+
+/// Environment part of `{project}_{app}_{env}_{YYYYMMDD}.log`, if the file is a
+/// log of exactly `project/app`.
+fn environment_from_log_name(path: &Path, project: &str, app: &str) -> Option<String> {
+    crate::process_manager_support::LogFileName::from_path(path)
+        .filter(|name| name.belongs_to(project, app))
+        .map(|name| name.environment)
 }
 
 /// Read the last `n` lines of a file without loading it entirely.
@@ -150,8 +167,12 @@ fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
     let start = len.saturating_sub(CHUNK);
     file.seek(SeekFrom::Start(start))?;
 
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
+    // Bytes, not a String: the 1 MiB window can start inside a multi-byte
+    // character, and apps write whatever bytes they like. `read_to_string` made
+    // the whole command fail on either.
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    let buf = String::from_utf8_lossy(&raw);
 
     let mut lines: Vec<String> = buf.lines().map(str::to_string).collect();
     // Drop a partial first line when we started mid-file.
@@ -165,30 +186,80 @@ fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
 }
 
 /// Stream appended lines until the process is interrupted.
-fn follow(path: &Path, json: bool) -> Result<()> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("Failed to open log file {}", path.display()))?;
-    file.seek(SeekFrom::End(0))?;
-    let mut reader = BufReader::new(file);
+///
+/// Keeps following across the two ways the file can change under us: a size
+/// rotation truncates it in place (start again from the top), and a restart on
+/// a later day writes to a new dated file (switch to it).
+async fn follow(
+    path: &Path,
+    project: &str,
+    app: &str,
+    environment: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    const POLL: Duration = Duration::from_millis(250);
+    const POLLS_BETWEEN_FILE_CHECKS: u32 = 8;
 
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let open = |path: &Path| -> Result<BufReader<std::fs::File>> {
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open log file {}", path.display()))?;
+        Ok(BufReader::new(file))
+    };
+
+    let mut current = path.to_path_buf();
+    let mut reader = open(&current)?;
+    let mut position = reader.seek(SeekFrom::End(0))?;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut idle_polls = 0u32;
 
     loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            std::thread::sleep(Duration::from_millis(250));
+        let read = reader.read_until(b'\n', &mut pending)?;
+        if read > 0 {
+            position += read as u64;
+            if pending.ends_with(b"\n") {
+                emit_followed_line(&pending, json)?;
+                pending.clear();
+            }
+            idle_polls = 0;
             continue;
         }
-        if json {
-            let value = serde_json::json!({ "line": line.trim_end_matches(['\n', '\r']) });
-            writeln!(out, "{value}")?;
-        } else {
-            out.write_all(line.as_bytes())?;
+
+        let len = std::fs::metadata(&current).map(|m| m.len()).unwrap_or(0);
+        if len < position {
+            reader.seek(SeekFrom::Start(0))?;
+            position = 0;
+            pending.clear();
+            continue;
         }
+
+        idle_polls += 1;
+        if idle_polls.is_multiple_of(POLLS_BETWEEN_FILE_CHECKS)
+            && let Some(latest) = find_latest_log(project, app, environment)?
+            && latest != current
+        {
+            reader = open(&latest)?;
+            current = latest;
+            position = 0;
+            pending.clear();
+            continue;
+        }
+
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+fn emit_followed_line(raw: &[u8], json: bool) -> Result<()> {
+    let line = String::from_utf8_lossy(raw);
+    let line = line.trim_end_matches(['\n', '\r']);
+    if json {
+        output::print_json_line(&serde_json::json!({ "line": line }))?;
+    } else {
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        writeln!(out, "{line}")?;
         out.flush()?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -209,5 +280,30 @@ mod tests {
         assert_eq!(all.len(), 4);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_environment_from_log_name() {
+        let env = |name: &str| environment_from_log_name(Path::new(name), "proj", "api");
+        assert_eq!(env("proj_api_local_20240101.log").as_deref(), Some("local"));
+        assert_eq!(
+            env("proj_api_docker-compose_20240101.log").as_deref(),
+            Some("docker-compose")
+        );
+        assert_eq!(env("other_api_local_20240101.log"), None);
+        assert_eq!(env("proj_api_local.log"), None);
+        // Another app whose name starts with `api_`.
+        assert_eq!(env("proj_api_worker_local_20240101.log"), None);
+    }
+
+    #[test]
+    fn test_tail_lines_survives_invalid_utf8() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("proj_app_local_20240101.log");
+        std::fs::write(&path, b"ok\nbad \xff byte\nlast\n").unwrap();
+
+        let lines = tail_lines(&path, 10).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[2], "last");
     }
 }

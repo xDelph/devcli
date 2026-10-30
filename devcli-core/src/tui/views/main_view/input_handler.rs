@@ -124,13 +124,13 @@ impl NavigationHandler for MainView {
                     return Ok(true);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if let Some(app) = state.selected_app() {
-                        if let Some(env_files) = &app.env_files {
-                            let total_entries: usize =
-                                env_files.values().map(|contexts| contexts.len()).sum();
-                            self.popup_scroll_manager
-                                .scroll_env_files_down(total_entries);
-                        }
+                    if let Some(app) = state.selected_app()
+                        && let Some(env_files) = &app.env_files
+                    {
+                        let total_entries: usize =
+                            env_files.values().map(|contexts| contexts.len()).sum();
+                        self.popup_scroll_manager
+                            .scroll_env_files_down(total_entries);
                     }
                     return Ok(true);
                 }
@@ -276,20 +276,18 @@ impl NavigationHandler for MainView {
             KeyCode::Char('l') => {
                 if let Some(app) = state.selected_app() {
                     // Only open logs if app is running
-                    if app.status.is_running() {
-                        if let Ok(log_files) =
+                    if app.status.is_running()
+                        && let Ok(log_files) =
                             self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        {
-                            if let Some(log_file) = log_files.first() {
-                                let prev = state.current_view.clone();
-                                state.view_history.push(prev);
-                                state.current_view = crate::tui::state::ViewType::LogViewer {
-                                    log_paths: vec![log_file.path.clone()],
-                                    active_index: 0,
-                                };
-                                return Ok(true);
-                            }
-                        }
+                        && let Some(log_file) = log_files.first()
+                    {
+                        let prev = state.current_view.clone();
+                        state.view_history.push(prev);
+                        state.current_view = crate::tui::state::ViewType::LogViewer {
+                            log_paths: vec![log_file.path.clone()],
+                            active_index: 0,
+                        };
+                        return Ok(true);
                     }
                 }
                 Ok(false)
@@ -415,6 +413,12 @@ impl NavigationHandler for MainView {
                 state.select_next();
 
                 self.selected_config_command_idx = 0;
+
+                // Same as moving up: the previous app's log index is meaningless
+                // (and possibly out of range) for the newly selected app.
+                if self.active_tab == MainTab::Status {
+                    self.selected_log_idx = 0;
+                }
             }
             PanelFocus::DetailPanel => {
                 if self.active_tab == MainTab::Config && self.config_mode == ConfigMode::View {
@@ -517,20 +521,19 @@ impl NavigationHandler for MainView {
                 }
                 MainTab::Status => {
                     // Open log viewer for the selected log file
-                    if let Some(app) = state.selected_app() {
-                        if let Ok(mut logs) =
+                    if let Some(app) = state.selected_app()
+                        && let Ok(mut logs) =
                             self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        {
-                            logs.sort_by_key(|a| std::cmp::Reverse(a.modified));
-                            if let Some(log) = logs.get(self.selected_log_idx) {
-                                let prev = state.current_view.clone();
-                                state.view_history.push(prev);
-                                state.current_view = crate::tui::state::ViewType::LogViewer {
-                                    log_paths: vec![log.path.clone()],
-                                    active_index: 0,
-                                };
-                                return Ok(true);
-                            }
+                    {
+                        logs.sort_by_key(|a| std::cmp::Reverse(a.modified));
+                        if let Some(log) = logs.get(self.selected_log_idx) {
+                            let prev = state.current_view.clone();
+                            state.view_history.push(prev);
+                            state.current_view = crate::tui::state::ViewType::LogViewer {
+                                log_paths: vec![log.path.clone()],
+                                active_index: 0,
+                            };
+                            return Ok(true);
                         }
                     }
                 }
@@ -562,25 +565,26 @@ impl NavigationHandler for MainView {
     }
 
     fn handle_config_edit(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
-        if self.config_mode == ConfigMode::View && self.focus == PanelFocus::DetailPanel {
-            if let Some(app) = state.selected_app() {
-                let project = app.project.clone();
-                let app_name = app.name.clone();
-                if let Err(e) = self.load_command_into_form(&project, &app_name) {
-                    eprintln!("Error loading command: {}", e);
-                }
+        if self.config_mode == ConfigMode::View
+            && self.focus == PanelFocus::DetailPanel
+            && let Some(app) = state.selected_app()
+        {
+            let project = app.project.clone();
+            let app_name = app.name.clone();
+            if let Err(e) = self.load_command_into_form(&project, &app_name) {
+                eprintln!("Error loading command: {}", e);
             }
         }
         Ok(true)
     }
 
     fn handle_config_edit_app(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
-        if self.config_mode == ConfigMode::View {
-            if let Some(app) = state.selected_app() {
-                self.load_app_into_form(&app.project, &app.name, app);
-                self.config_mode = ConfigMode::Edit;
-                self.config_focused_field = ConfigField::ProjectName;
-            }
+        if self.config_mode == ConfigMode::View
+            && let Some(app) = state.selected_app()
+        {
+            self.load_app_into_form(&app.project, &app.name, app);
+            self.config_mode = ConfigMode::Edit;
+            self.config_focused_field = ConfigField::ProjectName;
         }
         Ok(true)
     }
@@ -602,13 +606,14 @@ impl NavigationHandler for MainView {
     }
 
     fn handle_config_set_default(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
-        if self.config_mode == ConfigMode::View && self.focus == PanelFocus::DetailPanel {
-            if let Some(app) = state.selected_app() {
-                let project = app.project.clone();
-                let app_name = app.name.clone();
-                if let Err(e) = self.set_command_as_default(&project, &app_name) {
-                    eprintln!("Error setting default command: {}", e);
-                }
+        if self.config_mode == ConfigMode::View
+            && self.focus == PanelFocus::DetailPanel
+            && let Some(app) = state.selected_app()
+        {
+            let project = app.project.clone();
+            let app_name = app.name.clone();
+            if let Err(e) = self.set_command_as_default(&project, &app_name) {
+                eprintln!("Error setting default command: {}", e);
             }
         }
         Ok(true)
@@ -638,17 +643,15 @@ impl NavigationHandler for MainView {
                     self.config_mode = ConfigMode::ConfirmDelete;
                 }
             }
-        } else if self.config_mode == ConfigMode::EditDependencies {
-            if let Some(app) = state.selected_app() {
-                if let Some(dep_name) = app
-                    .dependencies
-                    .get(self.popup_scroll_manager.selected_dependency_idx)
-                {
-                    self.delete_confirm_message = format!("Remove dependency '{}'?", dep_name);
-                    self.delete_confirm_type = DeleteType::Dependency;
-                    self.config_mode = ConfigMode::ConfirmDelete;
-                }
-            }
+        } else if self.config_mode == ConfigMode::EditDependencies
+            && let Some(app) = state.selected_app()
+            && let Some(dep_name) = app
+                .dependencies
+                .get(self.popup_scroll_manager.selected_dependency_idx)
+        {
+            self.delete_confirm_message = format!("Remove dependency '{}'?", dep_name);
+            self.delete_confirm_type = DeleteType::Dependency;
+            self.config_mode = ConfigMode::ConfirmDelete;
         }
         Ok(true)
     }
@@ -698,10 +701,10 @@ impl NavigationHandler for MainView {
     }
 
     fn handle_status_restart(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
-        if let Some(app) = state.selected_app() {
-            if app.status.is_running() {
-                state.set_restart_requested();
-            }
+        if let Some(app) = state.selected_app()
+            && app.status.is_running()
+        {
+            state.set_restart_requested();
         }
         Ok(true)
     }
@@ -713,15 +716,15 @@ impl MainView {
         match self.active_tab {
             MainTab::Status => {
                 // Navigate log file list
-                if let Some(app) = state.selected_app() {
-                    if let Ok(logs) = self.log_manager.list_logs_for_app(&app.project, &app.name) {
-                        let total = logs.len();
-                        if total > 0 {
-                            let new_idx = (self.selected_log_idx as isize + direction as isize)
-                                .max(0)
-                                .min((total - 1) as isize);
-                            self.selected_log_idx = new_idx as usize;
-                        }
+                if let Some(app) = state.selected_app()
+                    && let Ok(logs) = self.log_manager.list_logs_for_app(&app.project, &app.name)
+                {
+                    let total = logs.len();
+                    if total > 0 {
+                        let new_idx = (self.selected_log_idx as isize + direction as isize)
+                            .max(0)
+                            .min((total - 1) as isize);
+                        self.selected_log_idx = new_idx as usize;
                     }
                 }
             }

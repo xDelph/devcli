@@ -3,6 +3,21 @@ mod tests {
     use crate::health::*;
     use crate::model::*;
 
+    /// Consume the request head before answering. Replying and closing a socket
+    /// that still has unread request bytes makes the kernel send a RST, which
+    /// hyper 1 surfaces as a request error: the 2xx test failed ~1 run in 3.
+    async fn read_request(stream: &mut tokio::net::TcpStream) {
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_health_check_process_always_passes() {
         let engine = HealthCheckEngine::new();
@@ -117,6 +132,7 @@ mod tests {
                 };
                 tokio::spawn(async move {
                     use tokio::io::AsyncWriteExt;
+                    read_request(&mut stream).await;
                     let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
                     let _ = stream.write_all(response.as_bytes()).await;
                 });
@@ -146,6 +162,7 @@ mod tests {
                 };
                 tokio::spawn(async move {
                     use tokio::io::AsyncWriteExt;
+                    read_request(&mut stream).await;
                     let response = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
                     let _ = stream.write_all(response.as_bytes()).await;
                 });
@@ -175,6 +192,7 @@ mod tests {
                 };
                 tokio::spawn(async move {
                     use tokio::io::AsyncWriteExt;
+                    read_request(&mut stream).await;
                     let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
                     let _ = stream.write_all(response.as_bytes()).await;
                 });

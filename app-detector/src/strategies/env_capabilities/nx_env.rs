@@ -34,14 +34,19 @@ fn nx_show_project_targets(ctx: &DetectionContext) -> Option<Vec<String>> {
     for nx_cmd in ["npx", "nx"] {
         let mut cmd = Command::new(nx_cmd);
         if nx_cmd == "npx" {
-            cmd.arg("nx");
+            // Never download nx from the registry just to detect an app.
+            cmd.args(["--no-install", "nx"]);
         }
 
-        let output = cmd
+        let Ok(output) = cmd
             .args(["show", "project", workspace_name, "--json"])
             .current_dir(monorepo_root)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .output()
-            .ok()?;
+        else {
+            continue;
+        };
 
         if !output.status.success() {
             continue;

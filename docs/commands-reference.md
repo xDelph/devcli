@@ -60,7 +60,7 @@ devcli start <app-names>... [OPTIONS]
 - `-e, --env <ENV>` - Environment: `local`, `docker`, `k8s` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
 - `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `prod`, etc.
-- `--detached` - Run in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
+- `--detached` - Leave the apps running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
 ```bash
@@ -85,10 +85,16 @@ devcli start api --project awesome-project
 
 **Behavior**:
 - Auto-starts dependencies (unless `--skip-deps`)
-- Spawns process in background
+- **Attached** (default): streams the apps' output and, like
+  `docker compose up`, stops the apps it started (dependencies included) on
+  Ctrl+C, SIGTERM or when the terminal closes. Press Ctrl+C a second time to
+  kill them right away. Apps that were already running are left alone. If
+  `devcli` itself is killed, `pm-daemon` stops its apps within a few seconds.
+- **Detached** (`--detached`, `--json`, or `devcli pref set detached-mode true`):
+  returns immediately; the apps keep running until `devcli stop`
 - Starts monitor daemon automatically
-- Tracks process state in `~/.devcli/state.json`
-- Logs to `~/.devcli/logs/<project>_<app>_<date>.log`
+- Tracks process state in `~/.devcli/processes/`
+- Logs to `~/.devcli/logs/<project>_<app>_<env>_<date>.log`
 
 **Dependencies**:
 ```bash
@@ -132,6 +138,17 @@ devcli stop --all
 devcli stop api --force
 ```
 
+**Under an AI agent**: `stop --all` and `stop --project P` without an app are
+refused (exit code 1), since they would also stop what the user and other
+agents run. devcli recognises agents by the variables their harnesses set on
+the commands they run (`CLAUDE_CODE_CHILD_SESSION`/`CLAUDECODE`,
+`CODEX_SANDBOX`/`CODEX_THREAD_ID`, `GEMINI_CLI`, `CURSOR_AGENT`, `OPENCODE`,
+`PI_CODING_AGENT`, `AI_AGENT`, ...). `--dry-run` is still allowed. Set
+`DEVCLI_AGENT=1` to apply this to a harness devcli does not recognise, or
+`DEVCLI_AGENT=0` where it misfires (the integrated terminal of Claude Code's
+IDE extensions also sets `CLAUDECODE`). This guards against mistakes; it is not
+a security boundary.
+
 **Behavior**:
 - Sends SIGTERM by default (graceful shutdown)
 - Waits 5 seconds for graceful exit
@@ -157,11 +174,15 @@ devcli restart <app-name> [OPTIONS]
 - `-p, --project <NAME>` - Project name
 - `-e, --env <ENV>` - Environment (can change from current)
 - `--skip-deps` - Skip restarting dependencies
+- `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
 ```bash
 # Restart app
 devcli restart api
+
+# Restart and return, leaving it running in the background
+devcli restart api --detached
 
 # Restart in different environment
 devcli restart api --env docker
@@ -172,7 +193,7 @@ devcli restart api --skip-deps
 
 **Behavior**:
 - Stops current process
-- Starts new process with same config
+- Starts new process with same config, attached or detached like `start`
 - Preserves restart count
 - Can change environment on restart
 
@@ -391,7 +412,9 @@ Health Check: api
 
 ### `metrics`
 
-Display metrics from the monitor daemon.
+Display process, system and performance metrics. Fetched from the metrics API
+when `devcli monitor --daemon` is running (`DEVCLI_METRICS_ADDR`, default
+`127.0.0.1:9090`), computed from the state store otherwise.
 
 **Usage**:
 ```bash
@@ -898,11 +921,11 @@ devcli --json auto-add --path ./apps/api --yes --project awesome-project --name 
 **Supported Detection**:
 - Node.js (`package.json`)
 - Nx Monorepo (`nx.json`)
-- Docker (`Dockerfile`, `docker-compose.yml`)
+- Docker (`Dockerfile`, `compose.yaml`, `docker-compose.yml` and variants)
 - Kubernetes (`k8s/*.yaml`)
-- Rust (`Cargo.toml`)
-- Go (`go.mod`)
-- Python (`setup.py`, `pyproject.toml`)
+- Rust (`Cargo.toml`, including workspaces)
+- Python (`setup.py`, `pyproject.toml`, including uv workspaces)
+- Redis (`redis.conf`) and Traefik (`traefik.yml`/`traefik.toml`) configs
 
 ---
 
@@ -947,12 +970,14 @@ RUST_LOG=trace devcli start api
 RUST_LOG=devcli_core::commands::start=debug devcli start api
 ```
 
-### `devcli_CONFIG_DIR`
+### `DEVCLI_CONFIG_DIR`
 
-Override config directory location:
+Override config directory location (config, preferences, process state and
+logs all move with it). The former lowercase name `devcli_CONFIG_DIR` is still
+honoured; an empty value is ignored.
 
 ```bash
-export devcli_CONFIG_DIR=~/.devcli
+export DEVCLI_CONFIG_DIR=~/.devcli
 devcli start api
 ```
 

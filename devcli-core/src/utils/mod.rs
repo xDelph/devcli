@@ -5,6 +5,7 @@
 //! - `path`: Re-exports path helpers from `config-manager`
 //! - `colors` / `date`: display helpers
 
+pub mod agent;
 pub mod app;
 pub mod colors;
 pub mod command;

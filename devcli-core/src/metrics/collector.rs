@@ -110,12 +110,16 @@ impl MetricsCollector {
             .filter(|entry| entry.timestamp > one_hour_ago)
             .count() as u64;
 
-        // Calculate health check success rate
-        let total_health_checks: u32 = processes.iter().map(|p| p.runtime.health_failures).sum();
-        let health_check_success_rate = if total_health_checks > 0 {
-            // Estimate based on failures (rough approximation)
-            let estimated_total = total_health_checks * 10; // Assume 10x checks vs failures
-            1.0 - (total_health_checks as f64 / estimated_total as f64)
+        // Share of running apps whose latest health checks pass. The state only
+        // keeps the current streak of failures, not a history of every check, so
+        // this is the honest figure available (it used to be a fabricated 0.9 as
+        // soon as any failure existed).
+        let healthy_running = running_processes
+            .iter()
+            .filter(|p| p.runtime.health_failures == 0)
+            .count();
+        let health_check_success_rate = if running_count > 0 {
+            healthy_running as f64 / running_count as f64
         } else {
             1.0
         };

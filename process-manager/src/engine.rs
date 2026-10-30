@@ -23,24 +23,23 @@ impl RunningProcess {
     /// Uses a signal-0 probe on Unix (no signal delivered, just existence check).
     /// Callers should not need to touch `self.pid` directly for liveness checks.
     pub fn is_alive(&self) -> bool {
-        #[cfg(unix)]
-        {
-            use std::process::Command;
-            Command::new("kill")
-                .arg("-0")
-                .arg(self.pid.to_string())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
+        pid_alive(self.pid)
     }
 }
 
 pub async fn spawn(task: &Task) -> Result<RunningProcess> {
+    spawn_inner(task, false).await
+}
+
+/// Like [`spawn`], but keeps the `Child` handle even for a detached task.
+///
+/// For a supervisor that outlives the child (pm-daemon) and wants to `wait()`
+/// on it to learn its exit status.
+pub async fn spawn_supervised(task: &Task) -> Result<RunningProcess> {
+    spawn_inner(task, true).await
+}
+
+async fn spawn_inner(task: &Task, keep_child: bool) -> Result<RunningProcess> {
     // Parse command using shell-words to handle quoted arguments correctly
     let parts = shell_words::split(&task.command).context("Failed to parse command string")?;
 
@@ -57,7 +56,30 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
     cmd.current_dir(&task.working_dir);
     cmd.envs(&task.env);
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // A detached child must outlive the process that spawned it (the CLI exits
+    // right after `start`, the TUI when the user quits). If its stdout/stderr
+    // were pipes read by *this* process, the next write after we exit would hit
+    // a closed pipe: SIGPIPE kills most programs and Node crashes on EPIPE. So a
+    // detached child writes straight into its log file and the kernel keeps that
+    // descriptor valid for as long as the child lives.
+    let detached_log = match (&task.log_file, task.is_detached) {
+        (Some(path), true) => Some(open_log_for_child(path)?),
+        _ => None,
+    };
+
+    match &detached_log {
+        Some((file, _)) => {
+            cmd.stdout(Stdio::from(
+                file.try_clone().context("Failed to share log file")?,
+            ))
+            .stderr(Stdio::from(
+                file.try_clone().context("Failed to share log file")?,
+            ));
+        }
+        None => {
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+    }
 
     if task.is_detached {
         cmd.stdin(Stdio::null());
@@ -86,7 +108,11 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    if let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) {
+    if let (Some((_, start_offset)), Some(path)) = (&detached_log, &task.log_file) {
+        // Keep `output_rx` working for callers that stream output while they are
+        // alive (attached `start`, `run`, the TUI) by following the log file.
+        spawn_log_follower(path.clone(), *start_offset, pid, tx);
+    } else if let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) {
         spawn_output_handler(
             stdout,
             OutputSource::Stdout,
@@ -99,7 +125,11 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
     Ok(RunningProcess {
         pid,
         pgid,
-        child: if task.is_detached { None } else { Some(child) },
+        child: if task.is_detached && !keep_child {
+            None
+        } else {
+            Some(child)
+        },
         output_rx: rx,
     })
 }
@@ -108,41 +138,35 @@ pub async fn spawn(task: &Task) -> Result<RunningProcess> {
 pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool> {
     #[cfg(unix)]
     {
-        use std::process::Command;
         use std::time::Duration;
 
-        let alive = process_exists(pid) || pgid.is_some_and(crate::state::group_has_live_member);
+        let alive = pid_alive(pid) || pgid.is_some_and(crate::state::group_has_live_member);
 
         if !alive {
             return Ok(false);
         }
 
-        let signal = if force { "-9" } else { "-15" };
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
 
         // Signal the whole group so children of a wrapper die with it, but treat
-        // it as best effort: `kill -9 -PGID` can exit 0 without terminating
-        // anything (observed on CI runners), which would make us report success on
-        // a process that is still running.
-        if let Some(g) = pgid {
-            let _ = Command::new("kill")
-                .arg(signal)
-                .arg(format!("-{}", g))
-                .status();
+        // it as best effort: a group signal can report success without
+        // terminating anything (observed on CI runners), which would make us
+        // report success on a process that is still running.
+        if let Some(g) = pgid.filter(|g| *g > 1) {
+            send_signal(-g, signal);
         }
 
-        // The PID itself is the reliable target. A non-zero status is not an
-        // error: the group signal above may already have killed it.
-        let _ = Command::new("kill")
-            .arg(signal)
-            .arg(pid.to_string())
-            .status();
+        // The PID itself is the reliable target. Failure is not an error: the
+        // group signal above may already have killed it.
+        if let Ok(target) = i32::try_from(pid) {
+            send_signal(target, signal);
+        }
 
         // Confirm the process is actually gone instead of trusting the exit status.
         // When the leader had already exited we must also wait for the group to
         // empty out, otherwise children of the app keep serving unnoticed.
         for _ in 0..10 {
-            let gone =
-                !process_exists(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
+            let gone = !pid_alive(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
             if gone {
                 return Ok(true);
             }
@@ -158,13 +182,70 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
 }
 
 /// Whether the OS still knows about this PID.
-fn process_exists(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
+///
+/// Signal-0 probe through kill(2): no signal is delivered, and unlike spawning
+/// `kill -0` it costs no fork/exec and prints nothing on the user's stderr.
+pub fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: kill(2) with signal 0 performs no action beyond permission and
+        // existence checks.
+        let rc = unsafe { libc::kill(pid, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+/// Deliver `signal` to a PID (positive) or a process group (negative).
+#[cfg(unix)]
+fn send_signal(target: i32, signal: libc::c_int) {
+    // SAFETY: kill(2) has no memory-safety preconditions; errors are ignored on
+    // purpose (the target may already be gone).
+    unsafe {
+        libc::kill(target, signal);
+    }
+}
+
+/// How long ago the OS started `pid`, if it is running.
+///
+/// Used to tell our process apart from an unrelated one that was given the same
+/// PID after ours exited. Parses `ps -o etime=` (`[[dd-]hh:]mm:ss`), the only
+/// elapsed-time format both macOS and Linux `ps` print.
+pub fn process_age(pid: u32) -> Option<std::time::Duration> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "etime=", "-p", &pid.to_string()])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_etime(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+fn parse_etime(etime: &str) -> Option<std::time::Duration> {
+    let (days, clock) = match etime.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
+        None => (0, etime),
+    };
+    let parts = clock
+        .split(':')
+        .map(|p| p.parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let (h, m, sec) = match parts.as_slice() {
+        [m, s] => (0, *m, *s),
+        [h, m, s] => (*h, *m, *s),
+        _ => return None,
+    };
+    Some(std::time::Duration::from_secs(
+        ((days * 24 + h) * 60 + m) * 60 + sec,
+    ))
 }
 
 /// Restart a managed process.
@@ -183,6 +264,137 @@ pub async fn restart(
     spawn(task).await
 }
 
+/// Size above which a log file is rotated.
+pub const MAX_LOG_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Rotate `path` if it grew past `max_bytes`: copy it to `<path>.1` (replacing
+/// the previous one) and truncate it in place.
+///
+/// Logs used to grow without bound for as long as an app ran. Truncating in
+/// place ("copytruncate") rather than renaming is what keeps this safe while
+/// the app is running: the app holds the file open in append mode, so its next
+/// write simply lands at the new, smaller end. Lines written between the copy
+/// and the truncation are lost, which is acceptable for dev logs.
+pub fn rotate_log_if_large(path: &std::path::Path, max_bytes: u64) -> std::io::Result<bool> {
+    let len = match std::fs::metadata(path) {
+        Ok(meta) => meta.len(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if len <= max_bytes {
+        return Ok(false);
+    }
+    let mut rotated = path.as_os_str().to_owned();
+    rotated.push(".1");
+    std::fs::copy(path, &rotated)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .set_len(0)?;
+    Ok(true)
+}
+
+/// Open (creating if needed) a log file in append mode for a child to inherit.
+///
+/// Returns the file and its length before the child writes anything, which is
+/// where a follower starts reading.
+fn open_log_for_child(path: &std::path::Path) -> Result<(std::fs::File, u64)> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create log directory {}", parent.display()))?;
+    }
+    if let Err(e) = rotate_log_if_large(path, MAX_LOG_BYTES) {
+        tracing::warn!(path = %path.display(), error = %e, "Failed to rotate log file");
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    // App output routinely contains tokens and connection strings.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("Failed to open log file {}", path.display()))?;
+    let offset = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok((file, offset))
+}
+
+/// Forward lines appended to `path` after `offset` into `tx`.
+///
+/// Stops as soon as the receiver is dropped, so a caller that is not interested
+/// in output (detached `start`) costs nothing beyond one short-lived task. Once
+/// the child is gone and the file is drained the sender is dropped, which closes
+/// the channel exactly like the end of a pipe would.
+fn spawn_log_follower(path: PathBuf, offset: u64, pid: u32, tx: OutputSender) {
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let Ok(mut file) = tokio::fs::File::open(&path).await else {
+            return;
+        };
+        if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
+            return;
+        }
+
+        let mut position = offset;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 8192];
+        loop {
+            if tx.is_closed() {
+                return;
+            }
+            match file.read(&mut buf).await {
+                Ok(0) => {
+                    // Rotated (truncated in place): continue from the new start.
+                    let len = tokio::fs::metadata(&path)
+                        .await
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    if len < position {
+                        if file.seek(std::io::SeekFrom::Start(0)).await.is_err() {
+                            return;
+                        }
+                        position = 0;
+                        continue;
+                    }
+                    if !pid_alive(pid) {
+                        if !pending.is_empty() {
+                            let _ = tx.send(OutputMessage {
+                                source: OutputSource::Stdout,
+                                content: String::from_utf8_lossy(&pending).to_string(),
+                                timestamp: chrono::Utc::now(),
+                            });
+                        }
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Ok(n) => {
+                    position += n as u64;
+                    pending.extend_from_slice(&buf[..n]);
+                    while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = pending.drain(..=pos).collect();
+                        let content = String::from_utf8_lossy(&line[..line.len() - 1])
+                            .trim_end_matches('\r')
+                            .to_string();
+                        let msg = OutputMessage {
+                            source: OutputSource::Stdout,
+                            content,
+                            timestamp: chrono::Utc::now(),
+                        };
+                        if tx.send(msg).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(_) => return,
+            }
+        }
+    });
+}
+
 fn spawn_output_handler<R>(
     stream: R,
     source: OutputSource,
@@ -193,9 +405,11 @@ fn spawn_output_handler<R>(
 {
     tokio::spawn(async move {
         let file = if let Some(path) = log_file {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
+            let mut options = tokio::fs::OpenOptions::new();
+            options.create(true).append(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            options
                 .open(path)
                 .await
                 .ok()
@@ -204,8 +418,21 @@ fn spawn_output_handler<R>(
             None
         };
 
-        let mut reader = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
+        // Read raw bytes: `lines()` stops at the first invalid UTF-8 sequence,
+        // which closed the pipe and got the child killed by SIGPIPE as soon as it
+        // printed binary output or text in a legacy encoding.
+        let mut reader = BufReader::new(stream);
+        let mut raw = Vec::new();
+        loop {
+            raw.clear();
+            match reader.read_until(b'\n', &mut raw).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&raw)
+                .trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string();
             let msg = OutputMessage {
                 source: source.clone(),
                 content: line.clone(),
@@ -278,6 +505,45 @@ mod tests {
         let current_pid = std::process::id();
         let rp = make_running_process(current_pid);
         assert_eq!(rp.is_alive(), rp.is_alive());
+    }
+
+    #[test]
+    fn test_rotate_log_if_large() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("app.log");
+
+        assert!(!rotate_log_if_large(&path, 10).unwrap(), "missing file");
+        std::fs::write(&path, b"0123456789").unwrap();
+        assert!(!rotate_log_if_large(&path, 10).unwrap(), "at the limit");
+
+        std::fs::write(&path, b"0123456789abc").unwrap();
+        assert!(rotate_log_if_large(&path, 10).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        assert_eq!(
+            std::fs::read(dir.path().join("app.log.1")).unwrap(),
+            b"0123456789abc"
+        );
+    }
+
+    #[test]
+    fn test_parse_etime_formats() {
+        use std::time::Duration;
+        assert_eq!(parse_etime("00:07"), Some(Duration::from_secs(7)));
+        assert_eq!(parse_etime("12:34"), Some(Duration::from_secs(754)));
+        assert_eq!(parse_etime("01:00:05"), Some(Duration::from_secs(3605)));
+        assert_eq!(
+            parse_etime("2-03:04:05"),
+            Some(Duration::from_secs(2 * 86400 + 3 * 3600 + 4 * 60 + 5))
+        );
+        assert_eq!(parse_etime(""), None);
+        assert_eq!(parse_etime("garbage"), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_age_of_current_process() {
+        let age = process_age(std::process::id()).expect("ps reports our age");
+        assert!(age < std::time::Duration::from_secs(3600));
     }
 
     #[tokio::test]

@@ -47,8 +47,8 @@ mod tests {
 
     // Helper: Create a test config
     fn create_test_config_with_app(app_name: &str, app_path: &str) -> Config {
-        let mut projects = HashMap::new();
-        let mut apps = HashMap::new();
+        let mut projects = crate::config::models::ProjectMap::new();
+        let mut apps = crate::config::models::AppMap::new();
 
         apps.insert(
             app_name.to_string(),
@@ -62,6 +62,7 @@ mod tests {
         projects.insert(
             "test-project".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },
@@ -180,10 +181,10 @@ mod tests {
     #[test]
     fn test_integration_dependency_chain() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
-        let mut apps = HashMap::new();
+        let mut apps = crate::config::models::AppMap::new();
 
         // Create database (no deps)
         apps.insert(
@@ -217,6 +218,7 @@ mod tests {
         config.projects.insert(
             "test".to_string(),
             Project {
+                extra: Default::default(),
                 apps,
                 alternative_name: None,
             },
@@ -359,12 +361,12 @@ CMD ["node", "server.js"]
     #[test]
     fn test_integration_list_all_apps() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         // Create 3 projects with multiple apps each
         for i in 1..=3 {
-            let mut apps = HashMap::new();
+            let mut apps = crate::config::models::AppMap::new();
             for j in 1..=2 {
                 apps.insert(
                     format!("app-{}-{}", i, j),
@@ -377,6 +379,7 @@ CMD ["node", "server.js"]
             config.projects.insert(
                 format!("project-{}", i),
                 Project {
+                    extra: Default::default(),
                     apps,
                     alternative_name: None,
                 },
@@ -779,10 +782,13 @@ CMD ["node", "server.js"]
             store.save(&process).unwrap();
 
             let original_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", daemon_dir.display(), original_path),
-            );
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe {
+                std::env::set_var(
+                    "PATH",
+                    format!("{}:{}", daemon_dir.display(), original_path),
+                )
+            };
             store.ensure_daemon_running().expect("start pm-daemon");
 
             engine::terminate(original_pid, pgid, true)
@@ -792,17 +798,19 @@ CMD ["node", "server.js"]
             let mut restarted = false;
             for _ in 0..20 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                if let Some(updated) = store.load(&id).unwrap() {
-                    if updated.pid != original_pid && store.is_running(&updated) {
-                        restarted = true;
-                        let _ = engine::terminate(updated.pid, updated.pgid, true).await;
-                        break;
-                    }
+                if let Some(updated) = store.load(&id).unwrap()
+                    && updated.pid != original_pid
+                    && store.is_running(&updated)
+                {
+                    restarted = true;
+                    let _ = engine::terminate(updated.pid, updated.pgid, true).await;
+                    break;
                 }
             }
 
             store.delete(&id).unwrap();
-            std::env::set_var("PATH", original_path);
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            unsafe { std::env::set_var("PATH", original_path) };
 
             assert!(
                 restarted,

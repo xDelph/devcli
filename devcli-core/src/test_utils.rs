@@ -121,6 +121,7 @@ impl AppBuilder {
     /// Build the App
     pub fn build(self) -> App {
         App {
+            extra: Default::default(),
             app_type: self.app_type,
             path: self.path,
             commands: Commands {
@@ -177,14 +178,14 @@ impl AppBuilder {
 ///     .build();
 /// ```
 pub struct ConfigBuilder {
-    projects: HashMap<String, HashMap<String, App>>,
+    projects: indexmap::IndexMap<String, crate::config::models::AppMap>,
 }
 
 impl ConfigBuilder {
     /// Create a new ConfigBuilder
     pub fn new() -> Self {
         Self {
-            projects: HashMap::new(),
+            projects: Default::default(),
         }
     }
 
@@ -207,6 +208,7 @@ impl ConfigBuilder {
                     (
                         name,
                         Project {
+                            extra: Default::default(),
                             apps,
                             alternative_name: None,
                         },
@@ -333,7 +335,7 @@ pub fn mock_app_with_deps(path: &str, deps: Vec<(&str, &str)>) -> App {
 
 /// Serialises tests that mutate process-global state.
 ///
-/// `devcli_CONFIG_DIR` and the current working directory are global to the
+/// `DEVCLI_CONFIG_DIR` and the current working directory are global to the
 /// process, and cargo runs test functions on parallel threads. Two tests
 /// overriding them at once interleave: one clears the override while the other
 /// is mid-test, and the second then silently resolves the *real* `~/.devcli`
@@ -345,6 +347,63 @@ pub fn env_guard() -> std::sync::MutexGuard<'static, ()> {
     // A poisoned lock means another test panicked; the data it guards is a
     // process-global env var, so carry on rather than cascading the panic.
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A throwaway config directory for the duration of a test.
+///
+/// Holds [`env_guard`], points `DEVCLI_CONFIG_DIR` at a fresh temp dir and
+/// restores the previous value on drop, so code under test that loads and
+/// saves the config can never reach the user's real `~/.devcli`.
+#[cfg(test)]
+pub struct TempConfigDir {
+    dir: tempfile::TempDir,
+    previous: Option<std::ffi::OsString>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl TempConfigDir {
+    pub fn new() -> Self {
+        let lock = env_guard();
+        let previous = std::env::var_os("DEVCLI_CONFIG_DIR");
+        let dir = tempfile::TempDir::new().expect("create temp config dir");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", dir.path()) };
+        Self {
+            dir,
+            previous,
+            _lock: lock,
+        }
+    }
+
+    /// Directory standing in for `~/.devcli`.
+    pub fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// Write `config` as this directory's config.json.
+    pub fn write_config(&self, config: &crate::config::Config) {
+        crate::config::save_config(config).expect("save test config");
+    }
+}
+
+#[cfg(test)]
+impl Default for TempConfigDir {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempConfigDir {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(previous) => unsafe { std::env::set_var("DEVCLI_CONFIG_DIR", previous) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("DEVCLI_CONFIG_DIR") },
+        }
+    }
 }
 
 #[cfg(test)]

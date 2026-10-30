@@ -120,7 +120,7 @@ impl DependencyGraph {
         // Priority queue: nodes with 0 in-degree, sorted by priority
         let mut queue: Vec<(usize, String)> = in_degree
             .iter()
-            .filter(|(_, &degree)| degree == 0)
+            .filter(|&(_, &degree)| degree == 0)
             .map(|(node, _)| {
                 let priority = self.nodes.get(node).copied().unwrap_or(999);
                 (priority, node.clone())

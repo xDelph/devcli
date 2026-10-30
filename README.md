@@ -234,15 +234,53 @@ without a TTY. The contract lives in [`AGENTS.md`](AGENTS.md) — but an agent
 has no reason to know devcli exists, so install the rules once:
 
 ```bash
-devcli install-agents --global     # ~/.agents/AGENTS.md  (all projects)
-devcli install-agents --local .    # ./AGENTS.md          (this project)
-devcli uninstall-agents --global   # remove the block again
+devcli install-agents --global     # every agent you use, all projects
+devcli install-agents              # this project (or --local PATH)
+devcli uninstall-agents --global   # remove them again
 ```
 
-`AGENTS.md` is read natively by Claude Code, Cursor, Codex, Copilot, Gemini,
-Windsurf, Zed, Amp, JetBrains and Aider. The block is fenced by two markers so
-devcli can refresh or remove it without touching your own lines, and the
-previous file is saved as `AGENTS.md.backup` before every write.
+Each agent reads its own files, so devcli writes where they actually look.
+
+`--global` writes a short block, pointing at the full rules in
+`~/.devcli/AGENTS.md`, for each agent whose directory exists (`--agent NAME`
+picks them explicitly):
+
+| Agent | User-level file |
+|-------|-----------------|
+| Claude Code (`claude`) | `~/.claude/CLAUDE.md` |
+| Codex (`codex`) | `~/.codex/AGENTS.md` (honours `CODEX_HOME` and `AGENTS.override.md`) |
+| Gemini CLI (`gemini`) | `~/.gemini/GEMINI.md` |
+| Cursor (`cursor`) | `~/.cursor/rules/devcli.mdc`, an always-applied rule file of its own |
+| pi (`pi`) | `~/.pi/agent/AGENTS.md` (honours `PI_CODING_AGENT_DIR` and `AGENTS.override.md`) |
+| OpenCode (`opencode`) | `~/.config/opencode/AGENTS.md` |
+| Devin CLI (`devin`) | `~/.config/devin/AGENTS.md` (Windows: `%APPDATA%\devin\AGENTS.md`) |
+
+The block is short on purpose: those files load into every session of every
+project.
+
+In a project, the full rules go into `AGENTS.md`, which Codex, Cursor, OpenCode,
+Devin, pi, Copilot and Claude Code read. Two agents get an import of it in their
+own file:
+
+- `CLAUDE.md` (or `.claude/CLAUDE.md`), when the project has one: Claude Code
+  then ignores `AGENTS.md`.
+- `GEMINI.md`, when the project has one or Gemini CLI is installed: Gemini CLI
+  reads `GEMINI.md`, not `AGENTS.md`.
+
+Agents are told to act on the apps they work on, by name, and devcli enforces
+the part that matters: when it detects it runs under an AI agent (from the
+variables agent harnesses set, such as `CLAUDECODE`, `CODEX_SANDBOX`,
+`GEMINI_CLI`, `CURSOR_AGENT`), it refuses `stop --all` and `stop --project P`
+without an app, which would also stop what you and other agents run.
+`DEVCLI_AGENT=1` turns this on for a harness devcli does not recognise,
+`DEVCLI_AGENT=0` turns it off. It guards against mistakes, not against an agent
+determined to kill processes.
+
+The blocks are fenced by HTML-comment markers, so devcli can refresh or remove
+them without touching your own lines; a file devcli created is deleted again on
+uninstall. The previous version of every file it changes is saved under
+`~/.devcli/backups/agents/`. Re-run `install-agents` after upgrading devcli to
+refresh the rules.
 
 ## Features
 

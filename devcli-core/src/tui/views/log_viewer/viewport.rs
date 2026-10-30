@@ -2,14 +2,16 @@
 pub struct ViewportState {
     /// Current cursor position (which line is highlighted)
     pub cursor_line: usize,
-    /// Current horizontal scroll offset (character index)
-    pub horizontal_offset: usize,
-    /// First visible *visual* row (text-wrapping aware).
+    /// First logical line shown at the top of the panel.
     ///
-    /// This is the persistent scroll position: the renderer keeps it while the
-    /// cursor stays inside the visible range, and re-anchors it when the cursor
-    /// leaves or the layout changes. Always clamped, so it never goes stale.
-    pub last_visual_scroll: usize,
+    /// Together with `top_offset` this is the persistent scroll position: the
+    /// renderer keeps it while the cursor stays inside the visible range, and
+    /// re-anchors it when the cursor leaves. Line-based (not an absolute wrapped
+    /// row) so only the lines around the window ever need laying out.
+    pub top_line: usize,
+    /// Wrapped rows of `top_line` scrolled off the top (for lines taller than
+    /// one row).
+    pub top_offset: usize,
 }
 
 impl ViewportState {
@@ -17,8 +19,8 @@ impl ViewportState {
         Self {
             // Start at the bottom of the file (most recent logs)
             cursor_line: total_lines.saturating_sub(1),
-            horizontal_offset: 0,
-            last_visual_scroll: 0,
+            top_line: 0,
+            top_offset: 0,
         }
     }
 

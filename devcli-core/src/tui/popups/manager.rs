@@ -15,6 +15,8 @@ use crate::tui::widgets::CommandPopup;
 pub struct PopupManager {
     pub active_popup: Option<CommandPopup>,
     command_tx: UnboundedSender<CommandRequest>,
+    /// Id given to the next command request.
+    next_request_id: u64,
 }
 
 impl PopupManager {
@@ -22,6 +24,7 @@ impl PopupManager {
         Self {
             active_popup: None,
             command_tx,
+            next_request_id: 1,
         }
     }
 
@@ -55,31 +58,8 @@ impl PopupManager {
         redraw |= self.check_env_selection_request(state)?;
         redraw |= self.check_command_results(command_rx)?;
 
-        // Check for status updates in active popup
-        // This corresponds to app.rs check_status_update part that updates popup
-        {
-            let (status_updated, app_status) = {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                let updated = state.status_updated;
-
-                let app_status = if self.active_popup.is_some() {
-                    state.selected_app().map(|app| app.status.display_label())
-                } else {
-                    None
-                };
-                (updated, app_status)
-            };
-
-            if status_updated {
-                if let (Some(popup), Some(status)) = (&mut self.active_popup, app_status) {
-                    popup.update_status(status);
-                    redraw = true;
-                }
-            }
-        }
-
+        // The popup's status line is refreshed by `TuiApp::check_status_update`,
+        // which also clears the flag (this used to do the same work first).
         Ok(redraw)
     }
 
@@ -170,10 +150,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -221,10 +201,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -232,17 +212,14 @@ impl PopupManager {
 
             // Immediately execute stop
             let request = CommandRequest {
+                id: 0,
                 app_name,
                 project: project_name,
                 environment: String::new(),
                 command_type: CommandType::Stop,
             };
 
-            if let Some(popup) = &mut self.active_popup {
-                popup.set_executing();
-            }
-
-            self.command_tx.send(request)?;
+            self.dispatch(request)?;
 
             let mut state = state
                 .lock()
@@ -301,10 +278,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -312,17 +289,14 @@ impl PopupManager {
 
             // Immediately execute restart
             let request = CommandRequest {
+                id: 0,
                 app_name,
                 project: project_name,
                 environment,
                 command_type: CommandType::Restart,
             };
 
-            if let Some(popup) = &mut self.active_popup {
-                popup.set_executing();
-            }
-
-            self.command_tx.send(request)?;
+            self.dispatch(request)?;
 
             let mut state = state
                 .lock()
@@ -371,10 +345,10 @@ impl PopupManager {
                 let state = state
                     .lock()
                     .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    if app.name == app_name {
-                        popup.update_status(app.status.display_label());
-                    }
+                if let Some(app) = state.selected_app()
+                    && app.name == app_name
+                {
+                    popup.update_status(app.status.display_label());
                 }
             }
 
@@ -396,24 +370,29 @@ impl PopupManager {
         let mut updated = false;
         while let Ok(result) = command_rx.try_recv() {
             updated = true;
+            let id = match &result {
+                CommandResult::Success { id, .. }
+                | CommandResult::Error { id, .. }
+                | CommandResult::LogLine { id, .. } => *id,
+            };
+            // Output of a command whose popup is gone (or replaced): drop it.
+            let Some(popup) = self
+                .active_popup
+                .as_mut()
+                .filter(|popup| popup.request_id == Some(id))
+            else {
+                continue;
+            };
             match result {
-                CommandResult::Success(msg) => {
-                    if let Some(popup) = &mut self.active_popup {
-                        popup.set_success(msg);
-                    }
+                CommandResult::Success { message, .. } => {
+                    popup.set_success(message);
                     crate::debug!("Command execution successful");
                 }
-                CommandResult::Error(msg) => {
-                    if let Some(popup) = &mut self.active_popup {
-                        popup.set_error(msg);
-                    }
+                CommandResult::Error { message, .. } => {
+                    popup.set_error(message);
                     crate::debug!("Command execution failed");
                 }
-                CommandResult::LogLine(line) => {
-                    if let Some(popup) = &mut self.active_popup {
-                        popup.add_output_line(line);
-                    }
-                }
+                CommandResult::LogLine { line, .. } => popup.add_output_line(line),
             }
         }
         Ok(updated)
@@ -430,6 +409,7 @@ impl PopupManager {
             };
 
             CommandRequest {
+                id: 0,
                 app_name: popup.app_name.clone(),
                 project: popup.project.clone(),
                 environment: popup.environment.clone(),
@@ -439,11 +419,77 @@ impl PopupManager {
             return Ok(());
         };
 
+        self.dispatch(request)
+    }
+
+    /// Send `request` on behalf of the active popup, which from then on only
+    /// accepts results carrying this request's id.
+    ///
+    /// Results used to be applied to whatever popup was open: close a popup
+    /// while its stop is still running, open a start popup, and the stop's
+    /// "Success"/"Error" and output landed in the start popup.
+    fn dispatch(&mut self, mut request: CommandRequest) -> Result<()> {
+        request.id = self.next_request_id;
+        self.next_request_id += 1;
         if let Some(popup) = &mut self.active_popup {
+            popup.request_id = Some(request.id);
             popup.set_executing();
         }
-
         self.command_tx.send(request)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::widgets::command_popup::PopupState;
+
+    /// A popup only takes results of the request it launched.
+    #[test]
+    fn results_of_another_request_are_ignored() {
+        // CommandPopup::new reads the config; keep it off ~/.devcli.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = PopupManager::new(tx);
+        manager.active_popup = Some(CommandPopup::new(
+            "start".to_string(),
+            "npm start".to_string(),
+            "api".to_string(),
+            "p".to_string(),
+            "local".to_string(),
+        ));
+        manager.execute_command_from_popup().unwrap();
+        let request = rx.try_recv().expect("request sent");
+        assert_eq!(
+            manager.active_popup.as_ref().unwrap().request_id,
+            Some(request.id)
+        );
+
+        let (results_tx, mut results_rx) = tokio::sync::mpsc::unbounded_channel();
+        // A late result of an earlier command (e.g. a stop whose popup was closed).
+        results_tx
+            .send(CommandResult::Success {
+                id: request.id + 100,
+                message: "stopped".to_string(),
+            })
+            .unwrap();
+        manager.check_command_results(&mut results_rx).unwrap();
+        assert_eq!(
+            *manager.active_popup.as_ref().unwrap().state(),
+            PopupState::Executing
+        );
+
+        results_tx
+            .send(CommandResult::Success {
+                id: request.id,
+                message: "started".to_string(),
+            })
+            .unwrap();
+        manager.check_command_results(&mut results_rx).unwrap();
+        assert_eq!(
+            *manager.active_popup.as_ref().unwrap().state(),
+            PopupState::Success("started".to_string())
+        );
     }
 }

@@ -33,18 +33,14 @@
 use super::state::{AppState, ViewType};
 use super::theme::Theme;
 use super::views::{
-    log_viewer::{LogInputResult, SelectionItem, SelectionMode},
+    log_viewer::{LogInputResult, SelectionMode},
     LogViewerView, MainView,
 };
 use super::widgets::help_overlay::HelpOverlay;
 use crate::tui::popups::PopupManager;
 
-use chrono::{NaiveDate, Utc};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-
 use crate::config::loader::load_config;
-use crate::process_manager_support::{find_process, state_store};
+use crate::process_manager_support::state_store;
 
 use anyhow::{Context, Result};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyEvent};
@@ -64,6 +60,43 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::interval;
+
+/// Put the terminal back the way the shell expects it: mouse released,
+/// normal screen, raw mode off, cursor visible. Every step is attempted even
+/// when an earlier one fails, and errors are ignored - there is nothing better
+/// to do with them on the way out.
+fn restore_terminal() {
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, DisableMouseCapture);
+    let _ = execute!(stdout, LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout, crossterm::cursor::Show);
+}
+
+/// Restores the terminal when dropped (error returns, unwinding).
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
+/// Restore the terminal before the panic message is printed.
+///
+/// Without it a panic in the TUI (or in one of its tasks) left the shell in
+/// raw mode on the alternate screen with the mouse captured: the message was
+/// unreadable and the terminal unusable until `reset`.
+fn install_restore_on_panic() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore_terminal();
+            previous(info);
+        }));
+    });
+}
 
 /// The main TUI application struct
 /// Manages the terminal, state, and event loop
@@ -95,16 +128,19 @@ pub struct TuiApp {
     pub(crate) last_render: Instant,
     /// Flag to clear terminal on next render (for view transitions)
     pub(crate) needs_clear: bool,
-    /// Channel for sending command execution requests to background task
-    #[allow(dead_code)] // Used by spawned background task
-    pub(crate) command_tx: mpsc::UnboundedSender<CommandRequest>,
     /// Channel for receiving command execution results
     pub(crate) command_rx: mpsc::UnboundedReceiver<CommandResult>,
+    /// Keeps a test app's private state directory alive.
+    #[cfg(test)]
+    _test_dir: Option<tempfile::TempDir>,
 }
 
 /// Request to execute a command in the background
 #[derive(Debug, Clone)]
 pub(crate) struct CommandRequest {
+    /// Assigned by `PopupManager::dispatch`; carried by every result so a
+    /// popup only shows output of the command it launched.
+    pub(crate) id: u64,
     pub(crate) app_name: String,
     pub(crate) project: String,
     pub(crate) environment: String,
@@ -123,9 +159,9 @@ pub(crate) enum CommandType {
 /// Result of command execution
 #[derive(Debug)]
 pub(crate) enum CommandResult {
-    Success(String),
-    Error(String),
-    LogLine(String), // New: stream log lines to popup
+    Success { id: u64, message: String },
+    Error { id: u64, message: String },
+    LogLine { id: u64, line: String }, // stream log lines to popup
 }
 
 impl TuiApp {
@@ -167,14 +203,18 @@ impl TuiApp {
             while let Some(request) = req_rx.recv().await {
                 let tx = result_tx.clone();
                 tokio::spawn(async move {
+                    let id = request.id;
                     let result = crate::tui::command_executor::execute_command_async(
                         request.clone(),
                         tx.clone(),
                     )
                     .await;
                     let _ = match result {
-                        Ok(msg) => tx.send(CommandResult::Success(msg)),
-                        Err(e) => tx.send(CommandResult::Error(format!("{:#}", e))),
+                        Ok(message) => tx.send(CommandResult::Success { id, message }),
+                        Err(e) => tx.send(CommandResult::Error {
+                            id,
+                            message: format!("{:#}", e),
+                        }),
                     };
                 });
             }
@@ -195,8 +235,9 @@ impl TuiApp {
             needs_redraw: true, // Initial render needed
             last_render: Instant::now(),
             needs_clear: false,
-            command_tx: req_tx,
             command_rx: result_rx,
+            #[cfg(test)]
+            _test_dir: None,
         })
     }
 
@@ -205,8 +246,11 @@ impl TuiApp {
     pub async fn run(&mut self) -> Result<()> {
         crate::debug!("TuiApp::run() starting");
 
-        // Setup terminal
+        // Setup terminal. From here on the terminal is restored however this
+        // function ends: normal return, error (`?`), or a panic anywhere.
+        install_restore_on_panic();
         enable_raw_mode().context("Failed to enable raw mode")?;
+        let _restore = TerminalGuard;
         let mut stdout = io::stdout();
         // Capture the mouse so wheel events reach the app (routed to scroll in
         // Runtime). In the alternate screen this only enables scrolling; text
@@ -229,13 +273,11 @@ impl TuiApp {
         // Stop the background polling task
         polling_handle.abort();
 
-        // Cleanup terminal
-        execute!(terminal.backend_mut(), DisableMouseCapture)
-            .context("Failed to disable mouse capture")?;
-        disable_raw_mode().context("Failed to disable raw mode")?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)
-            .context("Failed to leave alternate screen")?;
-        terminal.show_cursor().context("Failed to show cursor")?;
+        // Cleanup terminal (also done by `_restore` on every other way out).
+        // Each step is attempted even if an earlier one fails: the old chain of
+        // `?` left raw mode on if releasing the mouse failed.
+        restore_terminal();
+        let _ = terminal.show_cursor();
 
         result
     }
@@ -259,11 +301,26 @@ impl TuiApp {
         // Check if status was updated by background polling
         self.check_status_update()?;
 
+        // The status panel shows a live uptime: redraw about once a second
+        // while something runs (polls no longer count uptime as a change).
+        if self.last_render.elapsed() >= Duration::from_secs(1) && self.any_app_running() {
+            needs_redraw = true;
+        }
+
         if needs_redraw {
             self.needs_redraw = true;
         }
 
         Ok(())
+    }
+
+    fn any_app_running(&self) -> bool {
+        self.state.try_lock().is_ok_and(|state| {
+            state
+                .projects
+                .iter()
+                .any(|p| p.apps.iter().any(|a| a.status.is_running()))
+        })
     }
 
     pub(crate) fn needs_clear(&self) -> bool {
@@ -317,11 +374,14 @@ impl TuiApp {
             status_updated: false,
         }));
 
-        // We might fail to create directory in some test envs, but usually it's fine.
-        // If it fails, tests will panic.
-        let state_store = Arc::new(state_store().unwrap_or_else(|_| {
-            panic!("Failed to create StateStore for test");
-        }));
+        // A private store: `state_store()` follows DEVCLI_CONFIG_DIR, which other
+        // tests point at temp dirs they then delete (and which is the user's
+        // real ~/.devcli when unset).
+        let test_dir = tempfile::TempDir::new().expect("temp dir for test state store");
+        let state_store = Arc::new(
+            process_manager::StateStore::new(test_dir.path().join("processes"))
+                .expect("Failed to create StateStore for test"),
+        );
 
         let (req_tx, _req_rx) = mpsc::unbounded_channel();
         let (_result_tx, result_rx) = mpsc::unbounded_channel();
@@ -341,8 +401,8 @@ impl TuiApp {
             needs_redraw: false,
             last_render: Instant::now(),
             needs_clear: false,
-            command_tx: req_tx,
             command_rx: result_rx,
+            _test_dir: Some(test_dir),
         }
     }
 
@@ -374,6 +434,13 @@ impl TuiApp {
                     self.needs_redraw = true;
                     Ok(true)
                 }
+                LogInputResult::Error(message) => {
+                    if let Ok(mut state) = self.state.lock() {
+                        state.error_message = Some(message);
+                    }
+                    self.needs_redraw = true;
+                    Ok(true)
+                }
             }
         } else {
             Ok(false)
@@ -390,12 +457,12 @@ impl TuiApp {
         }
 
         // Clean up log viewer when leaving that view
-        if let Ok(state) = self.state.lock() {
-            if matches!(state.current_view, ViewType::LogViewer { .. }) {
-                self.log_viewer = None;
-                // Clear terminal to avoid artifacts
-                self.needs_clear = true;
-            }
+        if let Ok(state) = self.state.lock()
+            && matches!(state.current_view, ViewType::LogViewer { .. })
+        {
+            self.log_viewer = None;
+            // Clear terminal to avoid artifacts
+            self.needs_clear = true;
         }
 
         // Pop the navigation stack; fall back to Main
@@ -419,97 +486,16 @@ impl TuiApp {
             Vec::new()
         };
 
+        let candidates = match self.state.lock() {
+            Ok(state) => crate::tui::views::log_viewer::selector::selector_candidates(
+                &state,
+                &self.main_view.log_manager,
+                &current_paths,
+            ),
+            Err(_) => return,
+        };
         if let Some(viewer) = &mut self.log_viewer {
-            // Map<Project, Map<App, Vec<(PathBuf, Env, DateStr)>>>
-            type LogEntry = (PathBuf, String, String); // Path, Env, Date
-            let mut grouped_logs: BTreeMap<String, BTreeMap<String, Vec<LogEntry>>> =
-                BTreeMap::new();
-
-            if let Ok(state) = self.state.lock() {
-                for proj in &state.projects {
-                    for app in &proj.apps {
-                        if app.status.is_running() {
-                            if let Ok(logs) = self
-                                .main_view
-                                .log_manager
-                                .list_logs_for_app(&app.project, &app.name)
-                            {
-                                for log in logs {
-                                    if !current_paths.contains(&log.path) {
-                                        let filename_str = log
-                                            .path
-                                            .file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy();
-                                        let clean_name = filename_str
-                                            .strip_suffix(".log")
-                                            .unwrap_or(&filename_str);
-                                        let parts: Vec<&str> = clean_name.split('_').collect();
-
-                                        // Parse env and date
-                                        let (env, date) = if parts.len() >= 4 {
-                                            (parts[2].to_string(), parts[3].to_string())
-                                        } else {
-                                            ("?".to_string(), "?".to_string())
-                                        };
-
-                                        grouped_logs
-                                            .entry(app.project.clone())
-                                            .or_default()
-                                            .entry(app.name.clone())
-                                            .or_default()
-                                            .push((log.path, env, date));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let mut candidates = Vec::new();
-            for (project, apps) in grouped_logs {
-                if apps.values().all(|v| v.is_empty()) {
-                    continue;
-                }
-
-                candidates.push(SelectionItem::Header(project));
-
-                for (app_name, logs) in apps {
-                    if logs.is_empty() {
-                        continue;
-                    }
-                    candidates.push(SelectionItem::SubHeader(app_name));
-
-                    for (path, env, date_str) in logs {
-                        let formatted_date = Self::format_smart_date(&date_str);
-                        let label = format!("{} - {}", env, formatted_date);
-                        candidates.push(SelectionItem::Option { label, path });
-                    }
-                }
-            }
             viewer.start_log_selection(candidates, mode);
-        }
-    }
-
-    /// Helper to format date sensibly
-    fn format_smart_date(date_str: &str) -> String {
-        if date_str.len() != 8 {
-            return date_str.to_string();
-        }
-
-        if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
-            let today = Utc::now().naive_utc().date();
-            let diff = today.signed_duration_since(date).num_days();
-
-            match diff {
-                0 => "Today".to_string(), // Bold handling is done in render if needed, but here we just return text
-                1 => "Yesterday".to_string(),
-                2..=3 => format!("{} days ago", diff),
-                _ => date.format("%Y-%m-%d").to_string(),
-            }
-        } else {
-            date_str.to_string()
         }
     }
 
@@ -529,29 +515,29 @@ impl TuiApp {
         };
 
         // If we're in LogViewer view but don't have a viewer instance, create one
-        if let ViewType::LogViewer { log_paths, .. } = current_view {
-            if self.log_viewer.is_none() {
-                match LogViewerView::new(log_paths.clone()) {
-                    Ok(viewer) => {
-                        self.log_viewer = Some(viewer);
-                        // Clear terminal to avoid artifacts from previous view
-                        self.needs_clear = true;
+        if let ViewType::LogViewer { log_paths, .. } = current_view
+            && self.log_viewer.is_none()
+        {
+            match LogViewerView::new(log_paths.clone()) {
+                Ok(viewer) => {
+                    self.log_viewer = Some(viewer);
+                    // Clear terminal to avoid artifacts from previous view
+                    self.needs_clear = true;
 
-                        // If opened with no logs, trigger selector
-                        if log_paths.is_empty() {
-                            self.open_log_selector(SelectionMode::Add);
-                        }
+                    // If opened with no logs, trigger selector
+                    if log_paths.is_empty() {
+                        self.open_log_selector(SelectionMode::Add);
                     }
-                    Err(e) => {
-                        // Failed to create viewer - set error and go back to main view
-                        // This is a non-blocking error - user can dismiss and continue
-                        let mut state = self
-                            .state
-                            .lock()
-                            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                        state.error_message = Some(format!("Failed to open log files: {}", e));
-                        state.current_view = ViewType::Main;
-                    }
+                }
+                Err(e) => {
+                    // Failed to create viewer - set error and go back to main view
+                    // This is a non-blocking error - user can dismiss and continue
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
+                    state.error_message = Some(format!("Failed to open log files: {}", e));
+                    state.current_view = ViewType::Main;
                 }
             }
         }
@@ -653,46 +639,71 @@ impl TuiApp {
         state: &Arc<Mutex<AppState>>,
         state_store: &Arc<process_manager::StateStore>,
     ) {
-        // Try to acquire the state lock with a non-blocking approach
-        // If we can't get it immediately, skip this update cycle
-        // This prevents blocking if the main thread is using the state
-        // Performance optimization: Avoids contention on the state lock
-        if let Ok(mut state) = state.try_lock() {
-            let mut any_changed = false;
+        // Which apps to look at - a brief lock. If the UI holds it, skip.
+        let keys: Vec<(String, String)> = match state.try_lock() {
+            Ok(state) => state
+                .projects
+                .iter()
+                .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
+                .collect(),
+            Err(_) => return,
+        };
 
-            // Update status for all apps in all projects
-            for project in &mut state.projects {
-                for app in &mut project.apps {
-                    let old_status = app.status.clone();
-                    // Check if the app is currently running
-                    app.status = Self::check_app_status(&project.name, &app.name, state_store);
+        // Read the store once and probe processes on a blocking thread, with
+        // no lock held. This used to run `find_process` (a full directory read
+        // and parse) per app, with its process probes, while holding the
+        // AppState mutex on a runtime worker - the UI thread blocked on the
+        // lock in tick/render meanwhile.
+        let store = Arc::clone(state_store);
+        let Ok(snapshots) = tokio::task::spawn_blocking(move || {
+            let processes = store.list().unwrap_or_default();
+            keys.into_iter()
+                .map(|(project, app)| {
+                    let process = processes.iter().find(|p| {
+                        p.metadata.get("project") == Some(&project)
+                            && p.metadata.get("app_config_name") == Some(&app)
+                    });
+                    let snapshot =
+                        crate::tui::state::RuntimeSnapshot::from_process(&store, process);
+                    ((project, app), snapshot)
+                })
+                .collect::<std::collections::HashMap<_, _>>()
+        })
+        .await
+        else {
+            return;
+        };
 
-                    // Track if any status changed
-                    if old_status != app.status {
-                        any_changed = true;
-                    }
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let mut any_changed = false;
+        for project in &mut state.projects {
+            for app in &mut project.apps {
+                let Some(new) = snapshots.get(&(app.project.clone(), app.name.clone())) else {
+                    continue;
+                };
+                let old = crate::tui::state::RuntimeSnapshot {
+                    status: app.status.clone(),
+                    active_stage: app.active_stage.clone(),
+                    restart_count: app.restart_count,
+                    last_exit_code: app.last_exit_code,
+                    health_status: app.health_status.clone(),
+                };
+                if !old.same_state(new) {
+                    any_changed = true;
                 }
-            }
-
-            // Set flag to trigger UI redraw if status changed
-            if any_changed {
-                state.status_updated = true;
+                app.status = new.status.clone();
+                app.active_stage = new.active_stage.clone();
+                app.restart_count = new.restart_count;
+                app.last_exit_code = new.last_exit_code;
+                app.health_status = new.health_status.clone();
             }
         }
-    }
 
-    /// Checks the current status of an app by querying process-manager state.
-    fn check_app_status(
-        project_name: &str,
-        app_name: &str,
-        state_store: &process_manager::StateStore,
-    ) -> crate::tui::state::AppStatus {
-        use crate::tui::state::AppStatus;
-
-        match find_process(state_store, project_name, app_name, None) {
-            Ok(Some(process_info)) => AppStatus::from_process(state_store, &process_info),
-            Ok(None) => AppStatus::Stopped,
-            Err(_) => AppStatus::Unknown,
+        // Set flag to trigger UI redraw if something actually changed
+        if any_changed {
+            state.status_updated = true;
         }
     }
 
@@ -725,10 +736,11 @@ impl TuiApp {
         }
 
         // Render error message if present (but not if popup or help is showing)
-        if let Some(error) = &state.error_message {
-            if !self.popup_manager.is_active() && !self.help_overlay.is_visible() {
-                self.render_error_message(frame, error);
-            }
+        if let Some(error) = &state.error_message
+            && !self.popup_manager.is_active()
+            && !self.help_overlay.is_visible()
+        {
+            self.render_error_message(frame, error);
         }
 
         // Render popup overlay if active
@@ -800,5 +812,70 @@ impl TuiApp {
                 .block(Block::default().borders(Borders::ALL).title("Log Viewer"));
             frame.render_widget(placeholder, size);
         }
+    }
+}
+
+#[cfg(test)]
+mod status_polling_tests {
+    use super::*;
+    use crate::test_utils::{AppBuilder, ConfigBuilder};
+    use process_manager::state::{ManagedProcess, ProcessRuntime};
+    use std::collections::HashMap;
+
+    fn tracked(restart_count: u32) -> ManagedProcess {
+        let mut metadata = HashMap::new();
+        metadata.insert("project".to_string(), "p".to_string());
+        metadata.insert("app_config_name".to_string(), "api".to_string());
+        ManagedProcess {
+            id: "p.api.local".to_string(),
+            // This test process: alive for the whole test.
+            pid: std::process::id(),
+            pgid: None,
+            task: process_manager::Task {
+                id: "p.api.local".to_string(),
+                command: "x".to_string(),
+                args: vec![],
+                working_dir: "/tmp".into(),
+                env: HashMap::new(),
+                is_detached: true,
+                log_file: None,
+                health_check: process_manager::HealthCheck::Process {},
+                restart_policy: process_manager::RestartPolicy::default(),
+            },
+            start_time: chrono::Utc::now(),
+            metadata,
+            runtime: ProcessRuntime {
+                restart_count,
+                ..ProcessRuntime::default()
+            },
+        }
+    }
+
+    /// The poller refreshes every runtime field, and an unchanged app (only
+    /// its uptime grew) is not reported as a change.
+    #[tokio::test]
+    async fn polling_refreshes_runtime_fields_and_ignores_uptime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = Arc::new(process_manager::StateStore::new(dir.path().to_path_buf()).unwrap());
+        store.save(&tracked(1)).unwrap();
+
+        let config = ConfigBuilder::new()
+            .with_app("p", "api", AppBuilder::new("nodejs", "/tmp").build())
+            .build();
+        let state = Arc::new(Mutex::new(
+            AppState::from_config_with_store(&config, &store).unwrap(),
+        ));
+
+        TuiApp::update_all_app_statuses(&state, &store).await;
+        assert!(
+            !state.lock().unwrap().status_updated,
+            "uptime alone is not a change"
+        );
+
+        store.save(&tracked(2)).unwrap();
+        TuiApp::update_all_app_statuses(&state, &store).await;
+        let state = state.lock().unwrap();
+        assert!(state.status_updated);
+        assert_eq!(state.projects[0].apps[0].restart_count, 2);
     }
 }

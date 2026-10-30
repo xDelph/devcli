@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_empty_config() {
         let config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_config_with_special_paths() {
         let mut config = Config {
-            projects: HashMap::new(),
+            projects: Default::default(),
         };
 
         let app = AppBuilder::new("nodejs", "~/Projects/my app/with spaces")
@@ -220,8 +220,9 @@ mod tests {
         config.projects.insert(
             "test".to_string(),
             Project {
+                extra: Default::default(),
                 apps: {
-                    let mut apps = HashMap::new();
+                    let mut apps = crate::config::models::AppMap::new();
                     apps.insert("my-app".to_string(), app);
                     apps
                 },
@@ -301,5 +302,118 @@ mod tests {
         // Re-serialize and verify stage field is omitted
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("\"stage\""));
+    }
+
+    /// A load/save round-trip keeps projects and apps in file order.
+    #[test]
+    fn test_save_keeps_project_and_app_order() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        let path = dir.path().join("config.json");
+        let app = |cmd: &str| {
+            format!(
+                r#"{{"type":"nodejs","path":"/tmp","commands":{{"local":{{"start":"{cmd}"}}}},"defaults":{{}}}}"#
+            )
+        };
+        let raw = format!(
+            r#"{{"projects":{{"zeta":{{"apps":{{"web":{},"api":{}}}}},"alpha":{{"apps":{{"b":{},"a":{}}}}}}}}}"#,
+            app("1"),
+            app("2"),
+            app("3"),
+            app("4")
+        );
+        std::fs::write(&path, raw).unwrap();
+
+        let config = crate::config::load_config().unwrap();
+        crate::config::save_config(&config).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+
+        let pos = |needle: &str| saved.find(needle).unwrap();
+        assert!(
+            pos("\"zeta\"") < pos("\"alpha\""),
+            "projects reordered:\n{saved}"
+        );
+        assert!(pos("\"web\"") < pos("\"api\""), "apps reordered:\n{saved}");
+        assert!(pos("\"b\"") < pos("\"a\""), "apps reordered:\n{saved}");
+    }
+
+    /// Unknown keys survive a save and are reported by validation.
+    #[test]
+    fn test_unknown_fields_are_kept_and_reported() {
+        let dir = crate::test_utils::TempConfigDir::new();
+        let path = dir.path().join("config.json");
+        let raw = r#"{"projects":{"p":{"owner":"me","apps":{"api":{
+            "type":"nodejs","path":"/tmp","commands":{"local":{"start":"x"}},
+            "defaults":{"local":"start"},
+            "dependecies":[{"project":"p","app":"db"}],
+            "future_setting":{"a":1}}}}}}"#;
+        std::fs::write(&path, raw).unwrap();
+
+        let config = crate::config::load_config().unwrap();
+        crate::config::save_config(&config).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["projects"]["p"]["owner"], "me");
+        assert_eq!(
+            saved["projects"]["p"]["apps"]["api"]["future_setting"]["a"],
+            1
+        );
+        assert!(saved["projects"]["p"]["apps"]["api"]["dependecies"].is_array());
+
+        use config_manager::validation::Validator;
+        let report = crate::config_manager_support::DevCliConfigValidator::new().validate(&config);
+        let warnings: Vec<String> = report
+            .warnings()
+            .iter()
+            .map(|w| w.message().to_string())
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("'dependecies'") && w.contains("Did you mean 'dependencies'?")),
+            "{warnings:?}"
+        );
+        assert!(warnings.iter().any(|w| w.contains("'future_setting'")));
+        assert!(warnings.iter().any(|w| w.contains("'owner'")));
+    }
+
+    /// The cached loader follows changes to the file.
+    #[test]
+    fn test_load_config_cached_sees_updates() {
+        let _dir = crate::test_utils::TempConfigDir::new();
+        let app = crate::test_utils::AppBuilder::new("nodejs", "/tmp")
+            .with_local_command("start", "x")
+            .build();
+        let one = crate::test_utils::ConfigBuilder::new()
+            .with_app("p", "a", app.clone())
+            .build();
+        crate::config::save_config(&one).unwrap();
+        assert!(crate::config::loader::load_config_cached()
+            .unwrap()
+            .projects["p"]
+            .apps
+            .contains_key("a"));
+
+        let two = crate::test_utils::ConfigBuilder::new()
+            .with_app("p", "a", app.clone())
+            .with_app("p", "second", app)
+            .build();
+        crate::config::save_config(&two).unwrap();
+        assert!(crate::config::loader::load_config_cached()
+            .unwrap()
+            .projects["p"]
+            .apps
+            .contains_key("second"));
+    }
+
+    /// The minimal app from the configuration reference loads.
+    #[test]
+    fn test_minimal_documented_config_loads() {
+        let raw = r#"{"projects":{"project-name":{"apps":{"app-name":{
+            "type":"nodejs","path":"~/code/app-name","commands":{}}}}}}"#;
+        let config: crate::config::Config = serde_json::from_str(raw).unwrap();
+        assert!(config.projects["project-name"].apps["app-name"]
+            .defaults
+            .local
+            .is_none());
     }
 }

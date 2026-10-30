@@ -76,17 +76,17 @@ impl DetectionStrategy for PythonStrategy {
 
         // Suggest framework strategies based on dependencies
         let mut suggested = Vec::new();
-        if ctx.file_exists("requirements.txt") {
-            if let Ok(content) = ctx.read_file("requirements.txt") {
-                if content.contains("django") {
-                    suggested.push("django".to_string());
-                }
-                if content.contains("flask") {
-                    suggested.push("flask".to_string());
-                }
-                if content.contains("fastapi") {
-                    suggested.push("fastapi".to_string());
-                }
+        if ctx.file_exists("requirements.txt")
+            && let Ok(content) = ctx.read_file("requirements.txt")
+        {
+            if content.contains("django") {
+                suggested.push("django".to_string());
+            }
+            if content.contains("flask") {
+                suggested.push("flask".to_string());
+            }
+            if content.contains("fastapi") {
+                suggested.push("fastapi".to_string());
             }
         }
 

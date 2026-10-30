@@ -22,7 +22,7 @@ fn apply_loaded_env_vars(
         env_vars.insert(key.clone(), value.clone());
     }
 
-    if show_output {
+    if show_output && !crate::output::json_enabled() {
         let display = if loaded.layers.is_empty() {
             loaded.summary.clone()
         } else {
@@ -57,8 +57,12 @@ pub fn prepare_command(
         "Preparing command"
     );
 
-    // Start with current process environment
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    // Only the variables devcli adds or overrides. The child inherits the rest
+    // of the environment from whoever spawns it (the CLI, or pm-daemon on a
+    // restart). This map is persisted in the process state file, so copying the
+    // whole shell environment here used to write every token the user had
+    // exported (AWS keys, GITHUB_TOKEN, ...) to disk.
+    let mut env_vars: HashMap<String, String> = HashMap::new();
 
     // Inject --platform flag for docker/orbstack commands
     let mut final_command = match environment {
@@ -171,6 +175,7 @@ fn apply_container_env_file(
         stage,
         environment,
         resolved_app.app.dockerfile_path.as_deref(),
+        &format!("{}_{}", resolved_app.project, resolved_app.app_name),
     )? {
         let env_file_path = prepared
             .path
@@ -188,7 +193,7 @@ fn apply_container_env_file(
         *final_command =
             crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
 
-        if show_output {
+        if show_output && !crate::output::json_enabled() {
             println!("  Using env file: {}", prepared.summary);
         }
     }
@@ -233,6 +238,10 @@ mod tests {
 
         assert_eq!(prepared.env_vars.get("PORT"), Some(&"3000".to_string()));
         assert_eq!(prepared.env_vars.get("DEBUG"), Some(&"true".to_string()));
+        // Only devcli's own additions: the inherited shell environment is not
+        // copied (it ends up persisted in the process state file).
+        assert_eq!(prepared.env_vars.get("PATH"), None);
+        assert_eq!(prepared.env_vars.len(), 2);
     }
 
     #[test]
@@ -307,6 +316,8 @@ mod tests {
 
     #[test]
     fn docker_prepare_injects_merged_env_file() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
         fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
@@ -339,6 +350,8 @@ mod tests {
 
     #[test]
     fn docker_prepare_injects_env_file_from_docker_dir() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("docker")).unwrap();
         fs::write(dir.path().join("docker/.env"), "PORT=3000\n").unwrap();
@@ -366,11 +379,16 @@ mod tests {
         .unwrap();
 
         assert!(prepared.final_command.contains("--env-file"));
-        assert!(prepared.final_command.contains("docker/.env"));
+        // The single docker/.env layer is rendered into the private env file.
+        let env_file = _config_dir.path().join("env-files/test_app_docker.env");
+        assert!(prepared.final_command.contains(env_file.to_str().unwrap()));
+        assert_eq!(fs::read_to_string(env_file).unwrap(), "PORT=3000\n");
     }
 
     #[test]
     fn orbstack_prepare_injects_env_file() {
+        // The merged env file is written under the devcli directory.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("orbstack")).unwrap();
         fs::write(dir.path().join("orbstack/.env"), "PORT=8080\n").unwrap();
@@ -397,7 +415,8 @@ mod tests {
         .unwrap();
 
         assert!(prepared.final_command.contains("--env-file"));
-        assert!(prepared.final_command.contains("orbstack/.env"));
+        let env_file = _config_dir.path().join("env-files/test_app_orbstack.env");
+        assert!(prepared.final_command.contains(env_file.to_str().unwrap()));
         assert_eq!(
             prepared.env_vars.get("DOCKER_CONTEXT"),
             Some(&"orbstack".to_string())

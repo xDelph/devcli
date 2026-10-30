@@ -12,25 +12,37 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-/// The `devcli_CONFIG_DIR` override (if set), with `~` expanded to `$HOME`.
+/// Environment variable overriding the devcli directory.
+pub const CONFIG_DIR_ENV: &str = "DEVCLI_CONFIG_DIR";
+
+/// Former, lowercase-prefixed name of [`CONFIG_DIR_ENV`], still honoured.
 ///
-/// Legacy behavior used the raw value (a `~` was treated as a literal
-/// directory name); this keeps the variable portable.
+/// Every other devcli variable is uppercase (`DEVCLI_METRICS_ADDR`,
+/// `LOG_LEVEL`, ...); users and agents exporting `DEVCLI_CONFIG_DIR` were
+/// silently ignored and wrote to their real ~/.devcli.
+pub const LEGACY_CONFIG_DIR_ENV: &str = "devcli_CONFIG_DIR";
+
+/// The config-directory override (if set), with `~` expanded to `$HOME`.
+///
+/// An empty value counts as unset: it used to resolve to the current
+/// directory, scattering config, state and logs wherever devcli ran.
 fn env_config_dir() -> Option<PathBuf> {
-    env::var("devcli_CONFIG_DIR")
-        .ok()
-        .map(|dir| expand_tilde(&dir))
+    [CONFIG_DIR_ENV, LEGACY_CONFIG_DIR_ENV]
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .find(|dir| !dir.trim().is_empty())
+        .map(|dir| expand_tilde(dir.trim()))
 }
 
 /// Root directory holding every devcli-owned file (config, preferences,
 /// process state, logs).
 ///
-/// Priority: 1) `devcli_CONFIG_DIR`, 2) `.devcli` in the current directory when
+/// Priority: 1) `DEVCLI_CONFIG_DIR` (or legacy `devcli_CONFIG_DIR`), 2) `.devcli` in the current directory when
 /// one already exists, 3) `~/.devcli`.
 ///
 /// Everything must derive from here so that a single override isolates the whole
 /// tool; the process state and log directories used to be hardcoded to
-/// `~/.devcli`, which made `devcli_CONFIG_DIR` useless for tests.
+/// `~/.devcli`, which made the override useless for tests.
 pub fn config_home() -> PathBuf {
     if let Some(config_dir) = env_config_dir() {
         return config_dir;
@@ -45,6 +57,16 @@ pub fn config_home() -> PathBuf {
 
     let home = env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join(".devcli")
+}
+
+/// devcli's per-user directory: `DEVCLI_CONFIG_DIR` when set, else `~/.devcli`.
+///
+/// Unlike [`config_home`] it never resolves to a project's `./.devcli`: files
+/// written here (such as the agent rules reference) must not depend on the
+/// directory a command happened to run from.
+pub fn user_config_home() -> PathBuf {
+    env_config_dir()
+        .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".devcli"))
 }
 
 // Get the full path to the config file
@@ -66,6 +88,55 @@ pub fn get_preferences_path() -> Result<PathBuf> {
         fs::create_dir_all(parent)?;
     }
     Ok(path)
+}
+
+/// The config to extend when adding apps: empty if there is no config file
+/// yet, the parsed config otherwise.
+///
+/// Never empty because of an *error*: `auto-add` used to fall back to an empty
+/// config on any load failure - a trailing comma, a typo - and then saved it,
+/// replacing every app the user had with the one being added.
+pub fn load_config_or_new() -> Result<Config> {
+    if !get_config_path()?.exists() {
+        return Ok(Config {
+            projects: Default::default(),
+        });
+    }
+    load_config().map_err(|e| {
+        anyhow::anyhow!(
+            "{e}\nFix the config file (see `devcli config validate`) before adding apps."
+        )
+    })
+}
+
+/// The config, parsed again only when config.json changed on disk.
+///
+/// For render paths that want it on every frame: the TUI's config panel used
+/// to read and parse the whole file (and create the config directory) on each
+/// redraw. A `stat` per call decides whether the cached copy is still valid.
+pub fn load_config_cached() -> Result<Config> {
+    use std::sync::Mutex;
+    type Key = (PathBuf, std::time::SystemTime, u64);
+    static CACHE: Mutex<Option<(Key, Config)>> = Mutex::new(None);
+
+    let path = config_home().join("config.json");
+    let key = match fs::metadata(&path).and_then(|m| Ok((m.modified()?, m.len()))) {
+        Ok((modified, len)) => (path, modified, len),
+        Err(_) => return load_config(),
+    };
+
+    if let Ok(cache) = CACHE.lock()
+        && let Some((cached_key, config)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return Ok(config.clone());
+    }
+
+    let config = load_config()?;
+    if let Ok(mut cache) = CACHE.lock() {
+        *cache = Some((key, config.clone()));
+    }
+    Ok(config)
 }
 
 pub fn load_config() -> Result<Config> {
@@ -104,10 +175,14 @@ mod tests {
     #[test]
     fn devcli_config_dir_override_is_expanded_and_restored() {
         let _guard = crate::test_utils::env_guard();
-        let original = env::var("devcli_CONFIG_DIR").ok();
+        let original = env::var(CONFIG_DIR_ENV).ok();
+        let original_legacy = env::var(LEGACY_CONFIG_DIR_ENV).ok();
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(LEGACY_CONFIG_DIR_ENV) };
 
         // ~ expands to $HOME
-        env::set_var("devcli_CONFIG_DIR", "~/devcli-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "~/devcli-cfg") };
         let home = env::var("HOME").expect("HOME must be set");
         assert_eq!(
             env_config_dir(),
@@ -115,16 +190,43 @@ mod tests {
         );
 
         // plain absolute path passes through untouched
-        env::set_var("devcli_CONFIG_DIR", "/tmp/devcli-cfg");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg") };
         assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
 
-        // unset → None
-        env::remove_var("devcli_CONFIG_DIR");
+        // the legacy name still works, the uppercase one wins over it
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(CONFIG_DIR_ENV) };
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(LEGACY_CONFIG_DIR_ENV, "/tmp/legacy-cfg") };
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "/tmp/devcli-cfg") };
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/devcli-cfg")));
+
+        // empty → ignored, not "the current directory"
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::set_var(CONFIG_DIR_ENV, "  ") };
+        assert_eq!(env_config_dir(), Some(PathBuf::from("/tmp/legacy-cfg")));
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(LEGACY_CONFIG_DIR_ENV) };
         assert_eq!(env_config_dir(), None);
 
-        match original {
-            Some(prev) => env::set_var("devcli_CONFIG_DIR", prev),
-            None => env::remove_var("devcli_CONFIG_DIR"),
+        // unset → None
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { env::remove_var(CONFIG_DIR_ENV) };
+        assert_eq!(env_config_dir(), None);
+
+        for (name, value) in [
+            (CONFIG_DIR_ENV, original),
+            (LEGACY_CONFIG_DIR_ENV, original_legacy),
+        ] {
+            match value {
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                Some(prev) => unsafe { env::set_var(name, prev) },
+                // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+                None => unsafe { env::remove_var(name) },
+            }
         }
     }
 }

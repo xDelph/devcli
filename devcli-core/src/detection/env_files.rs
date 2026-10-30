@@ -31,11 +31,11 @@ pub fn detect_env_files(
             .join(dockerfile_rel)
             .parent()
             .map(|p| p.to_path_buf());
-        if let Some(dir) = dockerfile_dir {
-            if dir != app_path {
-                for file in detector::discover(&dir)? {
-                    push_detected(&mut detected, &mut seen, file, app_path);
-                }
+        if let Some(dir) = dockerfile_dir
+            && dir != app_path
+        {
+            for file in detector::discover(&dir)? {
+                push_detected(&mut detected, &mut seen, file, app_path);
             }
         }
     }

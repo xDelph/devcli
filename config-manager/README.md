@@ -37,7 +37,7 @@ Unlike traditional config libraries that force you into a specific structure, `c
 
 Everything is trait-based and pluggable:
 
-- Custom loaders (HTTP, S3, database, etc.)
+- Custom loaders (any source implementing `ConfigLoader`)
 - Custom resolvers (path-based, SQL-like queries, etc.)
 - Custom validators (schema validation, business rules, etc.)
 - Custom dependency providers
@@ -226,33 +226,6 @@ let config = manager.load()?; // Merged config
 - `Override`: Later layers completely replace earlier ones
 - `DeepMerge`: Recursively merge nested structures
 
-### Config Watching (Hot Reload)
-
-Watch for configuration file changes and automatically reload:
-
-```rust
-use config_manager::watch::{ConfigWatcher, ConfigEvent};
-
-let loader = JsonLoader::new("config.json");
-let mut watcher: ConfigWatcher<AppConfig> = ConfigWatcher::new(loader)?;
-
-// Start watching with callback
-watcher.start(|event| {
-    match event {
-        ConfigEvent::Modified => {
-            println!("Config was modified - reloading!");
-            // Reload your application state here
-        }
-        ConfigEvent::Created => println!("Config file created"),
-        ConfigEvent::Removed => println!("Config file removed"),
-        ConfigEvent::Error(e) => eprintln!("Watch error: {}", e),
-    }
-})?;
-
-// Watcher runs in background
-// Call watcher.stop() when done
-```
-
 ### Performance Benchmarks
 
 Run benchmarks to measure performance:
@@ -272,158 +245,27 @@ Benchmarks cover:
 - Fuzzy matching and Levenshtein distance calculation
 - Resolver operations (exact match, fuzzy suggestions, listing)
 
-### Async Configuration Loading
-
-Load configurations asynchronously using tokio:
-
-```rust
-use config_manager::loader::{AsyncJsonLoader, AsyncConfigLoader};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AppConfig {
-    name: String,
-    port: u16,
-}
-
-#[tokio::main]
-async fn main() -> config_manager::core::Result<()> {
-    let loader = AsyncJsonLoader::new("config.json");
-
-    let config: AppConfig = loader.load().await?;
-    println!("Loaded: {}", config.name);
-
-    Ok(())
-}
-```
-
-### HTTP Remote Configuration
-
-Fetch configuration from HTTP endpoints:
-
-```rust
-use config_manager::loader::{HttpLoader, AsyncConfigLoader, HttpAuth};
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> config_manager::core::Result<()> {
-    let loader = HttpLoader::new("https://api.example.com/config")
-        .with_auth(HttpAuth::Bearer("token123".to_string()))
-        .with_timeout(Duration::from_secs(30));
-
-    let config: AppConfig = loader.load().await?;
-    Ok(())
-}
-```
-
-### S3 Configuration Storage
-
-Load configuration from AWS S3:
-
-```rust
-use config_manager::loader::{S3Loader, AsyncConfigLoader};
-
-#[tokio::main]
-async fn main() -> config_manager::core::Result<()> {
-    // Uses AWS SDK's default credential chain
-    let loader = S3Loader::new("my-config-bucket", "config/app.json")
-        .with_region("us-east-1");
-
-    let config: AppConfig = loader.load().await?;
-
-    // Also supports saving
-    loader.save(&config).await?;
-
-    Ok(())
-}
-```
-
-### Encrypted Configuration
-
-Store sensitive configs with encryption:
-
-```rust
-use config_manager::loader::{EncryptedLoader, JsonLoader, ConfigLoader};
-
-fn main() -> config_manager::core::Result<()> {
-    // Wrap any loader with encryption
-    let base_loader = JsonLoader::new("secrets.json");
-    let loader = EncryptedLoader::new(base_loader, "my-password");
-
-    let config = SecretConfig {
-        api_key: "secret123".to_string(),
-    };
-
-    // Saves encrypted data
-    loader.save(&config)?;
-
-    // Loads and decrypts
-    let loaded: SecretConfig = loader.load()?;
-    Ok(())
-}
-```
-
-### Schema Validation
-
-Generate and validate against JSON schemas:
-
-```rust
-use config_manager::schema::SchemaValidator;
-use config_manager::validation::Validator;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct MyConfig {
-    #[schemars(range(min = 1, max = 65535))]
-    port: u16,
-
-    #[schemars(regex(pattern = r"^[a-z0-9-]+$"))]
-    name: String,
-}
-
-fn main() -> config_manager::core::Result<()> {
-    let validator = SchemaValidator::<MyConfig>::new();
-
-    // Generate JSON schema
-    let schema_json = validator.schema_json()?;
-    println!("Schema: {}", schema_json);
-
-    // Validate config
-    let config = MyConfig {
-        port: 8080,
-        name: "my-app".to_string(),
-    };
-
-    let result = validator.validate(&config);
-    assert!(result.is_valid());
-
-    Ok(())
-}
-```
-
 ## Feature Flags
 
-Enable additional functionality through feature flags:
+JSON support is always built in. Other formats are opt-in:
 
 ```toml
 [dependencies.config-manager]
 version = "0.3"
-features = ["toml", "yaml", "watch", "async", "http", "s3", "encryption", "schema", "full"]
+features = ["toml", "yaml"]
 ```
 
 | Feature | Description |
 |---------|-------------|
 | `toml` | Enable TOML file format support |
 | `yaml` | Enable YAML file format support |
-| `watch` | Enable configuration file watching (hot reload) |
-| `async` | Enable async loader support with tokio |
-| `http` | Enable HTTP/HTTPS remote configuration loading |
-| `s3` | Enable AWS S3 configuration loading |
-| `encryption` | Enable AES-256-GCM encryption/decryption |
-| `schema` | Enable JSON Schema generation and validation |
-| `interactive` | Enable interactive prompts (using `inquire`) |
-| `full` | Enable all features |
+| `all-formats` / `full` | Both of the above |
+
+Earlier versions also shipped async, HTTP, S3, encryption, schema, file
+watching and interactive-prompt features. devcli, the only consumer, used
+none of them, and they pulled in tokio, reqwest, the AWS SDK and several
+crypto crates; they were removed. Custom loaders can still be written
+against the `ConfigLoader` trait.
 
 ## Architecture
 

@@ -6,12 +6,13 @@
 
 use crate::config::{load_config, load_preferences, resolve_app};
 use crate::process_manager_support::{
-    emit_line, find_process, log_file_path, process_id, state_store, stream_output, OutputChannel,
+    emit_line, find_process, log_file_path, process_id, state_store, stream_output,
+    to_pm_health_check, to_pm_restart_policy, OutputChannel,
 };
 use crate::utils::path::expand_path;
 use crate::Result;
 use process_manager::state::{ManagedProcess, ProcessRuntime};
-use process_manager::{engine, HealthCheck, RestartPolicy, Task};
+use process_manager::{engine, Task};
 use std::collections::HashMap;
 
 // Arguments for the run command
@@ -40,7 +41,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
     let silent = args.silent;
-    let show_output = !silent && !preferences.detached_mode;
+    let show_output = crate::output::human(silent) && !preferences.detached_mode;
 
     // Resolve the app in the config
     let resolved_app = resolve_app(&config, &args.app_name, args.project.as_deref())?;
@@ -108,7 +109,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Dependency checking
     if !args.skip_deps {
         use crate::commands::start::handle_dependencies;
-        handle_dependencies(&[&resolved_app], &environment, silent).await?;
+        // `run` returns right away, so nothing owns the dependencies it starts.
+        handle_dependencies(&[&resolved_app], &environment, silent, None).await?;
     }
 
     // Expand path and verify it exists
@@ -121,7 +123,9 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     // Create log file path
-    let log_path = log_file_path(&resolved_app.project, &args.app_name, &environment)?;
+    // The real app key, not the alias the user typed: `logs` and the TUI look
+    // log files up by app key.
+    let log_path = log_file_path(&resolved_app.project, &resolved_app.app_name, &environment)?;
 
     // Determine which stage to use for env file resolution
     let stage = resolved_app
@@ -213,7 +217,23 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Wait a moment to check if the process completed or crashed
     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
-    if !is_pid_running(pid) {
+    let log_file = task.log_file.clone();
+    let json_result = |running: bool| -> Result<()> {
+        if crate::output::json_enabled() && !silent {
+            crate::output::print_json(&serde_json::json!({
+                "project": resolved_app.project,
+                "app": resolved_app.app_name,
+                "environment": environment,
+                "command_variant": args.command_variant,
+                "pid": pid,
+                "running": running,
+                "log_file": log_file,
+            }))?;
+        }
+        Ok(())
+    };
+
+    if !engine::pid_alive(pid) {
         emit_line(
             silent,
             args.output_tx.as_ref(),
@@ -222,6 +242,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                 args.app_name, args.command_variant, pid
             ),
         );
+        json_result(false)?;
         return Ok(());
     }
 
@@ -260,8 +281,11 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         ),
     );
 
-    // Non-detached mode: keep viewing until Ctrl+C or process exits
-    if !preferences.detached_mode {
+    json_result(true)?;
+
+    // Non-detached mode: keep viewing until Ctrl+C or process exits. `--json`
+    // implies detached, like `start`: an agent waiting on this would hang.
+    if !preferences.detached_mode && !crate::output::json_enabled() {
         emit_line(
             silent,
             args.output_tx.as_ref(),
@@ -316,71 +340,4 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn is_pid_running(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
-
-fn to_pm_health_check(health: Option<&crate::config::models::HealthCheck>) -> HealthCheck {
-    match health {
-        Some(crate::config::models::HealthCheck::Http {
-            url,
-            timeout_secs,
-            expected_status,
-        }) => HealthCheck::Http {
-            url: url.clone(),
-            timeout_secs: *timeout_secs,
-            expected_status: *expected_status,
-        },
-        Some(crate::config::models::HealthCheck::Tcp {
-            host,
-            port,
-            timeout_secs,
-        }) => HealthCheck::Tcp {
-            host: host.clone(),
-            port: *port,
-            timeout_secs: *timeout_secs,
-        },
-        Some(crate::config::models::HealthCheck::Command {
-            command,
-            timeout_secs,
-            expected_exit_code,
-        }) => HealthCheck::Command {
-            command: command.clone(),
-            timeout_secs: *timeout_secs,
-            expected_exit_code: *expected_exit_code,
-        },
-        Some(crate::config::models::HealthCheck::Process {}) | None => HealthCheck::Process {},
-    }
-}
-
-fn to_pm_restart_policy(policy: Option<&crate::config::models::RestartPolicy>) -> RestartPolicy {
-    match policy {
-        Some(policy) => RestartPolicy {
-            enabled: policy.enabled,
-            max_restarts: policy.max_restarts,
-            restart_window_secs: policy.restart_window_secs,
-            initial_backoff_secs: policy.initial_backoff_secs,
-            max_backoff_secs: policy.max_backoff_secs,
-            backoff_multiplier: policy.backoff_multiplier,
-            restart_on_exit_codes: policy.restart_on_exit_codes.clone(),
-        },
-        None => RestartPolicy {
-            enabled: false,
-            ..RestartPolicy::default()
-        },
-    }
 }

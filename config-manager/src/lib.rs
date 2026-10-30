@@ -7,11 +7,7 @@
 //! - **Generic Configuration**: Works with any serializable type
 //! - **Multiple Formats**: JSON (built-in), TOML, YAML (feature-gated)
 //! - **Layered Configs**: Merge multiple sources with different strategies
-//! - **Async Support**: Async loaders for I/O-bound operations (tokio)
-//! - **Remote Sources**: HTTP/HTTPS configuration loading with authentication
-//! - **Encryption**: AES-256-GCM encryption for sensitive configs
-//! - **Schema Validation**: JSON Schema generation and validation
-//! - **File Watching**: Hot-reload on configuration changes (feature-gated)
+//! - **Atomic Saves**: Configs are replaced in one step, never left half-written
 //! - **Dependency Resolution**: Automatic dependency chain resolution with cycle detection
 //! - **Fuzzy Matching**: Typo-tolerant entity resolution
 //! - **Validation**: Declarative validation with custom validators
@@ -49,12 +45,6 @@ pub mod loader;
 pub mod resolver;
 pub mod utils;
 pub mod validation;
-
-#[cfg(feature = "watch")]
-pub mod watch;
-
-#[cfg(feature = "schema")]
-pub mod schema;
 
 // Convenience re-exports
 pub mod prelude;

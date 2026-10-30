@@ -272,10 +272,10 @@ fn build_probe_contexts(detected: &[detector::DetectedFile]) -> Vec<RuntimeConte
     ctx_names.insert("local".into()); // always probe local
 
     for f in detected {
-        if let Some(ref c) = f.context {
-            if c != "local" {
-                ctx_names.insert(c.clone());
-            }
+        if let Some(ref c) = f.context
+            && c != "local"
+        {
+            ctx_names.insert(c.clone());
         }
     }
 

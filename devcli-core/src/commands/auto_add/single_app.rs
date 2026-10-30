@@ -2,7 +2,7 @@
 // Handles detection of individual applications (not in Nx monorepos)
 // Supports discovery of multiple apps in subdirectories
 
-use crate::config::{load_config, save_config, App, Commands, Defaults, Project};
+use crate::config::{save_config, App, Commands, Defaults, Project};
 use crate::detection::detect_app;
 use crate::Result;
 use std::collections::HashMap;
@@ -29,12 +29,21 @@ pub struct AutoAddArgs {
     pub name: Option<String>,
     /// App type override (non-interactive)
     pub app_type: Option<String>,
+    /// Replace an app that already exists (its dependencies, health check,
+    /// restart policy and alternative name are kept)
+    pub force: bool,
 }
 
 impl AutoAddArgs {
     /// True when any non-interactive flag was supplied.
     pub fn is_non_interactive(&self) -> bool {
-        self.yes || self.project.is_some() || self.name.is_some() || self.app_type.is_some()
+        // `--json` means a program is reading the output: never prompt it (many
+        // agents run in a pseudo-terminal, so the TTY check alone is not enough).
+        self.yes
+            || self.project.is_some()
+            || self.name.is_some()
+            || self.app_type.is_some()
+            || crate::output::json_enabled()
     }
 }
 
@@ -43,7 +52,35 @@ impl AutoAddArgs {
 // Args:
 //   - args.path: Optional custom path to scan (defaults to current directory)
 //   - args.yes/--project/--name/--type: non-interactive mode for agents
+/// App types devcli knows how to generate commands and defaults for.
+pub const KNOWN_APP_TYPES: &[&str] = &[
+    "nodejs",
+    "nx",
+    "nx-workspace",
+    "rust",
+    "python",
+    "docker",
+    "redis",
+    "traefik",
+];
+
 pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
+    // A typo (`--type nodjs`) used to be saved as-is.
+    if let Some(app_type) = &args.app_type
+        && !KNOWN_APP_TYPES.contains(&app_type.as_str())
+    {
+        let candidates: Vec<String> = KNOWN_APP_TYPES.iter().map(|t| t.to_string()).collect();
+        let hint = config_manager::resolver::fuzzy_match(app_type, &candidates, 3)
+            .map(|t| format!(" Did you mean '{t}'?"))
+            .unwrap_or_default();
+        anyhow::bail!(
+            "Unknown app type '{}'.{} Known types: {}.",
+            app_type,
+            hint,
+            KNOWN_APP_TYPES.join(", ")
+        );
+    }
+
     // Use provided path or default to current directory
     let target_path = if let Some(p) = &args.path {
         std::path::PathBuf::from(p)
@@ -80,7 +117,7 @@ pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
                 target_path.display()
             );
         }
-        super::nx_monorepo::handle_nx_monorepo(&target_path).await
+        super::nx_monorepo::handle_nx_monorepo(&target_path, args.force).await
     } else {
         handle_single_app(&target_path, &args).await
     }
@@ -101,7 +138,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
             );
         }
         // Multiple apps found, let user choose
-        return handle_multiple_apps(discovered_apps).await;
+        return handle_multiple_apps(discovered_apps, args.force).await;
     }
 
     // Single app case - use the first (and only) discovered app
@@ -152,9 +189,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
     }
 
     // Load existing config or create empty one
-    let config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
-    });
+    let config = crate::config::loader::load_config_or_new()?;
 
     let (project_name, app_name) = if args.is_non_interactive() {
         let project_name = args.project.clone().unwrap_or_else(|| "global".to_string());
@@ -171,6 +206,22 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         let app_name = prompt_app_name(&detected.app_name)?;
         (project_name, app_name)
     };
+
+    let exists = config
+        .projects
+        .get(&project_name)
+        .is_some_and(|p| p.apps.contains_key(&app_name));
+    let mut force = args.force;
+    if exists && !force && !args.is_non_interactive() {
+        force = super::interactive::confirm_default_no(&format!(
+            "'{project_name}/{app_name}' already exists. Replace its detected settings \
+             (dependencies, health check, restart policy and alternative name are kept)?"
+        ))?;
+        if !force {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
 
     if !args.is_non_interactive() {
         // Show preview of what will be added
@@ -189,7 +240,8 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         "project": project_name,
         "app": app_name,
         "type": detected.app_type,
-        "path": detected.path,
+        // Absolute, as AGENTS.md documents; the config itself keeps `~/...`.
+        "path": crate::utils::path::expand_path(&detected.path),
     });
     let non_interactive = args.is_non_interactive();
     add_to_config(
@@ -198,6 +250,7 @@ pub async fn handle_single_app(target_path: &std::path::Path, args: &AutoAddArgs
         app_name.clone(),
         detected,
         non_interactive,
+        force,
     )?;
 
     if json {
@@ -240,7 +293,9 @@ pub fn discover_all_apps(
                 }
 
                 // Discover individual apps in this subdirectory
-                discovered_apps.extend(discover_individual_apps(&entry.path())?);
+                if has_project_manifest(&entry.path()) {
+                    discovered_apps.extend(discover_individual_apps(&entry.path())?);
+                }
 
                 // Standard monorepo container dirs (apps/, packages/, libs/, …)
                 // hold the real projects one level deeper — recurse into them
@@ -294,7 +349,9 @@ fn discover_apps_in_container(
                 continue;
             }
 
-            apps.extend(discover_individual_apps(&entry.path())?);
+            if has_project_manifest(&entry.path()) {
+                apps.extend(discover_individual_apps(&entry.path())?);
+            }
         }
     }
 
@@ -306,23 +363,72 @@ fn normalize_scan_root(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn should_skip_scan_dir(dir_name: &str) -> bool {
-    matches!(
-        dir_name,
-        "node_modules"
-            | ".git"
-            | "target"
-            | "dist"
-            | "build"
-            | ".next"
-            | "coverage"
-            | ".cursor"
-            | ".github"
-            | ".obsidian"
-            | ".kiro"
-            | "docs"
-            | "scripts"
-            | "reports"
-    )
+    // Hidden directories are tooling state (.git, .venv, .turbo, .nx, .tox,
+    // .mypy_cache, ...), never an app of their own.
+    dir_name.starts_with('.')
+        || matches!(
+            dir_name,
+            "node_modules"
+                | "venv"
+                | "__pycache__"
+                | "vendor"
+                | "target"
+                | "dist"
+                | "build"
+                | ".next"
+                | "coverage"
+                | ".cursor"
+                | ".github"
+                | ".obsidian"
+                | ".kiro"
+                | "docs"
+                | "scripts"
+                | "reports"
+        )
+}
+
+/// Whether `dir` holds a project of its own rather than source files of the
+/// project around it.
+///
+/// Without this, a Python package directory (`app/` of a FastAPI service) was
+/// detected as a second app through its `.py` files, and `auto-add --yes`
+/// refused the very directory that is the app ("Multiple apps detected").
+fn has_project_manifest(dir: &std::path::Path) -> bool {
+    const MANIFESTS: &[&str] = &[
+        "package.json",
+        "Cargo.toml",
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "Pipfile",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "Gemfile",
+        "composer.json",
+        "mix.exs",
+        "project.json",
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ];
+    if MANIFESTS.iter().any(|m| dir.join(m).is_file()) {
+        return true;
+    }
+    // Config-file apps (redis*.conf, traefik*.yml) are discovered by file name.
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            (name.starts_with("redis") && (name.ends_with(".conf") || name.ends_with(".config")))
+                || (name.starts_with("traefik")
+                    && (name.ends_with(".yml")
+                        || name.ends_with(".yaml")
+                        || name.ends_with(".toml")))
+        })
+    })
 }
 
 // Discover individual config files as separate apps in a single directory
@@ -351,10 +457,9 @@ fn discover_individual_apps(
                 // Check for individual Redis config files
                 if file_name_str.starts_with("redis")
                     && (file_name_str.ends_with(".conf") || file_name_str.ends_with(".config"))
+                    && let Ok(app) = create_redis_app_from_config(&entry.path(), &file_name_str)
                 {
-                    if let Ok(app) = create_redis_app_from_config(&entry.path(), &file_name_str) {
-                        apps.push(app);
-                    }
+                    apps.push(app);
                 }
 
                 // Check for individual Traefik config files
@@ -362,10 +467,9 @@ fn discover_individual_apps(
                     && (file_name_str.ends_with(".yml")
                         || file_name_str.ends_with(".yaml")
                         || file_name_str.ends_with(".toml"))
+                    && let Ok(app) = create_traefik_app_from_config(&entry.path(), &file_name_str)
                 {
-                    if let Ok(app) = create_traefik_app_from_config(&entry.path(), &file_name_str) {
-                        apps.push(app);
-                    }
+                    apps.push(app);
                 }
             }
         }
@@ -465,7 +569,10 @@ fn create_traefik_app_from_config(
 }
 
 // Handle multiple discovered apps - let user select which ones to add
-async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp>) -> Result<()> {
+async fn handle_multiple_apps(
+    discovered_apps: Vec<crate::detection::DetectedApp>,
+    force: bool,
+) -> Result<()> {
     println!("✓ Discovered {} potential apps:\n", discovered_apps.len());
 
     // Display all discovered apps with their details
@@ -493,9 +600,8 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
     }
 
     // Load existing config or create a new empty one
-    let mut config = load_config().unwrap_or_else(|_| crate::config::Config {
-        projects: HashMap::new(),
-    });
+    let mut config = crate::config::loader::load_config_or_new()?;
+    let mut added_this_run: std::collections::HashSet<String> = Default::default();
 
     // Ask which project to add apps to (or create a new one)
     let project_name = prompt_project_selection(&config)?;
@@ -546,7 +652,11 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
         }
 
         let env_files = if !available_envs.is_empty() {
-            let app_path = std::path::Path::new(&detected.path);
+            // `detected.path` is stored tilde-contracted (`~/code/app`): expand it,
+            // or env-file discovery looks for a literal `~` directory and finds
+            // nothing.
+            let expanded_path = crate::utils::path::expand_path(&detected.path);
+            let app_path = expanded_path.as_path();
             if let Ok(detected_env_files) =
                 crate::detection::detect_env_files(app_path, detected.dockerfile_path.as_deref())
             {
@@ -570,6 +680,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
 
         // Build the App struct from detected data
         let app = App {
+            extra: Default::default(),
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -584,10 +695,7 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
                 local: detected.suggested_local_default.clone(),
                 docker: detected.suggested_docker_default.clone(),
                 orbstack: detected.suggested_orbstack_default.clone(),
-                k8s: detected
-                    .k8s_commands
-                    .as_ref()
-                    .and_then(|cmds| cmds.keys().next().cloned()),
+                k8s: crate::app_detector_support::suggest_k8s_default(&detected.k8s_commands),
                 ..Default::default()
             },
             dockerfile_path: detected.dockerfile_path.clone(),
@@ -598,18 +706,15 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
             restart_policy: None,
         };
 
-        // Insert the app into the config
-        config
-            .projects
-            .entry(project_name.clone())
-            .or_insert_with(|| Project {
-                apps: HashMap::new(),
-                alternative_name: None,
-            })
-            .apps
-            .insert(app_name.clone(), app);
-
-        println!("✓ Added {}\n", app_name);
+        if !added_this_run.insert(app_name.clone()) {
+            println!("⚠ Skipped {app_name}: another selected app has the same name\n");
+            continue;
+        }
+        match upsert_app(&mut config, &project_name, &app_name, app, force) {
+            Ok(true) => println!("✓ Updated {}\n", app_name),
+            Ok(false) => println!("✓ Added {}\n", app_name),
+            Err(e) => println!("⚠ Skipped {app_name}: {e}\n"),
+        }
     }
 
     // Save the updated config to disk
@@ -617,6 +722,54 @@ async fn handle_multiple_apps(discovered_apps: Vec<crate::detection::DetectedApp
     println!("✓ All selected apps added successfully!");
 
     Ok(())
+}
+
+/// Put `app` at `project/app_name`, creating the project if needed.
+///
+/// auto-add used to `insert` blindly: re-running it (an agent retrying, or a
+/// second app with the same folder name) silently replaced the existing entry
+/// and lost everything the user had added by hand. An existing app is now only
+/// replaced with `force`, and then keeps its user-maintained settings.
+///
+/// Returns whether an existing app was replaced.
+pub(super) fn upsert_app(
+    config: &mut crate::config::Config,
+    project: &str,
+    app_name: &str,
+    mut app: App,
+    force: bool,
+) -> Result<bool> {
+    let apps = &mut config
+        .projects
+        .entry(project.to_string())
+        .or_insert_with(|| Project {
+            extra: Default::default(),
+            apps: Default::default(),
+            alternative_name: None,
+        })
+        .apps;
+
+    let Some(existing) = apps.get(app_name) else {
+        apps.insert(app_name.to_string(), app);
+        return Ok(false);
+    };
+    if !force {
+        anyhow::bail!(
+            "app '{project}/{app_name}' already exists; re-run with --force to replace its \
+             detected settings (dependencies, health check, restart policy and alternative \
+             name are kept)"
+        );
+    }
+
+    app.dependencies = existing.dependencies.clone();
+    app.health_check = existing.health_check.clone();
+    app.restart_policy = existing.restart_policy.clone();
+    app.alternative_name = existing.alternative_name.clone();
+    app.default_stages = existing.default_stages.clone();
+    app.extra = existing.extra.clone();
+    // `insert` on an existing key keeps the app at its position in the file.
+    apps.insert(app_name.to_string(), app);
+    Ok(true)
 }
 
 // Add the detected app to the config and save it to disk
@@ -631,6 +784,7 @@ fn add_to_config(
     app_name: String,
     detected: crate::detection::DetectedApp,
     non_interactive: bool,
+    force: bool,
 ) -> Result<()> {
     // Re-detect env files with interactive prompts for unspecified contexts
     // Determine which environments are available for this app
@@ -717,6 +871,7 @@ fn add_to_config(
 
     // Build the App struct from detection results
     let app = App {
+        extra: Default::default(),
         app_type: detected.app_type,
         path: detected.path,
         commands: Commands {
@@ -731,10 +886,7 @@ fn add_to_config(
             local: detected.suggested_local_default,
             docker: detected.suggested_docker_default,
             orbstack: detected.suggested_orbstack_default,
-            k8s: detected
-                .k8s_commands
-                .as_ref()
-                .and_then(|cmds| cmds.keys().next().cloned()),
+            k8s: crate::app_detector_support::suggest_k8s_default(&detected.k8s_commands),
             ..Default::default()
         },
         dockerfile_path: detected.dockerfile_path,
@@ -745,17 +897,8 @@ fn add_to_config(
         restart_policy: None,
     };
 
-    // Insert the app into the config
-    // Creates the project if it doesn't exist
-    config
-        .projects
-        .entry(project_name)
-        .or_insert_with(|| Project {
-            apps: HashMap::new(),
-            alternative_name: None,
-        })
-        .apps
-        .insert(app_name, app);
+    // Insert the app into the config (creates the project if needed)
+    upsert_app(&mut config, &project_name, &app_name, app, force)?;
 
     // Save the updated config to ~/.devcli/config.json
     save_config(&config)?;

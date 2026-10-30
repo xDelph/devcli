@@ -26,6 +26,7 @@
 //! ```
 
 pub mod context;
+pub mod defaults;
 pub mod engine;
 pub mod graph;
 pub mod registry;

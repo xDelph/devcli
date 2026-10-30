@@ -488,16 +488,6 @@ let engine = DetectionEngine::new(registry)
     .with_cache(cache);
 ```
 
-### Plugin System
-
-Load strategies dynamically:
-
-```rust
-// Future API
-let registry = StrategyRegistry::with_defaults()
-    .load_plugins("~/.app-detector/plugins")?;
-```
-
 ## Summary
 
 App-detector's architecture provides:

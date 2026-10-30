@@ -147,7 +147,8 @@ anyhow::bail!("Process '{}' is already running with PID {}", name, pid);
 - All logs in `~/.devcli/logs/`
 - Timestamped filenames
 - One file per process start
-- Timestamp each log entry
+- Detached apps write their raw stdout/stderr straight into the log file
+  (no per-line prefix): the file descriptor must outlive the CLI
 
 ### Future Feature Guidelines
 

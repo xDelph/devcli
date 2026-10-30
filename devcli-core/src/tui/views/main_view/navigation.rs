@@ -102,46 +102,17 @@ impl MainView {
         if let Some(app) = state.selected_app() {
             let mut global_cmd_idx = 0;
 
-            // Count LOCAL commands
-            if let Some(commands) = app.commands.get("local") {
-                line += 1; // "LOCAL:" header
-                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
-                    return line + (self.selected_config_command_idx - global_cmd_idx);
+            // One section per environment that has commands, in render order.
+            for env in crate::config::models::Environment::all() {
+                if let Some(commands) = app.commands.get(env.as_str()) {
+                    line += 1; // "<ENV>:" header
+                    if global_cmd_idx + commands.len() > self.selected_config_command_idx {
+                        return line + (self.selected_config_command_idx - global_cmd_idx);
+                    }
+                    line += commands.len();
+                    global_cmd_idx += commands.len();
+                    line += 1; // Empty line after section
                 }
-                line += commands.len();
-                global_cmd_idx += commands.len();
-                line += 1; // Empty line after section
-            }
-
-            // Count DOCKER commands
-            if let Some(commands) = app.commands.get("docker") {
-                line += 1; // "DOCKER:" header
-                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
-                    return line + (self.selected_config_command_idx - global_cmd_idx);
-                }
-                line += commands.len();
-                global_cmd_idx += commands.len();
-                line += 1; // Empty line after section
-            }
-
-            // Count ORBSTACK commands
-            if let Some(commands) = app.commands.get("orbstack") {
-                line += 1; // "ORBSTACK:" header
-                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
-                    return line + (self.selected_config_command_idx - global_cmd_idx);
-                }
-                line += commands.len();
-                global_cmd_idx += commands.len();
-                line += 1; // Empty line after section
-            }
-
-            // Count K8S commands
-            if let Some(commands) = app.commands.get("k8s") {
-                line += 1; // "K8S:" header
-                if global_cmd_idx + commands.len() > self.selected_config_command_idx {
-                    return line + (self.selected_config_command_idx - global_cmd_idx);
-                }
-                line += commands.len();
             }
         }
 

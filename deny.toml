@@ -1,0 +1,53 @@
+# cargo-deny configuration — run with `cargo deny check`.
+# Checks what ships in the devcli / pm-daemon binaries (default features).
+
+[graph]
+all-features = false
+
+[advisories]
+# Fail on RustSec vulnerabilities, unmaintained and yanked crates.
+yanked = "deny"
+ignore = [
+    # bincode 1.3.3 is required by syntect to load its bundled syntax/theme
+    # dumps. Development stopped, but its maintainers consider 1.3.3 complete
+    # and it only ever decodes data compiled into the binary.
+    { id = "RUSTSEC-2025-0141", reason = "syntect's bundled dumps; 1.3.3 is final" },
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    # Mozilla's root certificate bundle (webpki-roots).
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# The workspace crates themselves are source-available under PolyForm.
+exceptions = [
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "app-detector" },
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "config-manager" },
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "devcli" },
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "devcli-core" },
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "env-flow" },
+    { allow = ["PolyForm-Noncommercial-1.0.0"], crate = "process-manager" },
+]
+
+[bans]
+# Duplicates are reported, not fatal: several come from upstream crates.
+multiple-versions = "warn"
+# Workspace crates depend on each other by path only.
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

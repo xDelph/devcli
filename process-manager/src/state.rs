@@ -41,26 +41,111 @@ pub struct StateStore {
     base_dir: PathBuf,
 }
 
+/// Metadata key set by `stop` before it signals a process. pm-daemon leaves such
+/// an entry alone: a process that dies because the user stopped it is not a
+/// crash to recover from.
+pub const STOPPING_KEY: &str = "stopping";
+
+/// Metadata key holding the PID of the attached `devcli start` that owns the
+/// process. The owner stops its processes when it exits; pm-daemon stops them
+/// if the owner died without doing so (killed, crashed, terminal closed).
+pub const OWNER_PID_KEY: &str = "owner_pid";
+
+/// Exclusive hold on one state entry; released on drop.
+///
+/// Serialises the read-modify-write sequences of `stop` and of pm-daemon's
+/// automatic restart, which otherwise interleave: the daemon could respawn an
+/// app the user had just stopped and leave the new process running untracked.
+pub struct EntryLock {
+    file: fs::File,
+}
+
+/// The monitor singleton lock; released when dropped (or the process exits).
+pub struct DaemonLock {
+    _file: fs::File,
+}
+
+impl Drop for EntryLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 impl StateStore {
     pub fn new(base_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&base_dir)?;
+        // Entries hold commands and env-file values: keep them private to the
+        // user, also for directories created by older versions.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&base_dir, fs::Permissions::from_mode(0o700))
+                .with_context(|| format!("Failed to restrict {}", base_dir.display()))?;
+        }
         Ok(Self { base_dir })
+    }
+
+    /// Directory holding the state entries.
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
     }
 
     pub fn save(&self, process: &ManagedProcess) -> Result<()> {
         let path = self.base_dir.join(format!("{}.json", process.id));
         let json = serde_json::to_string_pretty(process)?;
-        fs::write(path, json)?;
+        self.write_atomic(&path, json.as_bytes())?;
         self.notify_change()?;
         Ok(())
     }
 
+    /// Replace `path` in one step: write a sibling temp file, then rename it.
+    ///
+    /// The daemon, the CLI and the TUI read these files concurrently. A plain
+    /// `fs::write` truncates first, so a reader could see an empty or half-written
+    /// file, which `list()` silently skips: the monitor then believed nothing was
+    /// tracked and exited. A rename is atomic, so readers see the old or the new
+    /// content, never a mix.
+    fn write_atomic(&self, path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("state");
+        // Leading dot and non-.json suffix: `list()` never picks up a temp file.
+        let tmp = self
+            .base_dir
+            .join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+
+        let result = (|| -> Result<()> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(&tmp)
+                .with_context(|| format!("Failed to create {}", tmp.display()))?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)
+                .with_context(|| format!("Failed to replace {}", path.display()))?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
+    }
+
     pub fn load(&self, id: &str) -> Result<Option<ManagedProcess>> {
         let path = self.base_dir.join(format!("{}.json", id));
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = fs::read_to_string(path)?;
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            // Deleted between our call and the read (another stop/cleanup).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         let process = serde_json::from_str(&content)?;
         Ok(Some(process))
     }
@@ -70,12 +155,11 @@ impl StateStore {
         for entry in fs::read_dir(&self.base_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(p) = serde_json::from_str(&content) {
-                        processes.push(p);
-                    }
-                }
+            if path.extension().is_some_and(|e| e == "json")
+                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(p) = serde_json::from_str(&content)
+            {
+                processes.push(p);
             }
         }
         Ok(processes)
@@ -83,9 +167,13 @@ impl StateStore {
 
     pub fn delete(&self, id: &str) -> Result<()> {
         let path = self.base_dir.join(format!("{}.json", id));
-        if path.exists() {
-            fs::remove_file(path)?;
-            self.notify_change()?;
+        match fs::remove_file(path) {
+            Ok(()) => self.notify_change()?,
+            // Two concurrent `cleanup_dead()` calls (daemon tick + a CLI command)
+            // race to delete the same entry; losing that race is not an error, and
+            // used to abort the whole `start`/`status` with ENOENT.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
         Ok(())
     }
@@ -120,18 +208,9 @@ impl StateStore {
     pub fn is_running(&self, process: &ManagedProcess) -> bool {
         #[cfg(unix)]
         {
-            use std::process::Command;
-
-            // The tracked PID answers for itself.
-            let alive = Command::new("kill")
-                .arg("-0")
-                .arg(process.pid.to_string())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-
-            if alive {
-                return true;
+            // The tracked PID answers for itself - as long as it is still ours.
+            if crate::engine::pid_alive(process.pid) {
+                return !process.pid_was_reused();
             }
 
             // The leader is gone, but the app may still be alive as a child of its
@@ -143,6 +222,83 @@ impl StateStore {
         {
             false // TODO: Windows support
         }
+    }
+
+    /// Block until no one else is modifying entry `id`.
+    ///
+    /// Hold it only around short load/update/save sequences.
+    pub fn lock_entry(&self, id: &str) -> Result<EntryLock> {
+        let dir = self.base_dir.join("locks");
+        fs::create_dir_all(&dir)?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join(format!("{id}.entry.lock")))
+            .context("Failed to open state entry lock")?;
+        file.lock_exclusive()
+            .context("Failed to lock state entry")?;
+        Ok(EntryLock { file })
+    }
+
+    /// Flag entry `id` as being stopped and return its current content.
+    ///
+    /// Callers must signal the PID of the returned entry, not of an earlier
+    /// snapshot: pm-daemon may have restarted the app in the meantime.
+    pub fn mark_stopping(&self, id: &str) -> Result<Option<ManagedProcess>> {
+        let _guard = self.lock_entry(id)?;
+        let Some(mut process) = self.load(id)? else {
+            return Ok(None);
+        };
+        process
+            .metadata
+            .insert(STOPPING_KEY.to_string(), "true".to_string());
+        self.save(&process)?;
+        Ok(Some(process))
+    }
+
+    /// Take the monitor singleton lock, or `None` if a monitor already holds it.
+    ///
+    /// Exactly one monitor loop may run per state directory; two would both
+    /// restart a crashed app.
+    pub fn try_lock_daemon(&self) -> Result<Option<DaemonLock>> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(self.base_dir.join(".daemon.lock"))
+            .context("Failed to open daemon lock file")?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(DaemonLock { _file: file })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Whether a pm-daemon currently holds this store's singleton lock.
+    pub fn daemon_running(&self) -> bool {
+        let Ok(file) = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.base_dir.join(".daemon.lock"))
+        else {
+            return false;
+        };
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                false
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Whether pm-daemon will pick this dead entry up and restart it.
+    pub fn awaiting_restart(&self, process: &ManagedProcess) -> bool {
+        !process.is_stopping()
+            && process.should_restart(&process.task.restart_policy)
+            && self.daemon_running()
     }
 
     /// Path to the mtime-based notification file used by TUI status polling.
@@ -173,7 +329,10 @@ impl StateStore {
     pub fn cleanup_dead(&self) -> Result<Vec<String>> {
         let mut cleaned = Vec::new();
         for proc in self.list()? {
-            if !self.is_running(&proc) {
+            // Every CLI command runs this first. Deleting a crashed app that the
+            // daemon is about to restart (it checks every few seconds, then waits
+            // out the backoff) silently disabled auto-restart.
+            if !self.is_running(&proc) && !self.awaiting_restart(&proc) {
                 self.delete(&proc.id)?;
                 cleaned.push(proc.id);
             }
@@ -243,13 +402,32 @@ impl StateStore {
             return Ok(());
         };
 
-        std::process::Command::new(&daemon_bin)
-            .arg("--state-dir")
+        let mut cmd = std::process::Command::new(&daemon_bin);
+        cmd.arg("--state-dir")
             .arg(&self.base_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+            .stderr(std::process::Stdio::null());
+
+        // Detach into a session of its own. Otherwise the daemon stays in the
+        // foreground process group of whatever terminal ran `devcli start`, so
+        // Ctrl+C on a streaming `start` (or closing that terminal) killed it and
+        // silently ended monitoring and auto-restart for every app.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: setsid(2) is async-signal-safe and touches no Rust state.
+            unsafe {
+                cmd.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        cmd.spawn()
             .with_context(|| format!("Failed to spawn pm-daemon at {}", daemon_bin.display()))?;
 
         tracing::debug!(
@@ -268,12 +446,12 @@ impl StateStore {
     /// 2. Each directory in `$PATH`
     pub(crate) fn find_daemon_binary() -> Option<PathBuf> {
         // 1. Alongside current executable
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                let candidate = dir.join("pm-daemon");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            let candidate = dir.join("pm-daemon");
+            if candidate.exists() {
+                return Some(candidate);
             }
         }
 
@@ -291,7 +469,54 @@ impl StateStore {
     }
 }
 
+/// Slack between the OS start of a process and the `start_time` we record just
+/// after spawning it (`ps` reports whole seconds).
+const PID_REUSE_TOLERANCE: chrono::Duration = chrono::Duration::seconds(5);
+
+/// When the process holding `pid` was started, according to the OS.
+fn os_start_time(pid: u32) -> Option<DateTime<Utc>> {
+    let age = chrono::Duration::from_std(crate::engine::process_age(pid)?).ok()?;
+    Some(Utc::now() - age)
+}
+
 impl ManagedProcess {
+    /// Whether `stop` is taking this process down.
+    pub fn is_stopping(&self) -> bool {
+        self.metadata.contains_key(STOPPING_KEY)
+    }
+
+    /// Whether the live process holding `self.pid` started after we recorded
+    /// ours, i.e. ours exited and the OS handed the PID to something else.
+    ///
+    /// Without this, `stop` (or `stop --all` on stale state) would signal an
+    /// unrelated process of the user's that happened to receive the PID. When
+    /// the age cannot be read the PID is assumed to be ours.
+    pub fn pid_was_reused(&self) -> bool {
+        os_start_time(self.pid)
+            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+    }
+
+    /// The attached `devcli start` this process lives and dies with, if any.
+    pub fn owner_pid(&self) -> Option<u32> {
+        self.metadata.get(OWNER_PID_KEY)?.parse().ok()
+    }
+
+    /// Whether this process has an owner that is no longer running.
+    ///
+    /// The owner started before the process did, so a live PID that started
+    /// later belongs to something else: the owner exited and its PID was
+    /// reused. When the age cannot be read the owner is assumed alive.
+    pub fn owner_gone(&self) -> bool {
+        let Some(owner) = self.owner_pid() else {
+            return false;
+        };
+        if !crate::engine::pid_alive(owner) {
+            return true;
+        }
+        os_start_time(owner)
+            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+    }
+
     pub fn should_restart(&self, policy: &RestartPolicy) -> bool {
         if !policy.enabled {
             return false;

@@ -81,6 +81,32 @@ get_latest_version() {
     echo "$version"
 }
 
+# Print the SHA-256 of a file using whichever tool the platform ships
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        error "Neither sha256sum nor shasum is available to verify the download"
+    fi
+}
+
+# Compare an archive against its published "<hash>  <name>" checksum file
+verify_checksum() {
+    local archive="$1"
+    local checksum_file="$2"
+    local expected
+    local actual
+
+    expected=$(awk '{print $1}' "$checksum_file")
+    actual=$(sha256_of "$archive")
+
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        error "Checksum mismatch (expected ${expected:-nothing}, got ${actual}); refusing to install"
+    fi
+}
+
 # Download and install
 install_binary() {
     local platform="$1"
@@ -100,6 +126,14 @@ install_binary() {
         error "Failed to download devcli"
     fi
     success "Downloaded"
+
+    # Verify against the checksum published next to the archive
+    info "Verifying checksum..."
+    if ! curl -fsSL "${download_url}.sha256" -o "${temp_dir}/${BINARY_NAME}.tar.gz.sha256"; then
+        error "Failed to download checksum for devcli"
+    fi
+    verify_checksum "${temp_dir}/${BINARY_NAME}.tar.gz" "${temp_dir}/${BINARY_NAME}.tar.gz.sha256"
+    success "Checksum verified"
 
     # Extract
     info "Extracting..."

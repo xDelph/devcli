@@ -4,14 +4,14 @@
 //! It provides the `devcli config init` command functionality.
 
 use crate::Result;
-use std::env;
 use std::fs;
 
 /// Initialize a new config file with empty projects
 ///
 /// Example: `devcli config init`
 ///
-/// Creates ~/.devcli/config.json with an empty projects structure.
+/// Creates config.json (in `DEVCLI_CONFIG_DIR`, ./.devcli or ~/.devcli, like every
+/// other command) with an empty projects structure.
 /// Displays an example project configuration in the console for reference.
 /// The user can then edit the file to add their own projects and apps.
 ///
@@ -21,14 +21,16 @@ use std::fs;
 /// - Config file already exists (won't overwrite existing configs)
 /// - Cannot create the ~/.devcli directory
 /// - Cannot write the template file
-/// - HOME environment variable is not set
 pub async fn config_init() -> Result<()> {
-    // Get the home directory from environment
-    let home = env::var("HOME")?;
-
-    // Build paths: ~/.devcli/ and ~/.devcli/config.json
-    let config_dir = std::path::PathBuf::from(home).join(".devcli");
-    let config_path = config_dir.join("config.json");
+    // Create the file the other commands will read: with DEVCLI_CONFIG_DIR set
+    // (or a project-local ./.devcli), a hard-coded ~/.devcli/config.json was
+    // created - or refused because it existed - while `load` kept reporting
+    // "run devcli config init".
+    let config_path = crate::config::loader::get_config_path()?;
+    let config_dir = config_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
 
     // Check if config already exists
     // Don't overwrite existing configs - user might lose their data!

@@ -24,7 +24,6 @@ mod main_view_core {
         pub(crate) focus: PanelFocus,
         /// Scroll offset for the left panel list
         #[allow(dead_code)]
-        pub(crate) list_scroll: usize,
         /// Scroll offset for the right panel details
         pub(crate) detail_scroll: usize,
 
@@ -129,7 +128,6 @@ mod main_view_core {
             Ok(Self {
                 active_tab: MainTab::Status,
                 focus: PanelFocus::AppList,
-                list_scroll: 0,
                 detail_scroll: 0,
 
                 selected_log_idx: 0,
@@ -174,10 +172,10 @@ mod main_view_core {
                         // Filter out the current app if it's in this project
                         if let (Some(curr_proj), Some(curr_app)) =
                             (current_project_name, current_app_name)
+                            && proj_name == curr_proj
+                            && *app_name == curr_app
                         {
-                            if proj_name == curr_proj && *app_name == curr_app {
-                                return false;
-                            }
+                            return false;
                         }
                         true
                     })

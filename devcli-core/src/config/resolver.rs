@@ -3,10 +3,11 @@
 // This module keeps the public API and interactive ambiguity prompt.
 
 use super::models::{App, Config};
-use crate::config_manager_support::{map_resolve_error, ProjectAppResolver};
+use crate::config_manager_support::{ambiguous_app_error, map_resolve_error, ProjectAppResolver};
 use crate::Result;
 use config_manager::resolver::Resolver;
 use inquire::Select;
+use std::io::IsTerminal;
 
 // Container for a resolved app with full context
 // When we find an app, we need to know both which project it's in and its data
@@ -34,21 +35,24 @@ pub fn resolve_app(
     match resolver.resolve_with_filter(config, app_name, project_filter) {
         Ok(resolved) => Ok(resolved),
         Err(config_manager::Error::Ambiguous { candidates, .. }) => {
-            let prompt_message =
-                format!("App '{app_name}' found in multiple projects. Please select one:");
+            // Agents and scripts get the error straight away instead of a prompt.
+            let interactive = !crate::output::json_enabled() && std::io::stdin().is_terminal();
+            if !interactive {
+                return Err(ambiguous_app_error(app_name, &candidates));
+            }
 
+            let prompt_message =
+                format!("App '{app_name}' matches several apps. Please select one:");
             let selection = Select::new(&prompt_message, candidates.clone()).prompt();
 
-            // The user has already told us which project owns the app — pick it
-            // directly from the config instead of re-running a second resolution
-            // pass (the old code called `resolve_with_filter` again).
-            match selection {
-                Ok(selected_project) => pick_app_in_project(config, &selected_project, app_name),
-                Err(_) => Err(anyhow::anyhow!(
-                    "App name '{}' is ambiguous. Found in projects: {}. Use --project to specify.",
-                    app_name,
-                    candidates.join(", ")
-                )),
+            // Candidates are `project/app` with the real app key, so the choice
+            // identifies exactly one app - pick it, no second resolution pass.
+            match selection.ok().and_then(|c| {
+                c.split_once('/')
+                    .map(|(p, a)| (p.to_string(), a.to_string()))
+            }) {
+                Some((project, app)) => pick_app_in_project(config, &project, &app),
+                None => Err(ambiguous_app_error(app_name, &candidates)),
             }
         }
         Err(err) => Err(map_resolve_error(err, app_name)),

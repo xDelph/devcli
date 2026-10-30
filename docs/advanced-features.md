@@ -200,6 +200,13 @@ Automatically restart crashed or unhealthy processes.
 Process exited with code 1 → automatic restart
 ```
 
+The exit code is only known for instances that the monitor daemon restarted
+itself (it is their parent). When the first instance started by `devcli start`
+exits, its code cannot be observed and any exit counts as a crash.
+
+Health checks only start counting failures 30 seconds after each (re)start, so
+slow-booting servers are not restarted while they come up.
+
 **2. Health Check Failures** (3 consecutive):
 ```
 Health check failed 3 times → automatic restart
@@ -333,10 +340,19 @@ Real-time insights into process behavior and performance.
 devcli metrics
 ```
 
-**HTTP API (Raw JSON)**:
+**HTTP API (Raw JSON)**, served while `devcli monitor --daemon` runs:
 ```bash
 curl http://localhost:9090/metrics | jq
 ```
+
+Without a metrics server, `devcli metrics` computes the process and system
+metrics from the state store itself; only the in-memory performance counters
+need the server. The listen address can be changed with
+`DEVCLI_METRICS_ADDR` (default `127.0.0.1:9090`). The API sends no CORS
+headers, so web pages cannot read it.
+
+`health_check_success_rate` is the share of running apps whose latest health
+checks pass.
 
 ### Metrics Categories
 
@@ -812,22 +828,21 @@ Tracks all managed processes:
 ```
 devcli start api
       │
-      ├─ Spawn internal-spawner (detached)
-      │      │
-      │      └─ Spawn actual app process
-      │             │
-      │             └─ Capture stdout/stderr
-      │             └─ Write to log file
+      ├─ Spawn the app in its own session (setsid)
+      │      └─ stdout/stderr = the log file itself (append mode)
+      │
+      ├─ Record it in ~/.devcli/processes/<id>.json
+      ├─ Make sure pm-daemon is running (health checks, auto-restart)
       │
       └─ Return immediately (non-blocking)
 ```
 
-**Internal Spawner**:
-- Runs as separate process
-- Captures app output
-- Writes to log files
-- Reports exit codes
-- Survives parent process exit
+- The app writes its output straight into its log file, so it keeps running
+  and logging after the CLI (or the TUI) exits.
+- Logs rotate by size (20 MiB): the file is copied to `<name>.log.1` and
+  truncated in place.
+- pm-daemon is the parent of the instances it restarts, so their exit codes
+  are recorded; the exit code of the first instance is not observable.
 
 ### Monitor Lifecycle
 
