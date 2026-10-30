@@ -417,7 +417,7 @@ pub enum EnvAction {
         #[arg(help = "App name")]
         app_name: String,
 
-        #[arg(short, long, help = "Stage name (e.g., 'qa', 'prod', 'dev')")]
+        #[arg(short, long, help = "Stage: dev, qa, preprod, prod (env add also accepts base, for every stage)")]
         stage: String,
 
         #[arg(

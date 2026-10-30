@@ -13,7 +13,23 @@ use std::collections::HashMap;
 /// * `stage` - Stage name (e.g., "qa", "prod", "dev")
 /// * `context` - Context name (e.g., "local", "docker", "orbstack")
 /// * `file_path` - Path to the env file relative to app root
+fn validate_stage(stage: &str) -> Result<()> {
+    use crate::config::models::Stage;
+    if Stage::from_string(stage).is_none() {
+        anyhow::bail!(
+            "Invalid stage '{stage}'. Must be one of: {} (or `base` for env files of every stage)",
+            Stage::all_names()
+        );
+    }
+    Ok(())
+}
+
 pub fn add_env_file(app_name: &str, stage: &str, context: &str, file_path: &str) -> Result<()> {
+    // Any other stage was saved, and could then never be used: `start
+    // --stage` only knows these. `base` applies to every stage.
+    if stage != "base" {
+        validate_stage(stage)?;
+    }
     let mut config = load_config()?;
 
     // Find the app in the config
@@ -181,6 +197,7 @@ pub fn list_env_files(app_name: &str) -> Result<()> {
 /// * `context` - Context name (e.g., "local", "docker", "orbstack", "k8s")
 /// * `stage` - Stage name to set as default
 pub fn set_default_stage(app_name: &str, context: &str, stage: &str) -> Result<()> {
+    validate_stage(stage)?;
     let mut config = load_config()?;
 
     // Find the app in the config
