@@ -42,15 +42,9 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         );
     }
 
-    let project_config = config
-        .projects
-        .get(&resolved.project)
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", resolved.project))?;
-    let app_config = project_config
-        .apps
-        .get(&resolved.app_name)
-        .ok_or_else(|| anyhow::anyhow!("App '{}' not found", resolved.app_name))?;
-    let health_check = app_config.health_check.as_ref().ok_or_else(|| {
+    // `resolved.project` is `proj@slug` for a worktree instance, which the
+    // config does not list: the resolved app carries the configuration.
+    resolved.app.health_check.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "No health check configured for {}/{}",
             resolved.project,
@@ -83,7 +77,14 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         );
     }
 
-    let pm_check = to_pm_health_check(Some(health_check));
+    // The check the process was started with: in a git worktree it targets
+    // the instance's shifted port, not the configured one.
+    let pm_check = match &process.task.health_check {
+        process_manager::HealthCheck::Process {} => {
+            to_pm_health_check(resolved.app.health_check.as_ref())
+        }
+        started_with => started_with.clone(),
+    };
 
     tracing::debug!(
         pid = process.pid,

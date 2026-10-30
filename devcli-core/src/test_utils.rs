@@ -161,6 +161,7 @@ impl AppBuilder {
             alternative_name: None,
             health_check: None,
             restart_policy: None,
+            port: None,
         }
     }
 }

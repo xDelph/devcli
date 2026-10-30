@@ -7,6 +7,21 @@ use std::path::Path;
 pub struct PreparedCommand {
     pub final_command: String,
     pub env_vars: HashMap<String, String>,
+    /// The instance's worktree variables and port shift.
+    pub worktree: crate::worktrees::runtime::Applied,
+}
+
+impl PreparedCommand {
+    /// The app's health check, on the ports this instance really uses.
+    pub fn health_check(&self, resolved_app: &ResolvedApp) -> process_manager::HealthCheck {
+        crate::worktrees::runtime::health_check(
+            crate::process_manager_support::to_pm_health_check(
+                resolved_app.app.health_check.as_ref(),
+            ),
+            &self.worktree,
+            &self.env_vars,
+        )
+    }
 }
 
 fn uses_container_env_file(environment: &str) -> bool {
@@ -145,6 +160,14 @@ pub fn prepare_command(
         }
     }
 
+    // Last, so it sees the env files' PORT and wins over them.
+    let worktree = crate::worktrees::runtime::apply(resolved_app, environment, &mut env_vars)?;
+    if show_output && !crate::output::json_enabled() {
+        for note in &worktree.notes {
+            println!("  {note}");
+        }
+    }
+
     tracing::debug!(
         final_command = %final_command,
         env_var_count = env_vars.len(),
@@ -154,6 +177,7 @@ pub fn prepare_command(
     Ok(PreparedCommand {
         final_command,
         env_vars,
+        worktree,
     })
 }
 
@@ -242,7 +266,16 @@ mod tests {
         // Only devcli's own additions: the inherited shell environment is not
         // copied (it ends up persisted in the process state file).
         assert_eq!(prepared.env_vars.get("PATH"), None);
-        assert_eq!(prepared.env_vars.len(), 2);
+        let from_env_files = prepared
+            .env_vars
+            .keys()
+            .filter(|k| !k.starts_with("DEVCLI_"))
+            .count();
+        assert_eq!(from_env_files, 2);
+        assert_eq!(
+            prepared.env_vars.get("DEVCLI_WORKTREE"),
+            Some(&String::new())
+        );
     }
 
     #[test]

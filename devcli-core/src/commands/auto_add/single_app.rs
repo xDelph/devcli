@@ -681,6 +681,7 @@ async fn handle_multiple_apps(
         // Build the App struct from detected data
         let app = App {
             extra: Default::default(),
+            port: None,
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -872,6 +873,7 @@ fn add_to_config(
     // Build the App struct from detection results
     let app = App {
         extra: Default::default(),
+        port: None,
         app_type: detected.app_type,
         path: detected.path,
         commands: Commands {

@@ -6,6 +6,7 @@
 pub mod git;
 mod instance;
 pub mod registry;
+pub mod runtime;
 mod selection;
 
 pub use instance::{pinned, resolve, resolve_all, split, Instance, Mode, Selector, PORT_STRIDE};

@@ -7,7 +7,7 @@
 use crate::config::{load_config, load_preferences};
 use crate::process_manager_support::{
     emit_line, find_process, log_file_path, process_id, state_store, stream_output,
-    to_pm_health_check, to_pm_restart_policy, OutputChannel,
+    to_pm_restart_policy, OutputChannel,
 };
 use crate::utils::path::expand_path;
 use crate::Result;
@@ -148,6 +148,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         show_output,
     )?;
 
+    let health_check = prepared.health_check(&resolved_app);
     let final_command = prepared.final_command;
     let env_vars = prepared.env_vars;
 
@@ -195,7 +196,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         env: env_vars,
         is_detached: true,
         log_file: Some(log_path),
-        health_check: to_pm_health_check(resolved_app.app.health_check.as_ref()),
+        health_check,
         restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
     };
 

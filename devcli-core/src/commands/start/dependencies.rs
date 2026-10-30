@@ -173,8 +173,26 @@ async fn wait_until_ready(config: &Config, wave: &[String], silent: bool) {
         else {
             continue;
         };
-        let check =
-            crate::process_manager_support::to_pm_health_check(resolved.app.health_check.as_ref());
+        // The check the dependency was just started with: in a git worktree
+        // it targets the instance's shifted port, not the configured one.
+        let started = crate::process_manager_support::state_store()
+            .ok()
+            .and_then(|store| {
+                crate::process_manager_support::find_process(
+                    &store,
+                    &resolved.project,
+                    &resolved.app_name,
+                    None,
+                )
+                .ok()
+                .flatten()
+            });
+        let check = match started {
+            Some(process) => process.task.health_check,
+            None => crate::process_manager_support::to_pm_health_check(
+                resolved.app.health_check.as_ref(),
+            ),
+        };
         if matches!(check, process_manager::HealthCheck::Process {}) {
             continue;
         }
