@@ -7,7 +7,7 @@ mod tests {
     use crate::health::HealthCheckEngine;
     use crate::monitor::Monitor;
     use crate::restart::RestartCoordinator;
-    use crate::state::{ManagedProcess, ProcessRuntime, StateStore};
+    use crate::state::{ManagedProcess, ProcessRuntime, StateStore, OWNER_PID_KEY};
     use crate::{HealthCheck, RestartPolicy, Task};
     use chrono::Utc;
     use std::collections::HashMap;
@@ -389,5 +389,44 @@ mod tests {
             Duration::from_secs(10),
         )
         .await;
+    }
+
+    /// pm-daemon stops the processes of an attached `devcli start` that died
+    /// without stopping them, and leaves those of a live owner alone.
+    #[tokio::test]
+    async fn tick_stops_processes_whose_owner_is_gone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut orphan = spawn_and_track(&store, sleep_task("orphan", 30)).await;
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+        orphan
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        store.save(&orphan).unwrap();
+
+        let mut owned = spawn_and_track(&store, sleep_task("owned", 30)).await;
+        owned
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), std::process::id().to_string());
+        store.save(&owned).unwrap();
+
+        monitor.tick().await.unwrap();
+        reap_child(orphan.pid);
+
+        assert!(
+            store.load("orphan").unwrap().is_none(),
+            "orphan entry removed"
+        );
+        assert!(
+            !crate::engine::pid_alive(orphan.pid),
+            "orphan process stopped"
+        );
+        assert!(store.is_running(&owned), "owned process left running");
+
+        kill_and_reap(&owned).await;
     }
 }

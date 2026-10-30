@@ -79,6 +79,15 @@ impl Monitor {
                 continue;
             }
 
+            if proc.owner_gone() {
+                // The attached `devcli start` that owned it exited without
+                // stopping it: it was killed, or its terminal went away.
+                if let Err(e) = self.stop_orphan(&proc).await {
+                    tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
+                }
+                continue;
+            }
+
             // One misbehaving entry must not stop the others from being checked.
             if let Err(e) = self.check_process(&mut proc).await {
                 tracing::warn!(id = %proc.id, error = %e, "Failed to check process");
@@ -86,6 +95,27 @@ impl Monitor {
         }
 
         Ok(true)
+    }
+
+    /// Stop a process whose owner is gone: SIGTERM, then SIGKILL after 5s.
+    async fn stop_orphan(&self, proc: &crate::state::ManagedProcess) -> Result<()> {
+        tracing::info!(id = %proc.id, owner = ?proc.owner_pid(), "Owner exited, stopping process");
+        let Some(current) = self.state.mark_stopping(&proc.id)? else {
+            return Ok(());
+        };
+
+        engine::terminate(current.pid, current.pgid, false).await?;
+        for _ in 0..50 {
+            if !self.state.is_running(&current) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if self.state.is_running(&current) {
+            engine::terminate(current.pid, current.pgid, true).await?;
+        }
+
+        self.state.delete(&current.id)
     }
 
     async fn check_process(&self, proc: &mut crate::state::ManagedProcess) -> Result<()> {

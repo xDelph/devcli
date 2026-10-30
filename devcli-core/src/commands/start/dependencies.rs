@@ -29,11 +29,14 @@ const DEPENDENCY_READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// * `apps` - Slice of resolved apps to check dependencies for
 /// * `environment` - The target environment (e.g., "local", "docker")
 /// * `silent` - If true, suppresses output messages
+/// * `owner` - PID of the attached `devcli start` that owns the dependencies it
+///   starts (`None` when they must outlive the command)
 #[tracing::instrument(skip(apps), fields(app_count = apps.len(), environment = %environment))]
 pub async fn handle_dependencies(
     apps: &[&crate::config::resolver::ResolvedApp],
     environment: &str,
     silent: bool,
+    owner: Option<u32>,
 ) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
@@ -86,7 +89,7 @@ pub async fn handle_dependencies(
     if preferences.auto_start_deps {
         let waves = start_waves(&config, &missing)?;
         for (index, wave) in waves.iter().enumerate() {
-            start_missing_dependencies(wave.clone(), environment, silent).await?;
+            start_missing_dependencies(wave.clone(), environment, silent, owner).await?;
             // Later waves depend on this one: give it the chance to come up.
             if index + 1 < waves.len() {
                 wait_until_ready(&config, wave, silent).await;
@@ -201,6 +204,7 @@ async fn start_missing_dependencies(
     missing: Vec<String>,
     environment: &str,
     silent: bool,
+    owner: Option<u32>,
 ) -> Result<()> {
     tracing::info!(
         dependency_count = missing.len(),
@@ -250,7 +254,7 @@ async fn start_missing_dependencies(
                     output_tx: None,
                 };
 
-                super::executor::start_single_app_internal(dep_args, show_output)
+                super::executor::start_single_app_internal(dep_args, show_output, owner)
                     .await
                     .map_err(|e| format!("{}/{}: {}", dep_project, dep_app, e))
             });

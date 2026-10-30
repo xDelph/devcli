@@ -109,7 +109,8 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     // Dependency checking
     if !args.skip_deps {
         use crate::commands::start::handle_dependencies;
-        handle_dependencies(&[&resolved_app], &environment, silent).await?;
+        // `run` returns right away, so nothing owns the dependencies it starts.
+        handle_dependencies(&[&resolved_app], &environment, silent, None).await?;
     }
 
     // Expand path and verify it exists

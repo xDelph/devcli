@@ -46,6 +46,11 @@ pub struct StateStore {
 /// crash to recover from.
 pub const STOPPING_KEY: &str = "stopping";
 
+/// Metadata key holding the PID of the attached `devcli start` that owns the
+/// process. The owner stops its processes when it exits; pm-daemon stops them
+/// if the owner died without doing so (killed, crashed, terminal closed).
+pub const OWNER_PID_KEY: &str = "owner_pid";
+
 /// Exclusive hold on one state entry; released on drop.
 ///
 /// Serialises the read-modify-write sequences of `stop` and of pm-daemon's
@@ -290,7 +295,7 @@ impl StateStore {
     }
 
     /// Whether pm-daemon will pick this dead entry up and restart it.
-    fn awaiting_restart(&self, process: &ManagedProcess) -> bool {
+    pub fn awaiting_restart(&self, process: &ManagedProcess) -> bool {
         !process.is_stopping()
             && process.should_restart(&process.task.restart_policy)
             && self.daemon_running()
@@ -468,27 +473,48 @@ impl StateStore {
 /// after spawning it (`ps` reports whole seconds).
 const PID_REUSE_TOLERANCE: chrono::Duration = chrono::Duration::seconds(5);
 
+/// When the process holding `pid` was started, according to the OS.
+fn os_start_time(pid: u32) -> Option<DateTime<Utc>> {
+    let age = chrono::Duration::from_std(crate::engine::process_age(pid)?).ok()?;
+    Some(Utc::now() - age)
+}
+
 impl ManagedProcess {
+    /// Whether `stop` is taking this process down.
+    pub fn is_stopping(&self) -> bool {
+        self.metadata.contains_key(STOPPING_KEY)
+    }
+
     /// Whether the live process holding `self.pid` started after we recorded
     /// ours, i.e. ours exited and the OS handed the PID to something else.
     ///
     /// Without this, `stop` (or `stop --all` on stale state) would signal an
     /// unrelated process of the user's that happened to receive the PID. When
     /// the age cannot be read the PID is assumed to be ours.
-    /// Whether `stop` is taking this process down.
-    pub fn is_stopping(&self) -> bool {
-        self.metadata.contains_key(STOPPING_KEY)
+    pub fn pid_was_reused(&self) -> bool {
+        os_start_time(self.pid)
+            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
     }
 
-    pub fn pid_was_reused(&self) -> bool {
-        let Some(age) = crate::engine::process_age(self.pid) else {
+    /// The attached `devcli start` this process lives and dies with, if any.
+    pub fn owner_pid(&self) -> Option<u32> {
+        self.metadata.get(OWNER_PID_KEY)?.parse().ok()
+    }
+
+    /// Whether this process has an owner that is no longer running.
+    ///
+    /// The owner started before the process did, so a live PID that started
+    /// later belongs to something else: the owner exited and its PID was
+    /// reused. When the age cannot be read the owner is assumed alive.
+    pub fn owner_gone(&self) -> bool {
+        let Some(owner) = self.owner_pid() else {
             return false;
         };
-        let Ok(age) = chrono::Duration::from_std(age) else {
-            return false;
-        };
-        let os_start = Utc::now() - age;
-        os_start > self.start_time + PID_REUSE_TOLERANCE
+        if !crate::engine::pid_alive(owner) {
+            return true;
+        }
+        os_start_time(owner)
+            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
     }
 
     pub fn should_restart(&self, policy: &RestartPolicy) -> bool {

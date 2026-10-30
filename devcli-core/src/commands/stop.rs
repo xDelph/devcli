@@ -275,7 +275,7 @@ fn display_stop_summary(processes: &[process_manager::state::ManagedProcess]) ->
 
 // Stop a single process with proper signal handling
 #[tracing::instrument(skip(process, store, output_tx), fields(id = %process.id, pid = process.pid, force = force))]
-async fn stop_single_process(
+pub(crate) async fn stop_single_process(
     process: &process_manager::state::ManagedProcess,
     force: bool,
     store: &process_manager::StateStore,

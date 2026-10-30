@@ -60,7 +60,7 @@ devcli start <app-names>... [OPTIONS]
 - `-e, --env <ENV>` - Environment: `local`, `docker`, `k8s` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
 - `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `prod`, etc.
-- `--detached` - Run in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
+- `--detached` - Leave the apps running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
 ```bash
@@ -85,10 +85,16 @@ devcli start api --project awesome-project
 
 **Behavior**:
 - Auto-starts dependencies (unless `--skip-deps`)
-- Spawns process in background
+- **Attached** (default): streams the apps' output and, like
+  `docker compose up`, stops the apps it started (dependencies included) on
+  Ctrl+C, SIGTERM or when the terminal closes. Press Ctrl+C a second time to
+  kill them right away. Apps that were already running are left alone. If
+  `devcli` itself is killed, `pm-daemon` stops its apps within a few seconds.
+- **Detached** (`--detached`, `--json`, or `devcli pref set detached-mode true`):
+  returns immediately; the apps keep running until `devcli stop`
 - Starts monitor daemon automatically
-- Tracks process state in `~/.devcli/state.json`
-- Logs to `~/.devcli/logs/<project>_<app>_<date>.log`
+- Tracks process state in `~/.devcli/processes/`
+- Logs to `~/.devcli/logs/<project>_<app>_<env>_<date>.log`
 
 **Dependencies**:
 ```bash

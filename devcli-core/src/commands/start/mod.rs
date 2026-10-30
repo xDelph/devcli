@@ -8,7 +8,7 @@
 //!
 //! The main command can start multiple apps at once and handles dependencies
 //! for all apps collectively. In non-detached mode, it keeps the main process
-//! alive to show logs from all apps.
+//! alive to show logs from all apps, and stops them when it ends.
 
 mod dependencies;
 mod executor;
@@ -28,9 +28,10 @@ mod resolver_test;
 // Re-export public API to maintain compatibility
 pub use dependencies::handle_dependencies;
 pub use executor::{start_apps_in_parallel, start_single_app_internal};
-pub use logging::setup_log_monitoring;
+pub use logging::run_attached;
 pub use resolver::{resolve_apps_to_start, validate_and_get_command, AppToStart, StartCommandArgs};
 
+use crate::config::load_preferences;
 use crate::process_manager_support::{find_process, state_store};
 use crate::Result;
 
@@ -54,6 +55,52 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
 
     let silent = args.silent;
 
+    // Attached (the default): the apps live as long as this command, like
+    // `docker compose up`. Detached: they keep running after it returns.
+    // `--json` implies detached mode: an agent wants a result, not a live log
+    // stream it cannot consume. The TUI (silent) manages apps itself.
+    let detached = args.detached || crate::output::json_enabled();
+    let attached = !detached && !silent && !load_preferences()?.detached_mode;
+    // Listen for Ctrl+C before anything starts, so an interrupt during start-up
+    // stops what was already launched instead of leaving it behind.
+    let mut signals = attached.then(logging::Signals::new).transpose()?;
+    let owner = attached.then(std::process::id);
+
+    let started = start_apps(&args, owner).await;
+    let (started_apps, environment) = match (started, signals.as_mut()) {
+        (Ok(started), _) => started,
+        (Err(e), Some(signals)) => {
+            // Do not leave behind the dependencies started before the failure.
+            logging::stop_after_failed_start(signals).await;
+            return Err(e);
+        }
+        (Err(e), None) => return Err(e),
+    };
+
+    // Step 4: Stream logs and stop the apps on exit, or return right away
+    if let Some(signals) = signals.as_mut() {
+        run_attached(&started_apps, signals).await?;
+    } else if !silent {
+        if crate::output::json_enabled() {
+            crate::output::print_json(&serde_json::json!({
+                "started": started_apps,
+                "environment": environment,
+                "detached": true,
+            }))?;
+        } else {
+            println!("\nRunning in background (detached mode, no terminal output)");
+        }
+    }
+
+    Ok(())
+}
+
+/// Steps 1-3 of `start_command`: resolve the apps, start their missing
+/// dependencies, then the apps themselves. Returns the names of the apps
+/// started and the environment used.
+async fn start_apps(args: &StartCommandArgs, owner: Option<u32>) -> Result<(Vec<String>, String)> {
+    let silent = args.silent;
+
     // Step 1: Resolve all apps to start and validate them
     let (apps_to_start, environment) = resolve_apps_to_start(args.clone()).await?;
 
@@ -61,7 +108,7 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     if !args.skip_deps {
         let apps_refs: Vec<&crate::config::resolver::ResolvedApp> =
             apps_to_start.iter().map(|a| &a.resolved_app).collect();
-        handle_dependencies(&apps_refs, &environment, silent).await?;
+        handle_dependencies(&apps_refs, &environment, silent, owner).await?;
     }
 
     // Step 2.5: Filter out apps that are now running (started as dependencies)
@@ -99,29 +146,9 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         silent,
         args.stage.clone(),
         args.output_tx.clone(),
+        owner,
     )
     .await?;
 
-    // Step 4: Handle different modes and keep process alive for log viewing
-    //
-    // `--json` implies detached mode: an agent wants a result, not a live log
-    // stream it cannot consume.
-    let detached = args.detached || crate::output::json_enabled();
-    if detached || silent {
-        if !silent {
-            if crate::output::json_enabled() {
-                crate::output::print_json(&serde_json::json!({
-                    "started": started_apps,
-                    "environment": environment,
-                    "detached": true,
-                }))?;
-            } else {
-                println!("\nRunning in background (detached mode, no terminal output)");
-            }
-        }
-    } else {
-        setup_log_monitoring(&started_apps, silent).await?;
-    }
-
-    Ok(())
+    Ok((started_apps, environment))
 }

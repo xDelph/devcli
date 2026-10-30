@@ -17,13 +17,15 @@ use crate::process_manager_support::{
 };
 use crate::utils::path::expand_path;
 use crate::Result;
-use process_manager::state::{ManagedProcess, ProcessRuntime};
+use process_manager::state::{ManagedProcess, ProcessRuntime, OWNER_PID_KEY};
 use process_manager::{engine, Task};
 use std::collections::HashMap;
 
 /// Start all apps in parallel
 ///
-/// Returns a vector of successfully started app names
+/// `owner` is the PID of an attached `devcli start` the apps live and die with
+/// (`None` for detached starts). Returns a vector of successfully started app
+/// names.
 #[tracing::instrument(skip(apps_to_start, output_tx), fields(app_count = apps_to_start.len(), environment = %environment))]
 pub async fn start_apps_in_parallel(
     apps_to_start: Vec<AppToStart>,
@@ -31,6 +33,7 @@ pub async fn start_apps_in_parallel(
     silent: bool,
     stage_override: Option<String>,
     output_tx: Option<OutputChannel>,
+    owner: Option<u32>,
 ) -> Result<Vec<String>> {
     tracing::info!(
         app_count = apps_to_start.len(),
@@ -57,17 +60,9 @@ pub async fn start_apps_in_parallel(
         let output_tx = output_tx.clone();
 
         let task = tokio::spawn(async move {
-            start_single_app_process(
-                app_info.resolved_app,
-                app_info.command,
-                app_info.default_command,
-                environment,
-                show_output,
-                stage,
-                output_tx,
-            )
-            .await
-            .map_err(|e| format!("{}: {}", app_name, e))
+            start_single_app_process(app_info, environment, show_output, stage, output_tx, owner)
+                .await
+                .map_err(|e| format!("{}: {}", app_name, e))
         });
 
         tasks.push(task);
@@ -140,23 +135,27 @@ pub async fn start_apps_in_parallel(
 /// This is used by the parallel app starting logic.
 /// Returns the app name on success for reporting.
 #[tracing::instrument(
-    skip(resolved_app, command, default_command, output_tx),
+    skip(app, output_tx),
     fields(
-        app = %resolved_app.app_name,
-        project = %resolved_app.project,
+        app = %app.resolved_app.app_name,
+        project = %app.resolved_app.project,
         environment = %environment,
         stage = ?stage_override
     )
 )]
 async fn start_single_app_process(
-    resolved_app: crate::config::resolver::ResolvedApp,
-    command: String,
-    default_command: String,
+    app: AppToStart,
     environment: String,
     show_output: bool,
     stage_override: Option<String>,
     output_tx: Option<OutputChannel>,
+    owner: Option<u32>,
 ) -> Result<String> {
+    let AppToStart {
+        resolved_app,
+        command,
+        default_command,
+    } = app;
     let app_name = resolved_app.app_name.clone();
 
     tracing::debug!(
@@ -284,6 +283,9 @@ async fn start_single_app_process(
     if let Some(alt) = &resolved_app.app.alternative_name {
         metadata.insert("alternative_name".to_string(), alt.clone());
     }
+    if let Some(owner) = owner {
+        metadata.insert(OWNER_PID_KEY.to_string(), owner.to_string());
+    }
 
     let managed = ManagedProcess {
         id,
@@ -328,7 +330,11 @@ async fn start_single_app_process(
 /// This is a simplified version of start_command that handles exactly one app.
 /// Used when starting dependencies in parallel.
 #[tracing::instrument(skip(args), fields(app = ?args.app_names.first(), project = ?args.project))]
-pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool) -> Result<()> {
+pub async fn start_single_app_internal(
+    args: StartCommandArgs,
+    show_output: bool,
+    owner: Option<u32>,
+) -> Result<()> {
     // Validate that we have exactly one app name (this is for dependencies)
     if args.app_names.len() != 1 {
         anyhow::bail!("start_single_app_internal expects exactly one app name");
@@ -419,13 +425,16 @@ pub async fn start_single_app_internal(args: StartCommandArgs, show_output: bool
 
     // Start the single app using our helper function
     start_single_app_process(
-        resolved_app,
-        command,
-        default_command,
+        AppToStart {
+            resolved_app,
+            command,
+            default_command,
+        },
         environment,
         show_output,
         args.stage,
         args.output_tx,
+        owner,
     )
     .await?;
 

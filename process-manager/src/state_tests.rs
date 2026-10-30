@@ -480,4 +480,45 @@ mod tests {
         assert!(!store.daemon_running());
         assert!(store.try_lock_daemon().unwrap().is_some());
     }
+
+    /// PID of a process that has already exited (and been reaped).
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    /// An entry is orphaned once the attached `devcli start` owning it is gone,
+    /// including when the owner's PID now belongs to a younger process.
+    #[test]
+    fn test_owner_gone() {
+        let mut process = create_test_process("owned", std::process::id());
+        assert!(!process.owner_gone(), "no owner: never orphaned");
+
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), std::process::id().to_string());
+        assert_eq!(process.owner_pid(), Some(std::process::id()));
+        assert!(!process.owner_gone(), "the owner (this test) is alive");
+
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_pid().to_string());
+        assert!(process.owner_gone(), "the owner exited");
+
+        // A live PID that started after the entry is not the owner.
+        let mut younger = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), younger.id().to_string());
+        process.start_time = Utc::now() - chrono::Duration::minutes(5);
+        let reused = process.owner_gone();
+        let _ = younger.kill();
+        let _ = younger.wait();
+        assert!(reused, "the owner's PID was reused");
+    }
 }

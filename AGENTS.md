@@ -8,7 +8,9 @@ shapes, and non-interactive behaviour.
 
 1. **Always pass `--json`.** Every command that reports state has a
    machine-readable form. `--json` also implies *detached* mode for `start`
-   (devcli returns immediately instead of streaming logs).
+   (devcli returns immediately instead of streaming logs, and the apps keep
+   running afterwards). Without it, `start` stays attached and stops the apps
+   it started when it is interrupted or exits.
 2. **Never rely on prompts.** Pass explicit flags (`--project`, `--name`,
    `--yes`, `--env`). When stdin is not a TTY, interactive commands fail
    fast with a clear error instead of hanging.
