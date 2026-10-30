@@ -154,9 +154,14 @@ pub async fn run(cli: Cli) -> Result<()> {
             devcli_core::commands::worktrees_command(args).await?;
         }
 
-        Commands::HealthCheck { app_name, env } => {
+        Commands::HealthCheck {
+            app_name,
+            project,
+            env,
+        } => {
             let args = devcli_core::commands::health_check::HealthCheckArgs {
                 app_name,
+                project,
                 environment: env,
             };
             health_check_command(args).await?;

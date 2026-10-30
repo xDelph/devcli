@@ -168,7 +168,7 @@ devcli --json config validate
 ### `health-check`
 
 ```bash
-devcli --json health-check api --env local
+devcli --json health-check api --project proj --env local
 ```
 
 ```json

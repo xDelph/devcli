@@ -263,6 +263,9 @@ pub enum Commands {
         #[arg(help = "Name of the application to check")]
         app_name: String,
 
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
+
         #[arg(
             short,
             long,
@@ -622,6 +625,7 @@ mod tests {
             health,
             Commands::HealthCheck {
                 app_name: "api".into(),
+                project: None,
                 env: Some("orbstack".into()),
             }
         );

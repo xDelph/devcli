@@ -13,6 +13,8 @@ use serde_json::json;
 pub struct HealthCheckArgs {
     /// Name of the app to check (can be in format "project/app" or just "app")
     pub app_name: String,
+    /// Project of the app, when its name is ambiguous
+    pub project: Option<String>,
     /// Optional environment to check (local, docker, orbstack, k8s)
     pub environment: Option<String>,
 }
@@ -24,7 +26,7 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     let resolved = crate::worktrees::resolve(
         &config,
         &args.app_name,
-        None,
+        args.project.as_deref(),
         crate::worktrees::Mode::FromCwd,
     )
     .context("Failed to resolve app")?;
@@ -209,6 +211,7 @@ mod tests {
     #[test]
     fn test_health_check_args_creation() {
         let args = HealthCheckArgs {
+            project: None,
             app_name: "test-app".to_string(),
             environment: Some("local".to_string()),
         };
@@ -220,6 +223,7 @@ mod tests {
     #[test]
     fn test_health_check_args_no_env() {
         let args = HealthCheckArgs {
+            project: None,
             app_name: "test-app".to_string(),
             environment: None,
         };
