@@ -472,3 +472,25 @@ fn an_attached_start_of_a_running_app_stops_nothing() {
         sb.attached_output()
     );
 }
+
+/// Under an AI agent, a `start` without `--json` or `--detached` still
+/// returns right away (the agent's command timeout would otherwise end the
+/// session and stop the app).
+#[test]
+fn under_an_agent_start_always_returns() {
+    let sb = Sandbox::new();
+    let mut start = sb
+        .command(&["start", "ticker", "--project", "smoke"])
+        .env("DEVCLI_AGENT", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let status = wait_exit(&mut start, Duration::from_secs(15));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "start did not return: {status:?}"
+    );
+    assert!(wait_for(Duration::from_secs(5), || sb.running().len() == 1));
+}

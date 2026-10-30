@@ -74,7 +74,11 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     // `docker compose up`. Detached: they keep running after it returns.
     // `--json` implies detached mode: an agent wants a result, not a live log
     // stream it cannot consume. The TUI (silent) manages apps itself.
-    let detached = args.detached || crate::output::json_enabled();
+    // An AI agent waits for its command to return, then kills it once its
+    // command timeout expires, which would end the session and stop the apps:
+    // under an agent, `start` always returns right away.
+    let detached =
+        args.detached || crate::output::json_enabled() || crate::utils::agent::detect().is_some();
     let attached = !detached && !silent && !load_preferences()?.detached_mode;
     // Listen for Ctrl+C before anything starts, so an interrupt during start-up
     // stops what was already launched instead of leaving it behind.

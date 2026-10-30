@@ -292,7 +292,10 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
 
     // Non-detached mode: keep viewing until Ctrl+C or process exits. `--json`
     // implies detached, like `start`: an agent waiting on this would hang.
-    if !preferences.detached_mode && !crate::output::json_enabled() {
+    if !preferences.detached_mode
+        && !crate::output::json_enabled()
+        && crate::utils::agent::detect().is_none()
+    {
         emit_line(
             silent,
             args.output_tx.as_ref(),
