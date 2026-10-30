@@ -52,6 +52,9 @@ impl Sandbox {
             .env("HOME", self.dir.path())
             .env("PATH", "/usr/bin:/bin")
             .env("NO_COLOR", "1")
+            // A person by default, even when the tests themselves run under an
+            // AI agent (which would refuse the `stop --all` of the cleanup).
+            .env("DEVCLI_AGENT", "0")
             .env_remove("devcli_CONFIG_DIR")
             .env_remove("LOG_LEVEL")
             .current_dir(self.dir.path());
@@ -353,4 +356,47 @@ fn restart_detached_returns_and_keeps_the_app_running() {
     let running = sb.running();
     assert_eq!(running.len(), 1, "running: {running:?}");
     assert_ne!(running[0].1, old_pid, "the app was not restarted");
+}
+
+/// Under an AI agent, `stop --all` (and a whole-project stop) is refused:
+/// it would also stop what the user and other agents run.
+#[test]
+fn agents_cannot_stop_everything() {
+    let sb = Sandbox::new();
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 1));
+
+    for args in [
+        vec!["--json", "stop", "--all"],
+        vec!["--json", "stop", "--project", "smoke"],
+    ] {
+        let out = sb
+            .command(&args)
+            .env("CLAUDE_CODE_CHILD_SESSION", "1")
+            .env_remove("DEVCLI_AGENT")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(out.stdout.is_empty());
+        let err = single_json(&out.stderr, &args);
+        assert!(err["error"].as_str().unwrap().contains("AI agent"), "{err}");
+        assert_eq!(sb.running().len(), 1, "{args:?} stopped something");
+    }
+
+    // Listing is fine, and so is stopping an app by name.
+    let dry = sb
+        .command(&["--json", "stop", "--all", "--dry-run"])
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env_remove("DEVCLI_AGENT")
+        .output()
+        .unwrap();
+    assert!(dry.status.success());
+    let named = sb
+        .command(&["--json", "stop", "ticker", "--project", "smoke"])
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env_remove("DEVCLI_AGENT")
+        .output()
+        .unwrap();
+    assert!(named.status.success());
+    assert_eq!(sb.running(), vec![]);
 }
