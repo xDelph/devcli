@@ -156,7 +156,8 @@ devcli --json config validate
 
 - `config list` → `{ "projects": [ { "name", "alternative_name", "apps": [...] } ] }`
   or `{ "apps": ["api", "worker"] }` with `--apps-only`.
-- `config show` → the fully resolved app (type, path, defaults, dependencies,
+- `config show` → the fully resolved app (type, path, port, health check,
+  restart policy, defaults, dependencies,
   commands per environment, env files). `defaults` and `commands` have one key
   per environment (`local`, `docker`, `orbstack`, `docker-compose`, `k8s`,
   `ci`), `null` when not configured.

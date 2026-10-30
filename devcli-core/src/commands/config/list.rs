@@ -340,6 +340,9 @@ fn config_show_json(
         "commands": commands_json(&resolved.app),
         "env_files": resolved.app.env_files,
         "dockerfile_path": resolved.app.dockerfile_path,
+        "port": resolved.app.port,
+        "health_check": resolved.app.health_check,
+        "restart_policy": resolved.app.restart_policy,
     }))
 }
 
