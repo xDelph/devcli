@@ -52,7 +52,8 @@ Create a configuration file in `~/.devcli/config.json`:
 devcli config init
 ```
 
-This creates a template configuration that you can edit.
+This writes an empty configuration (`{"projects": {}}`) and prints an example
+project you can copy into it. It refuses to overwrite an existing file.
 
 ### 2. Edit Configuration
 
@@ -107,7 +108,8 @@ devcli config validate
 
 ### 4. Set Preferences
 
-Set your default environment (local or docker):
+Set your default environment (`local`, `docker`, `orbstack`, `docker-compose`,
+`k8s` or `ci`):
 
 ```bash
 devcli pref set default-env local
@@ -180,12 +182,16 @@ Example output:
 
 ```
 PROJECT: my-project
-  [api] (local)  PID: 12345  running  2h 15m  npm start
-  [worker] (local)  PID: 12346  running  1h 30m  npm run worker
+  [api (local) [start]]  PID: 12345  running  2h 15m  npm start
+  [worker (local) [start]]  PID: 12346  running  1h 30m  npm run worker
 
 PROJECT: other-project
-  [frontend] (local)  PID: 12347  running  45m  npm run dev
+  [frontend (local) [dev]]  PID: 12347  running  45m  npm run dev
 ```
+
+Each line shows the app, its environment and the command that runs. `status`
+exits with code 1 when no tracked process is running, and fails on an app name
+that is neither configured nor running.
 
 ### Configuration Management
 
@@ -242,7 +248,7 @@ devcli stop api             # stops it, never the main checkout's
 devcli worktrees            # every worktree, its slot, branch and running apps
 devcli start api@agent-1    # the same instance, from anywhere
 devcli start api@           # the configured checkout, from anywhere
-devcli stop api@*           # every checkout
+devcli stop api@*           # every checkout (refused under an AI agent)
 ```
 
 A worktree instance is the project `shop@agent-1`: its own process, state and
@@ -252,7 +258,8 @@ they exist; an app gets `DEVCLI_WORKTREE`, `DEVCLI_WORKTREE_INDEX` and
 to have devcli shift it:
 
 ```json
-{ "path": "~/code/shop/apps/api", "port": 3000, "commands": { "local": { "dev": "npm run dev" } } }
+{ "type": "nodejs", "path": "~/code/shop/apps/api", "port": 3000,
+  "commands": { "local": { "dev": "npm run dev" } }, "defaults": { "local": "dev" } }
 ```
 
 `api` then listens on 3000 in the main checkout and on 3100 in slot 1, and its
@@ -262,7 +269,10 @@ shifted. Also handled:
 - a fresh worktree has no env files (they are gitignored): the main
   checkout's are used until the worktree has its own
 - dependencies in the same repository start in the same worktree; shared ones
-  (a database, another repository) stay the configured instance
+  (a database, another repository) stay the configured instance. Each app gets
+  `DEVCLI_PORT_<APP>` with the port of each dependency that declares one (for
+  example `sh -c 'API_URL=http://localhost:$DEVCLI_PORT_API npm run dev'` as a
+  command), so a worktree's web talks to its own api
 - Docker Compose apps get a `COMPOSE_PROJECT_NAME` per worktree
 - deleting a worktree stops the apps that ran from it (pm-daemon)
 - `auto-add` run inside a worktree registers the main checkout's path
@@ -311,8 +321,10 @@ own file:
 Agents are told to act on the apps they work on, by name, and devcli enforces
 the part that matters: when it detects it runs under an AI agent (from the
 variables agent harnesses set, such as `CLAUDECODE`, `CODEX_SANDBOX`,
-`GEMINI_CLI`, `CURSOR_AGENT`), it refuses `stop --all` and `stop --project P`
-without an app, which would also stop what you and other agents run.
+`GEMINI_CLI`, `CURSOR_AGENT`), it refuses `stop --all`, `stop --project P`
+without an app and `APP@*` (every worktree) for `start` and `stop`, which would
+also reach what you and other agents run. Under an agent, `start`, `restart`
+and `run` also always return right away instead of staying attached.
 `DEVCLI_AGENT=1` turns this on for a harness devcli does not recognise,
 `DEVCLI_AGENT=0` turns it off. It guards against mistakes, not against an agent
 determined to kill processes.
@@ -329,9 +341,12 @@ refresh the rules.
 
 All processes are defined in `~/.devcli/config.json`:
 - Centralized configuration for all projects and apps
-- Support for multiple environments (local, docker)
+- Support for multiple environments (local, docker, orbstack, docker-compose,
+  k8s, ci)
 - Default commands per environment
 - Path expansion for home directory (~) and environment variables
+- Commands are split into arguments like a shell would, but run without a
+  shell: wrap pipes, `&&` or `VAR=value` prefixes in `sh -c '...'`
 
 ### Dependency Resolution
 
@@ -356,6 +371,10 @@ devcli will:
 Define separate commands for different environments:
 - `local`: Commands for local development
 - `docker`: Commands for Docker containers
+- `orbstack`: Docker commands run with the OrbStack context
+- `docker-compose` (alias `compose` on the command line): Docker Compose commands
+- `k8s`: Kubernetes commands
+- `ci`: CI pipeline commands
 
 Set your preferred environment once, or override per command.
 
@@ -378,7 +397,11 @@ Use `alternative_name` for projects and apps to:
       "alternative_name": "ProjectX",
       "apps": {
         "sensitive-api": {
-          "alternative_name": "Backend"
+          "alternative_name": "Backend",
+          "type": "nodejs",
+          "path": "~/code/internal-project/api",
+          "commands": { "local": { "start": "npm start" } },
+          "defaults": { "local": "start" }
         }
       }
     }
@@ -388,12 +411,16 @@ Use `alternative_name` for projects and apps to:
 
 ### Log Management
 
-All process logs are automatically saved to:
+All process output (stdout and stderr) is saved to:
 ```
-~/.devcli/logs/<app-name>_<timestamp>.log
+~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log
 ```
 
-Logs include timestamps and are preserved for review.
+Lines are written as the app prints them (devcli adds no timestamps). A file
+larger than 20 MiB is copied to `<name>.log.1` and truncated. Read them with
+`devcli logs APP` or the TUI. devcli's own log is
+`~/.devcli/logs/devcli.json.YYYY-MM-DD` (JSON, one file per day; verbosity set
+with `LOG_LEVEL`).
 
 ### Process Tracking
 
@@ -436,6 +463,8 @@ devcli --json auto-add --path ./apps/api --yes --project proj --name api
 - **`--no-color`** and automatic color-off when stdout is not a TTY.
 - **Meaningful exit codes**: `status` (0 running / 1 not), `health-check`
   (0 healthy / 2 unhealthy / 1 error), `config validate` (1 invalid).
+- **No hanging**: under an AI agent, `start`, `restart` and `run` return right
+  away; `stop --all`, whole-project stops and `@*` are refused.
 - **Non-interactive mode** for `auto-add` (`--yes`, `--project`, `--name`,
   `--type`); commands fail fast instead of hanging when there is no terminal.
 See **[AGENTS.md](./AGENTS.md)** for the full agent contract (flags, exit

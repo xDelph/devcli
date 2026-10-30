@@ -108,8 +108,12 @@ impl MainView {
 
             match load_config_cached() {
                 Ok(config) => {
-                    if let Some(project) =
-                        config.projects.get(crate::worktrees::split(&app.project).0)
+                    // A worktree row (`proj@slug`) shows its project's
+                    // configuration; a project named with `@` is itself.
+                    if let Some(project) = config
+                        .projects
+                        .get(&app.project)
+                        .or_else(|| config.projects.get(crate::worktrees::split(&app.project).0))
                         && let Some(full_app) = project.apps.get(&app.name)
                     {
                         // Get project alternative_name if present

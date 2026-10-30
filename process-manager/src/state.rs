@@ -51,6 +51,11 @@ pub const STOPPING_KEY: &str = "stopping";
 /// if the owner died without doing so (killed, crashed, terminal closed).
 pub const OWNER_PID_KEY: &str = "owner_pid";
 
+/// Metadata key set on an owned process that another app depends on: when
+/// its owner ends (or dies), the process is released (it loses its owner and
+/// keeps running) instead of being stopped under the app that needs it.
+pub const SHARED_KEY: &str = "shared";
+
 /// Metadata key holding the root of the git worktree the process runs from.
 /// When that directory is deleted (a sub-agent removing its worktree), the
 /// app has nothing left to serve and pm-daemon stops it.
@@ -63,6 +68,17 @@ pub const WORKTREE_ROOT_KEY: &str = "worktree_root";
 /// app the user had just stopped and leave the new process running untracked.
 pub struct EntryLock {
     file: fs::File,
+}
+
+/// A restart in progress (see [`StateStore::begin_restart`]); removed on drop.
+pub struct RestartMarker {
+    path: PathBuf,
+}
+
+impl Drop for RestartMarker {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 /// The monitor singleton lock; released when dropped (or the process exits).
@@ -255,11 +271,71 @@ impl StateStore {
         let Some(mut process) = self.load(id)? else {
             return Ok(None);
         };
+        // Who is stopping it: if that process dies midway, pm-daemon finishes
+        // the job instead of skipping the entry forever.
         process
             .metadata
-            .insert(STOPPING_KEY.to_string(), "true".to_string());
+            .insert(STOPPING_KEY.to_string(), std::process::id().to_string());
         self.save(&process)?;
         Ok(Some(process))
+    }
+
+    /// Record that `process` is being restarted, until the returned marker is
+    /// dropped: between the stop and the start no entry exists, and the
+    /// attached session owning the app must not take that gap for its end.
+    pub fn begin_restart(&self, process: &ManagedProcess) -> Result<RestartMarker> {
+        let path = self.base_dir.join(format!("{}.restarting", process.id));
+        let owner = process
+            .owner_pid()
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        fs::write(&path, format!("{} {}", std::process::id(), owner))?;
+        Ok(RestartMarker { path })
+    }
+
+    /// Whether a restart still running (its process alive) is replacing an
+    /// app owned by `owner`.
+    pub fn restart_pending_for_owner(&self, owner: &str) -> bool {
+        let Ok(entries) = fs::read_dir(&self.base_dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("restarting") {
+                return false;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                return false;
+            };
+            let mut fields = content.split_whitespace();
+            let restarter = fields.next().and_then(|p| p.parse::<u32>().ok());
+            restarter.is_some_and(crate::engine::pid_alive) && fields.next() == Some(owner)
+        })
+    }
+
+    /// Mark entry `id` as needed by another app (see [`SHARED_KEY`]).
+    pub fn mark_shared(&self, id: &str) -> Result<()> {
+        let _guard = self.lock_entry(id)?;
+        if let Some(mut process) = self.load(id)?
+            && !process.is_shared()
+        {
+            process
+                .metadata
+                .insert(SHARED_KEY.to_string(), "true".to_string());
+            self.save(&process)?;
+        }
+        Ok(())
+    }
+
+    /// Let entry `id` go: it keeps running, owned by nobody, until stopped.
+    pub fn release(&self, id: &str) -> Result<()> {
+        let _guard = self.lock_entry(id)?;
+        if let Some(mut process) = self.load(id)? {
+            process.metadata.remove(OWNER_PID_KEY);
+            process.metadata.remove(SHARED_KEY);
+            self.save(&process)?;
+        }
+        Ok(())
     }
 
     /// Take the monitor singleton lock, or `None` if a monitor already holds it.
@@ -501,11 +577,37 @@ impl ManagedProcess {
             .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
     }
 
+    /// Whether the process that set the `stopping` flag is gone (killed while
+    /// stopping the app). Entries flagged by older versions (`true`) count as
+    /// abandoned.
+    pub fn stopper_gone(&self) -> bool {
+        match self.metadata.get(STOPPING_KEY) {
+            None => false,
+            Some(value) => value
+                .parse::<u32>()
+                .map_or(true, |pid| !crate::engine::pid_alive(pid)),
+        }
+    }
+
+    /// Whether another app depends on this owned process.
+    pub fn is_shared(&self) -> bool {
+        self.metadata.contains_key(SHARED_KEY)
+    }
+
     /// Whether the process runs from a git worktree that has been deleted.
+    ///
+    /// Only a root reported as not found counts, not one that cannot be read
+    /// for a moment. And a worktree moved with `mv` is not deleted: the
+    /// process's working directory then still exists, at its new path.
     pub fn worktree_gone(&self) -> bool {
-        self.metadata
-            .get(WORKTREE_ROOT_KEY)
-            .is_some_and(|root| !std::path::Path::new(root).is_dir())
+        let Some(root) = self.metadata.get(WORKTREE_ROOT_KEY) else {
+            return false;
+        };
+        let missing = matches!(
+            std::fs::symlink_metadata(root),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        );
+        missing && !crate::engine::process_cwd(self.pid).is_some_and(|cwd| cwd.is_dir())
     }
 
     /// The attached `devcli start` this process lives and dies with, if any.

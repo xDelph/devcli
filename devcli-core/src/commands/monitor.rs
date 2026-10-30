@@ -16,6 +16,9 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
         let store = state_store()?;
         let cleaned = store.cleanup_dead()?;
 
+        if crate::output::json_enabled() {
+            return crate::output::print_json(&serde_json::json!({ "cleaned": cleaned }));
+        }
         if cleaned.is_empty() {
             println!("No dead processes found");
         } else {
@@ -48,6 +51,15 @@ pub async fn monitor_command(daemon: bool) -> Result<()> {
     });
 
     let _ = state.cleanup_dead();
+
+    // Long-running: with --json, one document saying it runs, nothing else.
+    if crate::output::json_enabled() {
+        crate::output::print_json(&serde_json::json!({
+            "monitor": "running",
+            "state_dir": base_dir,
+            "pid": std::process::id(),
+        }))?;
+    }
 
     let monitor = Monitor::new(
         state,

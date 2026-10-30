@@ -53,6 +53,8 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         args.project.as_deref(),
     )?;
     processes.retain(|p| selection.matches(&p.metadata));
+    selection.check_unambiguous(processes.iter().map(|p| &p.metadata))?;
+    selection.check_found(processes.len())?;
 
     if crate::output::json_enabled() {
         return status_json(&args, &store, processes).await;

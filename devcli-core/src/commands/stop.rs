@@ -212,10 +212,13 @@ fn filter_processes(
         args.app_name.as_deref(),
         args.project.as_deref(),
     )?;
-    Ok(processes
+    let matched: Vec<_> = processes
         .into_iter()
         .filter(|p| selection.matches(&p.metadata))
-        .collect())
+        .collect();
+    selection.check_unambiguous(matched.iter().map(|p| &p.metadata))?;
+    selection.check_found(matched.len())?;
+    Ok(matched)
 }
 
 /// An agent stops the apps it works on, by name. `stop --all`, `APP@*` /
@@ -313,6 +316,12 @@ pub(crate) async fn stop_single_process(
         return Ok(());
     };
     let process = &current;
+    // Dead already (crashed, waiting for a restart): its PID may belong to an
+    // unrelated process by now, so signal nothing and forget the entry.
+    if !store.is_running(process) {
+        store.delete(&process.id)?;
+        return Ok(());
+    }
 
     let display_name = process
         .metadata

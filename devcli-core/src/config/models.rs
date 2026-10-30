@@ -227,9 +227,9 @@ pub struct App {
     // Port the app listens on, when it reads it from `$PORT`. devcli then
     // exports PORT (and DEVCLI_PORT) to the app, shifted by DEVCLI_PORT_OFFSET
     // in a git worktree so instances of several worktrees can run side by
-    // side; health checks on this port are shifted too.
-    // OPTIONAL: without it, a PORT from the app's env files is shifted in
-    // worktrees only.
+    // side; health checks on this port are shifted too. A PORT set by the
+    // app's env files wins over it (and is the one shifted).
+    // OPTIONAL: without it, only an env files' PORT is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 
@@ -580,7 +580,7 @@ pub struct Preferences {
     pub docker_platform: String,
 
     // Default deployment stage to use when starting apps
-    // Can be any string (dev, qa, preprod, prod, staging, etc.)
+    // One of dev, qa, preprod, prod
     // OPTIONAL: If not set, no default stage is applied
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_stage: Option<String>,

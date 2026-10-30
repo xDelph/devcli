@@ -256,6 +256,22 @@ pub async fn config_show(app_name: String, project: Option<String>) -> Result<()
     // Display defaults (if configured)
     println!("\nDefaults: {}", defaults_summary(&resolved.app));
 
+    if let Some(port) = resolved.app.port {
+        println!("Port: {port}");
+    }
+    if let Some(check) = &resolved.app.health_check {
+        println!(
+            "Health check: {}",
+            serde_json::to_string(check).unwrap_or_default()
+        );
+    }
+    if let Some(policy) = &resolved.app.restart_policy {
+        println!(
+            "Restart policy: {}",
+            serde_json::to_string(policy).unwrap_or_default()
+        );
+    }
+
     // Display dependencies if any
     if !resolved.app.dependencies.is_empty() {
         println!("\nDependencies:");
@@ -340,6 +356,9 @@ fn config_show_json(
         "commands": commands_json(&resolved.app),
         "env_files": resolved.app.env_files,
         "dockerfile_path": resolved.app.dockerfile_path,
+        "port": resolved.app.port,
+        "health_check": resolved.app.health_check,
+        "restart_policy": resolved.app.restart_policy,
     }))
 }
 

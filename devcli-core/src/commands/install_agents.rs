@@ -186,6 +186,29 @@ impl Agent {
     }
 }
 
+impl Agent {
+    /// Every user-level file devcli may have written its block into: for
+    /// Codex and pi, `AGENTS.md` and `AGENTS.override.md` (whichever was in
+    /// use at the time).
+    fn rule_files(self, homes: &Homes) -> Vec<PathBuf> {
+        let dir = self.home(homes);
+        match (self, self.target(homes)) {
+            (Agent::Codex | Agent::Pi, _) => {
+                vec![dir.join("AGENTS.override.md"), dir.join("AGENTS.md")]
+            }
+            (_, target) => vec![target.into_path()],
+        }
+    }
+}
+
+impl Target {
+    fn into_path(self) -> PathBuf {
+        match self {
+            Target::Block(path) | Target::File(path) => path,
+        }
+    }
+}
+
 /// For agents where an `AGENTS.override.md` replaces `AGENTS.md` (Codex, pi):
 /// the file that is actually read.
 fn agents_md_in_use(dir: &Path) -> PathBuf {
@@ -379,18 +402,68 @@ fn read_existing(path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// The file `path` really is: a symlink is followed, so writing through it
+/// updates the file it points to (a CLAUDE.md kept in a dotfiles
+/// repository) instead of replacing the link with a copy.
+fn real_file(path: &Path) -> PathBuf {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::canonicalize(path).unwrap_or_else(|_| match std::fs::read_link(path) {
+                Ok(target) if target.is_relative() => {
+                    path.parent().map(|dir| dir.join(&target)).unwrap_or(target)
+                }
+                Ok(target) => target,
+                Err(_) => path.to_path_buf(),
+            })
+        }
+        _ => path.to_path_buf(),
+    }
+}
+
+/// How many previous versions of a file are kept.
+const BACKUPS_KEPT: usize = 5;
+
 /// Save the previous content of `path` under devcli's own directory, so a
 /// backup never lands next to the file (and in the user's repository).
+///
+/// Named after the file's absolute path, escaped so that two paths never
+/// share a name, plus a timestamp; the last few versions are kept.
 fn backup(homes: &Homes, path: &Path, previous: &str) -> Result<PathBuf> {
-    let name = path
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let escaped: String = absolute
         .to_string_lossy()
-        .trim_start_matches('/')
-        .replace(['/', '\\', ':'], "__");
-    let backup_path = homes.devcli.join("backups").join("agents").join(name);
-    if let Some(parent) = backup_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        .chars()
+        .map(|c| match c {
+            '%' => "%25".to_string(),
+            '/' => "%2F".to_string(),
+            '\\' => "%5C".to_string(),
+            ':' => "%3A".to_string(),
+            c => c.to_string(),
+        })
+        .collect();
+    let dir = homes.devcli.join("backups").join("agents");
+    std::fs::create_dir_all(&dir)?;
+    // No `.` in the stamp: the escaped path ends at the last one.
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%6f").to_string();
+    let mut backup_path = dir.join(format!("{escaped}.{stamp}"));
+    let mut n = 1;
+    while backup_path.exists() {
+        backup_path = dir.join(format!("{escaped}.{stamp}-{n}"));
+        n += 1;
     }
     std::fs::write(&backup_path, previous)?;
+
+    let prefix = format!("{escaped}.");
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|e| e.path())
+        .collect();
+    versions.sort();
+    let excess = versions.len().saturating_sub(BACKUPS_KEPT);
+    for old in &versions[..excess] {
+        let _ = std::fs::remove_file(old);
+    }
     Ok(backup_path)
 }
 
@@ -403,13 +476,17 @@ fn replace_file(
     content: &str,
 ) -> Result<Option<PathBuf>> {
     let saved = previous.map(|p| backup(homes, path, p)).transpose()?;
-    if content.is_empty() {
-        std::fs::remove_file(path)?;
+    let linked = real_file(path) != path;
+    let path = real_file(path);
+    if content.is_empty() && !linked {
+        std::fs::remove_file(&path)?;
     } else {
+        // An emptied file behind a symlink stays (empty): deleting it would
+        // leave the link dangling.
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        config_manager::utils::fs::write_atomic(path, content.as_bytes())?;
+        config_manager::utils::fs::write_atomic(&path, content.as_bytes())?;
     }
     Ok(saved)
 }
@@ -517,10 +594,11 @@ fn write_owned(
         if keep_backup && let Some(p) = previous.as_deref() {
             saved = Some(backup(homes, path, p)?);
         }
-        if let Some(parent) = path.parent() {
+        let target = real_file(path);
+        if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        config_manager::utils::fs::write_atomic(path, content.as_bytes())?;
+        config_manager::utils::fs::write_atomic(&target, content.as_bytes())?;
     }
     Ok(Outcome {
         agent,
@@ -539,15 +617,24 @@ fn install_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
 
     let body = GLOBAL_BODY.replace("{reference}", &reference.display().to_string());
     for agent in agents {
-        outcomes.push(match agent.target(homes) {
+        let outcome = match agent.target(homes) {
             Target::Block(file) => {
+                // A block left in the file the agent no longer reads (Codex
+                // and pi read AGENTS.override.md instead once it exists).
+                for other in agent.rule_files(homes).into_iter().filter(|f| *f != file) {
+                    let stale = remove_block(homes, Some(agent), &other, ALL_RULES)?;
+                    if stale.action == Action::Removed {
+                        outcomes.push(stale);
+                    }
+                }
                 install_block(homes, Some(agent), &file, ALL_RULES, &fenced(RULES, &body))?
             }
             Target::File(file) => {
                 let content = format!("{CURSOR_FRONT_MATTER}\n{}\n", body.trim_end());
                 write_owned(homes, Some(agent), &file, &content, true)?
             }
-        });
+        };
+        outcomes.push(outcome);
     }
     Ok(outcomes)
 }
@@ -556,18 +643,28 @@ fn install_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
 fn has_global_rules(agent: Agent, homes: &Homes) -> bool {
     match agent.target(homes) {
         Target::File(file) => file.exists(),
-        Target::Block(file) => read_existing(&file)
-            .ok()
-            .flatten()
-            .is_some_and(|c| c.contains(RULES.start) || c.contains(LEGACY_RULES.start)),
+        Target::Block(_) => agent.rule_files(homes).iter().any(|file| {
+            read_existing(file)
+                .ok()
+                .flatten()
+                .is_some_and(|c| c.contains(RULES.start) || c.contains(LEGACY_RULES.start))
+        }),
     }
 }
 
 fn uninstall_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
     let mut outcomes = Vec::new();
     for agent in selected_agents(agents, homes, false)? {
-        outcomes.push(match agent.target(homes) {
-            Target::Block(file) => remove_block(homes, Some(agent), &file, ALL_RULES)?,
+        let outcome = match agent.target(homes) {
+            Target::Block(file) => {
+                for other in agent.rule_files(homes).into_iter().filter(|f| *f != file) {
+                    let removed = remove_block(homes, Some(agent), &other, ALL_RULES)?;
+                    if removed.action == Action::Removed {
+                        outcomes.push(removed);
+                    }
+                }
+                remove_block(homes, Some(agent), &file, ALL_RULES)?
+            }
             Target::File(file) => {
                 let action = if file.exists() {
                     std::fs::remove_file(&file)?;
@@ -582,7 +679,8 @@ fn uninstall_global(homes: &Homes, agents: &[String]) -> Result<Vec<Outcome>> {
                     backup: None,
                 }
             }
-        });
+        };
+        outcomes.push(outcome);
     }
 
     // Keep the reference while another agent's rules still point at it.
@@ -664,6 +762,15 @@ fn install_local(homes: &Homes, dir: &Path) -> Result<Vec<Outcome>> {
     )?];
 
     for site in import_sites(homes, dir) {
+        // A CLAUDE.md that is a link to AGENTS.md already is AGENTS.md.
+        let same = |a: &Path, b: &Path| {
+            std::fs::canonicalize(a)
+                .ok()
+                .is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
+        };
+        if same(&site.file, &agents_md) {
+            continue;
+        }
         let content = match read_existing(&site.file)? {
             Some(content) => content,
             None if site.create => String::new(),
@@ -1122,5 +1229,120 @@ mod tests {
         let outcomes = install_local(&sb.homes, &sb.project).unwrap();
         assert!(outcomes.iter().all(|o| o.agent != Some(Agent::Gemini)));
         assert_eq!(read(&gemini), "@AGENTS.md\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_claude_md_linked_to_agents_md_is_not_duplicated() {
+        let sb = sandbox();
+        std::fs::write(sb.project.join("AGENTS.md"), "# rules\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", sb.project.join("CLAUDE.md")).unwrap();
+
+        let outcomes = install_local(&sb.homes, &sb.project).unwrap();
+        assert_eq!(outcomes.len(), 1, "CLAUDE.md is AGENTS.md: no import");
+        let claude = sb.project.join("CLAUDE.md");
+        assert!(std::fs::symlink_metadata(&claude)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(read(&claude).matches(RULES.start).count(), 1);
+
+        uninstall_local(&sb.homes, &sb.project).unwrap();
+        assert!(std::fs::symlink_metadata(&claude)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(read(&sb.project.join("AGENTS.md")), "# rules\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_user_file_is_updated_through_the_link() {
+        let sb = sandbox();
+        let dotfiles = sb.homes.home.join("dotfiles");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        std::fs::write(dotfiles.join("CLAUDE.md"), "# mine\n").unwrap();
+        std::fs::create_dir_all(sb.homes.home.join(".claude")).unwrap();
+        let link = sb.homes.home.join(".claude/CLAUDE.md");
+        std::os::unix::fs::symlink(dotfiles.join("CLAUDE.md"), &link).unwrap();
+
+        install_global(&sb.homes, &["claude".to_string()]).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(read(&dotfiles.join("CLAUDE.md")).contains(RULES.start));
+
+        uninstall_global(&sb.homes, &["claude".to_string()]).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(read(&dotfiles.join("CLAUDE.md")), "# mine\n");
+    }
+
+    #[test]
+    fn backups_of_different_files_never_collide_and_versions_are_kept() {
+        let sb = sandbox();
+        let a = sb.project.join("a");
+        let b = sb.project.join("b");
+        for dir in [&a, &b] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("AGENTS.md"), format!("# {}\n", dir.display())).unwrap();
+        }
+        let first = install_local(&sb.homes, &a).unwrap()[0]
+            .backup
+            .clone()
+            .unwrap();
+        let second = install_local(&sb.homes, &b).unwrap()[0]
+            .backup
+            .clone()
+            .unwrap();
+        assert_ne!(first, second);
+        assert!(read(&first).contains("/a\n"));
+        assert!(read(&second).contains("/b\n"));
+
+        // Every change keeps a version, up to the last few.
+        for i in 0..(BACKUPS_KEPT + 3) {
+            std::fs::write(a.join("AGENTS.md"), format!("# version {i}\n")).unwrap();
+            install_local(&sb.homes, &a).unwrap();
+        }
+        let prefix = first.file_name().unwrap().to_string_lossy();
+        let prefix = &prefix[..prefix.rfind('.').unwrap()];
+        let kept = std::fs::read_dir(first.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+            .count();
+        assert_eq!(kept, BACKUPS_KEPT);
+    }
+
+    #[test]
+    fn codex_blocks_are_found_in_either_file() {
+        let sb = sandbox();
+        let codex = sb.homes.home.join(".codex");
+        std::fs::create_dir_all(&codex).unwrap();
+        install_global(&sb.homes, &["codex".to_string()]).unwrap();
+        assert!(read(&codex.join("AGENTS.md")).contains(RULES.start));
+
+        // The user starts using an override: a re-install moves the block.
+        std::fs::write(codex.join("AGENTS.override.md"), "# override\n").unwrap();
+        install_global(&sb.homes, &["codex".to_string()]).unwrap();
+        assert!(read(&codex.join("AGENTS.override.md")).contains(RULES.start));
+        assert!(
+            !codex.join("AGENTS.md").exists(),
+            "the stale block (whole file) is gone"
+        );
+
+        // Uninstall finds it wherever it is, and drops the reference.
+        std::fs::write(
+            codex.join("AGENTS.md"),
+            fenced(RULES, "old block left by hand"),
+        )
+        .unwrap();
+        uninstall_global(&sb.homes, &["codex".to_string()]).unwrap();
+        assert_eq!(read(&codex.join("AGENTS.override.md")), "# override\n");
+        assert!(!codex.join("AGENTS.md").exists());
+        assert!(!sb.homes.reference_file().exists());
     }
 }

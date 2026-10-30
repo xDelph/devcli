@@ -400,3 +400,212 @@ fn agents_cannot_stop_everything() {
     assert!(named.status.success());
     assert_eq!(sb.running(), vec![]);
 }
+
+fn running_apps(sb: &Sandbox) -> Vec<String> {
+    let mut apps: Vec<String> = sb.running().into_iter().map(|(app, _)| app).collect();
+    apps.sort();
+    apps
+}
+
+/// Interrupting an attached session leaves running what another app
+/// started meanwhile depends on.
+#[test]
+fn an_attached_session_leaves_what_others_depend_on() {
+    let sb = Sandbox::new();
+    let mut attached = sb.spawn_attached(&["ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(15), || sb.running().len() == 1));
+
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+
+    send_signal(&attached, "-INT");
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+}
+
+/// A detached restart of a session's app keeps it in the session: no gap
+/// where the session ends and stops what the new instance depends on.
+#[test]
+fn a_detached_restart_keeps_the_app_in_its_session() {
+    let sb = Sandbox::new();
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(15), || sb.running().len() == 2));
+
+    sb.json(&["restart", "web", "--project", "smoke"]);
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+    assert!(
+        attached.try_wait().unwrap().is_none(),
+        "the session still owns the restarted web"
+    );
+
+    // Ctrl+C still stops the restarted web with its dependency.
+    send_signal(&attached, "-INT");
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(running_apps(&sb), Vec::<String>::new());
+}
+
+/// An attached start of an app that already runs has nothing to attach to:
+/// it returns at once and stops nothing.
+#[test]
+fn an_attached_start_of_a_running_app_stops_nothing() {
+    let sb = Sandbox::new();
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+}
+
+/// Under an AI agent, a `start` without `--json` or `--detached` still
+/// returns right away (the agent's command timeout would otherwise end the
+/// session and stop the app).
+#[test]
+fn under_an_agent_start_always_returns() {
+    let sb = Sandbox::new();
+    let mut start = sb
+        .command(&["start", "ticker", "--project", "smoke"])
+        .env("DEVCLI_AGENT", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let status = wait_exit(&mut start, Duration::from_secs(15));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "start did not return: {status:?}"
+    );
+    assert!(wait_for(Duration::from_secs(5), || sb.running().len() == 1));
+}
+
+/// Ctrl+C during a long start-up (a dependency that never gets healthy is
+/// waited for 30s) stops it right away, with what was already started.
+#[test]
+fn ctrl_c_during_start_up_stops_it_right_away() {
+    let sb = Sandbox::new();
+    let config_path = sb.path().join("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    // web → ticker → db, and db never gets healthy: start-up waits for it
+    // before starting ticker.
+    let mut db = config["projects"]["smoke"]["apps"]["ticker"].clone();
+    db["health_check"] =
+        serde_json::json!({ "type": "tcp", "host": "127.0.0.1", "port": 1, "timeout_secs": 1 });
+    config["projects"]["smoke"]["apps"]["db"] = db;
+    config["projects"]["smoke"]["apps"]["ticker"]["dependencies"] =
+        serde_json::json!([{ "project": "smoke", "app": "db" }]);
+    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(
+        wait_for(Duration::from_secs(10), || sb.running().len() == 1),
+        "{}",
+        sb.attached_output()
+    );
+    std::thread::sleep(Duration::from_secs(1));
+
+    let interrupted = Instant::now();
+    send_signal(&attached, "-INT");
+    let status = wait_exit(&mut attached, Duration::from_secs(15));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "{status:?}\n{}",
+        sb.attached_output()
+    );
+    assert!(
+        interrupted.elapsed() < Duration::from_secs(8),
+        "waited for start-up to finish: {:?}",
+        interrupted.elapsed()
+    );
+    assert_eq!(
+        running_apps(&sb),
+        Vec::<String>::new(),
+        "{}",
+        sb.attached_output()
+    );
+}
+
+#[test]
+fn json_monitor_prints_one_json_value() {
+    let sb = Sandbox::new();
+    let cleaned = sb.json(&["monitor"]);
+    assert_eq!(cleaned["cleaned"], serde_json::json!([]));
+}
+
+/// `start` says which apps asked for were running already.
+#[test]
+fn start_reports_apps_already_running() {
+    let sb = Sandbox::new();
+    let first = sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert_eq!(first["already_running"], serde_json::json!([]));
+    let again = sb.json(&["start", "ticker", "web", "--project", "smoke"]);
+    assert_eq!(again["started"], serde_json::json!(["web"]));
+    assert_eq!(again["already_running"], serde_json::json!(["ticker"]));
+}
+
+/// A name that is neither in the config nor tracked is an error, not
+/// "nothing to stop".
+#[test]
+fn stopping_an_unknown_app_is_an_error() {
+    let sb = Sandbox::new();
+    let out = sb.devcli(&["--json", "stop", "tickr"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = single_json(&out.stderr, &["--json", "stop", "tickr"]);
+    let message = err["error"].as_str().unwrap();
+    assert!(message.contains("Did you mean 'ticker'"), "{message}");
+    assert!(message.contains("No process"), "{message}");
+}
+
+/// Every command taking an app name explains an unknown one.
+#[test]
+fn logs_and_health_check_explain_an_unknown_app() {
+    let sb = Sandbox::new();
+    for command in ["logs", "health-check"] {
+        let out = sb.devcli(&["--json", command, "tickr"]);
+        assert_eq!(out.status.code(), Some(1), "{command}");
+        let err = single_json(&out.stderr, &[command]);
+        assert!(
+            err["error"]
+                .as_str()
+                .unwrap()
+                .contains("Did you mean 'ticker'"),
+            "{command}: {err}"
+        );
+    }
+}
+
+/// Output into a closed pipe ends devcli quietly instead of a panic.
+#[test]
+fn a_closed_pipe_is_not_a_panic() {
+    let sb = Sandbox::new();
+    let out = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(format!(
+            // The reader is gone before devcli writes: the write always fails.
+            "{{ sleep 0.2; '{}' config show ticker --project smoke; }} | true",
+            env!("CARGO_BIN_EXE_devcli")
+        ))
+        .env("DEVCLI_CONFIG_DIR", sb.path())
+        .env("HOME", sb.path())
+        .env("DEVCLI_AGENT", "0")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}

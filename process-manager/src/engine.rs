@@ -215,6 +215,31 @@ fn send_signal(target: i32, signal: libc::c_int) {
 
 /// How long ago the OS started `pid`, if it is running.
 ///
+/// The current working directory of `pid`, wherever it is now: a directory
+/// moved with `mv` is reported at its new path, a deleted one is not.
+/// `None` when it cannot be read.
+pub fn process_cwd(pid: u32) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        let link = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+        if link.to_string_lossy().ends_with(" (deleted)") {
+            return None;
+        }
+        Some(link)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let out = std::process::Command::new("lsof")
+            .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix('n'))
+            .map(std::path::PathBuf::from)
+    }
+}
+
 /// Used to tell our process apart from an unrelated one that was given the same
 /// PID after ours exited. Parses `ps -o etime=` (`[[dd-]hh:]mm:ss`), the only
 /// elapsed-time format both macOS and Linux `ps` print.

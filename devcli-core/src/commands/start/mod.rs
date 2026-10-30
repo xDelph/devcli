@@ -74,14 +74,35 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     // `docker compose up`. Detached: they keep running after it returns.
     // `--json` implies detached mode: an agent wants a result, not a live log
     // stream it cannot consume. The TUI (silent) manages apps itself.
-    let detached = args.detached || crate::output::json_enabled();
+    // An AI agent waits for its command to return, then kills it once its
+    // command timeout expires, which would end the session and stop the apps:
+    // under an agent, `start` always returns right away.
+    let detached =
+        args.detached || crate::output::json_enabled() || crate::utils::agent::detect().is_some();
     let attached = !detached && !silent && !load_preferences()?.detached_mode;
     // Listen for Ctrl+C before anything starts, so an interrupt during start-up
     // stops what was already launched instead of leaving it behind.
     let mut signals = attached.then(logging::Signals::new).transpose()?;
-    let owner = attached.then(std::process::id);
+    let owner = if attached {
+        Some(std::process::id())
+    } else {
+        args.owner_override
+    };
 
-    let started = start_apps(&args, owner).await;
+    // An interrupt during start-up (which can wait up to 30s per wave of
+    // dependencies) ends it right away and stops what was already launched.
+    let started = match signals.as_mut() {
+        Some(signals) => tokio::select! {
+            result = start_apps(&args, owner) => result,
+            ended = signals.recv() => {
+                // Let the starts already spawned record themselves first.
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                logging::stop_after_interrupted_start(signals, ended).await;
+                return Ok(());
+            }
+        },
+        None => start_apps(&args, owner).await,
+    };
     let (started_apps, environment) = match (started, signals.as_mut()) {
         (Ok(started), _) => started,
         (Err(e), Some(signals)) => {
@@ -93,12 +114,19 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     };
 
     // Step 4: Stream logs and stop the apps on exit, or return right away
-    if let Some(signals) = signals.as_mut() {
+    if signals.is_some() && started_apps.is_empty() {
+        // The apps asked for were already running: only their missing
+        // dependencies were started, and those serve apps this command does
+        // not own. Attaching would end at once and stop them.
+        logging::release_owned();
+        println!("\nNothing new to attach to; the dependencies started keep running.");
+    } else if let Some(signals) = signals.as_mut() {
         run_attached(&started_apps, signals).await?;
     } else if !silent {
         if crate::output::json_enabled() {
             crate::output::print_json(&serde_json::json!({
                 "started": started_apps,
+                "already_running": already_running(&args, &environment, &started_apps),
                 "environment": environment,
                 "detached": true,
             }))?;
@@ -166,4 +194,41 @@ async fn start_apps(args: &StartCommandArgs, owner: Option<u32>) -> Result<(Vec<
     .await?;
 
     Ok((started_apps, environment))
+}
+
+/// The instances asked for that were running already (so nothing was
+/// started for them): `started` alone could not tell an agent "already up"
+/// from "not started".
+fn already_running(args: &StartCommandArgs, environment: &str, started: &[String]) -> Vec<String> {
+    let (Ok(config), Ok(store)) = (crate::config::load_config(), state_store()) else {
+        return Vec::new();
+    };
+    let mut running = Vec::new();
+    for name in &args.app_names {
+        let Ok(instances) = crate::worktrees::resolve_all(
+            &config,
+            name,
+            args.project.as_deref(),
+            crate::worktrees::Mode::FromCwd,
+        ) else {
+            continue;
+        };
+        for instance in instances {
+            let label =
+                crate::worktrees::instance_name(&instance.app_name, instance.worktree.as_ref());
+            let is_running = find_process(
+                &store,
+                &instance.project,
+                &instance.app_name,
+                Some(environment),
+            )
+            .ok()
+            .flatten()
+            .is_some_and(|p| store.is_running(&p));
+            if is_running && !started.contains(&label) && !running.contains(&label) {
+                running.push(label);
+            }
+        }
+    }
+    running
 }

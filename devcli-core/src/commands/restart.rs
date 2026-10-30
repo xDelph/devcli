@@ -82,13 +82,17 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     });
     // Name exactly this instance for the stop and start below: without a
     // suffix they would pick the instance of the current directory again.
-    let project = Some(crate::worktrees::pinned(&project_name));
+    let project = Some(crate::worktrees::pinned(&config, &project_name));
 
     emit_line(
         silent,
         args.output_tx.as_ref(),
         format!("Restarting process '{}'...", args.app_name),
     );
+
+    // Until the new instance is recorded, tell the attached session owning
+    // the app (if any) that it is being replaced, not gone.
+    let _restarting = store.begin_restart(&process)?;
 
     // Stop current process first
     let stop_args = crate::commands::stop::StopCommandArgs {
@@ -135,10 +139,17 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             silent: inner_silent,
             stage: process.metadata.get("stage").cloned(),
             detached: args.detached,
+            // A detached restart replaces the process, not its owner: the
+            // attached `devcli start` the app belongs to keeps it (and stops
+            // it on Ctrl+C). An attached restart takes it over instead.
+            owner_override: process.owner_pid(),
             output_tx: args.output_tx.clone(),
         };
 
         crate::commands::start::start_command(start_args).await?;
+        if process.is_shared() {
+            mark_shared_again(&store, &process, &environment);
+        }
     }
 
     emit_line(
@@ -156,4 +167,21 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The restarted instance of a shared process is shared too.
+fn mark_shared_again(
+    store: &process_manager::StateStore,
+    previous: &process_manager::state::ManagedProcess,
+    environment: &str,
+) {
+    let (Some(project), Some(app)) = (
+        previous.metadata.get("project"),
+        previous.metadata.get("app_config_name"),
+    ) else {
+        return;
+    };
+    if let Ok(Some(new)) = find_process(store, project, app, Some(environment)) {
+        let _ = store.mark_shared(&new.id);
+    }
 }

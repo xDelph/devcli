@@ -58,6 +58,66 @@ pub fn sanitize_slug(raw: &str) -> String {
     }
 }
 
+/// Release the slots of worktrees that are gone, then give every worktree of
+/// `live` its slot, allocating one for new worktrees.
+///
+/// A slot is kept while its worktree is listed by the caller, or its
+/// directory is still a checkout: not merely because a caller did not list
+/// it, since another devcli may have listed the worktrees just before a
+/// sub-agent created a new one. A directory that is no longer a checkout, or
+/// is gone (with its repository, possibly), releases its slot.
+fn allocate(table: &mut Table, common_dir: &Path, live: &[&Worktree]) -> Vec<Slot> {
+    table.worktrees.retain(|slot| {
+        (slot.common_dir == common_dir && live.iter().any(|w| w.root == slot.root))
+            || slot.root.join(".git").exists()
+    });
+
+    let mut slots = Vec::new();
+    for worktree in live {
+        if let Some(slot) = table
+            .worktrees
+            .iter()
+            .find(|s| s.common_dir == common_dir && s.root == worktree.root)
+        {
+            slots.push(slot.clone());
+            continue;
+        }
+
+        let taken = |slug: &str| {
+            table
+                .worktrees
+                .iter()
+                .any(|s| s.common_dir == common_dir && s.slug == slug)
+        };
+        let wanted = wanted_slug(worktree);
+        let mut slug = wanted.clone();
+        let mut n = 2;
+        while taken(&slug) {
+            slug = format!("{wanted}-{n}");
+            n += 1;
+        }
+
+        let mut index = 1;
+        while table
+            .worktrees
+            .iter()
+            .any(|s| s.common_dir == common_dir && s.index == index)
+        {
+            index += 1;
+        }
+
+        let slot = Slot {
+            common_dir: common_dir.to_path_buf(),
+            root: worktree.root.clone(),
+            slug,
+            index,
+        };
+        table.worktrees.push(slot.clone());
+        slots.push(slot);
+    }
+    slots
+}
+
 /// The name a worktree asks for: git's admin directory name (unique within
 /// the repository), or the directory name for the main worktree.
 fn wanted_slug(worktree: &Worktree) -> String {
@@ -107,63 +167,22 @@ impl Registry {
 
         let mut table = self.load()?;
         let before = table.worktrees.clone();
-
-        table.worktrees.retain(|slot| {
-            slot.common_dir != common_dir
-                || live.iter().any(|w| w.root == slot.root)
-                || slot.root.is_dir()
-        });
-
-        let mut slots = Vec::new();
-        for worktree in live {
-            if let Some(slot) = table
-                .worktrees
-                .iter()
-                .find(|s| s.common_dir == common_dir && s.root == worktree.root)
-            {
-                slots.push(slot.clone());
-                continue;
-            }
-
-            let taken = |slug: &str| {
-                table
-                    .worktrees
-                    .iter()
-                    .any(|s| s.common_dir == common_dir && s.slug == slug)
-            };
-            let wanted = wanted_slug(worktree);
-            let mut slug = wanted.clone();
-            let mut n = 2;
-            while taken(&slug) {
-                slug = format!("{wanted}-{n}");
-                n += 1;
-            }
-
-            let mut index = 1;
-            while table
-                .worktrees
-                .iter()
-                .any(|s| s.common_dir == common_dir && s.index == index)
-            {
-                index += 1;
-            }
-
-            let slot = Slot {
-                common_dir: common_dir.to_path_buf(),
-                root: worktree.root.clone(),
-                slug,
-                index,
-            };
-            table.worktrees.push(slot.clone());
-            slots.push(slot);
-        }
-
+        let slots = allocate(&mut table, common_dir, live);
         if table.worktrees != before {
             let json = serde_json::to_vec_pretty(&table)?;
             config_manager::utils::fs::write_atomic(&self.path, &json)?;
         }
         FileExt::unlock(&lock)?;
         Ok(slots)
+    }
+
+    /// The slots [`assign`](Self::assign) would give, without taking the lock
+    /// or writing anything: for commands that only look (`status`,
+    /// `devcli worktrees`), which must work with a read-only devcli directory
+    /// and must not hand out slots just by looking.
+    pub fn peek(&self, common_dir: &Path, live: &[&Worktree]) -> Result<Vec<Slot>> {
+        let mut table = self.load()?;
+        Ok(allocate(&mut table, common_dir, live))
     }
 
     fn load(&self) -> Result<Table> {
@@ -186,6 +205,8 @@ mod tests {
 
     fn worktree(root: &Path, admin: Option<&str>) -> Worktree {
         std::fs::create_dir_all(root).unwrap();
+        // A linked worktree's `.git` is a file pointing at its admin dir.
+        std::fs::write(root.join(".git"), "gitdir: elsewhere\n").unwrap();
         Worktree {
             root: root.to_path_buf(),
             admin_name: admin.map(str::to_string),
@@ -297,5 +318,34 @@ mod tests {
         let mut indexes: Vec<_> = table.worktrees.iter().map(|s| s.index).collect();
         indexes.sort();
         assert_eq!(indexes, (1..=8).collect::<Vec<_>>(), "duplicate index");
+    }
+
+    #[test]
+    fn peeking_writes_nothing_and_matches_what_assign_gives() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let devcli = dir.path().join("devcli");
+        let registry = Registry::new(&devcli);
+        let a = worktree(&dir.path().join("a"), Some("a"));
+
+        let peeked = registry.peek(Path::new("/repo/.git"), &[&a]).unwrap();
+        assert!(!devcli.exists(), "peeking created the devcli directory");
+        assert_eq!(
+            registry.assign(Path::new("/repo/.git"), &[&a]).unwrap(),
+            peeked
+        );
+    }
+
+    #[test]
+    fn a_directory_that_is_no_longer_a_checkout_releases_its_slot() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = Registry::new(&dir.path().join("devcli"));
+        let repo = Path::new("/repo/.git");
+        let a = worktree(&dir.path().join("a"), Some("a"));
+        assert_eq!(registry.assign(repo, &[&a]).unwrap()[0].index, 1);
+
+        // `git worktree remove --force` kept the directory, without `.git`.
+        std::fs::remove_file(a.root.join(".git")).unwrap();
+        let b = worktree(&dir.path().join("b"), Some("b"));
+        assert_eq!(registry.assign(repo, &[&b]).unwrap()[0].index, 1);
     }
 }

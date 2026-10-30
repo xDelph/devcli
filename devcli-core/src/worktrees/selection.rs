@@ -6,7 +6,7 @@
 //! a sub-agent inside a worktree would have stopped the main checkout's apps.
 
 use super::git;
-use super::instance::{resolve_all, split, Mode, Selector};
+use super::instance::{app_named, resolve_all_readonly, split, Mode, Selector};
 use super::meta;
 use crate::config::models::Config;
 use crate::utils::path::expand_path;
@@ -24,6 +24,9 @@ pub enum Selection {
     Named {
         app: String,
         project: Option<String>,
+        /// Why the config does not resolve it (with a "did you mean"), for
+        /// when no process matches either.
+        not_found: String,
     },
     /// Every process of this exact project name (`proj` or `proj@slug`).
     Project(String),
@@ -44,18 +47,27 @@ pub fn base_project(metadata: &HashMap<String, String>) -> Option<&str> {
 impl Selection {
     pub fn of(config: &Config, app: Option<&str>, project: Option<&str>) -> Result<Self> {
         if let Some(app) = app {
-            return Ok(match resolve_all(config, app, project, Mode::FromCwd) {
-                Ok(instances) => Selection::Instances(
+            return match resolve_all_readonly(config, app, project, Mode::FromCwd) {
+                Ok(instances) => Ok(Selection::Instances(
                     instances
                         .into_iter()
                         .map(|i| (i.project, i.app_name))
                         .collect(),
-                ),
-                Err(_) => Selection::Named {
+                )),
+                // An app removed from the config can still have processes:
+                // those are found by name.
+                Err(e) if !in_config(config, app, project) => Ok(Selection::Named {
                     app: app.to_string(),
                     project: project.map(str::to_string),
-                },
-            });
+                    not_found: e.to_string(),
+                }),
+                // Any other failure (an ambiguous name, git or the worktree
+                // registry failing) used to fall back to matching by name
+                // too, across every project and worktree: `stop api` from a
+                // worktree then stopped the main checkout's api and other
+                // projects' apps called api.
+                Err(e) => Err(e),
+            };
         }
 
         let Some(project) = project else {
@@ -78,6 +90,45 @@ impl Selection {
         })
     }
 
+    /// For a selection by name of an app that is not in the config, fail
+    /// when nothing matches either: a typo used to answer "No processes to
+    /// stop" with exit code 0.
+    pub fn check_found(&self, matched: usize) -> Result<()> {
+        if let Selection::Named { not_found, .. } = self
+            && matched == 0
+        {
+            anyhow::bail!("{not_found} No process of that name is tracked either.");
+        }
+        Ok(())
+    }
+
+    /// For a selection by name, fail when it matches the processes of
+    /// several projects instead of picking all of them.
+    pub fn check_unambiguous<'a>(
+        &self,
+        matched: impl IntoIterator<Item = &'a HashMap<String, String>>,
+    ) -> Result<()> {
+        let Selection::Named {
+            app, project: None, ..
+        } = self
+        else {
+            return Ok(());
+        };
+        let mut projects: Vec<&str> = matched
+            .into_iter()
+            .filter_map(|m| m.get("project").map(String::as_str))
+            .collect();
+        projects.sort_unstable();
+        projects.dedup();
+        if projects.len() > 1 {
+            anyhow::bail!(
+                "'{app}' matches processes of several projects ({}); name one with --project",
+                projects.join(", ")
+            );
+        }
+        Ok(())
+    }
+
     pub fn matches(&self, metadata: &HashMap<String, String>) -> bool {
         let project = metadata.get("project").map(String::as_str);
         let app = metadata.get("app_config_name").map(String::as_str);
@@ -89,6 +140,7 @@ impl Selection {
             Selection::Named {
                 app: name,
                 project: filter,
+                ..
             } => {
                 let named = app == Some(name)
                     || metadata.get("alternative_name").map(String::as_str) == Some(name);
@@ -106,6 +158,19 @@ impl Selection {
             }
         }
     }
+}
+
+/// Whether `app` (with or without a worktree suffix) names an app of the
+/// config, in `project` when given.
+fn in_config(config: &Config, app: &str, project: Option<&str>) -> bool {
+    let project = project.map(|p| {
+        if config.projects.contains_key(p) {
+            p
+        } else {
+            split(p).0
+        }
+    });
+    app_named(config, app, project) || app_named(config, split(app).0, project)
 }
 
 /// The worktree the current directory is in, when it is a worktree (other
@@ -185,5 +250,31 @@ mod tests {
             Selection::of(&config, None, None).unwrap(),
             Selection::Everything
         );
+    }
+
+    #[test]
+    fn an_ambiguous_name_is_an_error_not_every_match() {
+        let config: Config = serde_json::from_value(serde_json::json!({ "projects": {
+            "one": { "apps": { "api": { "type": "x", "path": "/nonexistent/one",
+                "commands": {}, "defaults": {} } } },
+            "two": { "apps": { "api": { "type": "x", "path": "/nonexistent/two",
+                "commands": {}, "defaults": {} } } },
+        } }))
+        .unwrap();
+        let err = Selection::of(&config, Some("api"), None).unwrap_err();
+        assert!(err.to_string().contains("ambiguous"), "{err}");
+        assert_eq!(
+            Selection::of(&config, Some("api"), Some("one")).unwrap(),
+            Selection::Instances(vec![("one".into(), "api".into())])
+        );
+
+        // An app no longer in the config is still found by name, but not
+        // across projects.
+        let gone = Selection::of(&config, Some("worker"), None).unwrap();
+        assert!(matches!(gone, Selection::Named { .. }));
+        let a = meta(&[("project", "one"), ("app_config_name", "worker")]);
+        let b = meta(&[("project", "two"), ("app_config_name", "worker")]);
+        assert!(gone.check_unambiguous([&a]).is_ok());
+        assert!(gone.check_unambiguous([&a, &b]).is_err());
     }
 }

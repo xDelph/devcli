@@ -8,7 +8,8 @@ devcli is a powerful process management tool that helps you:
 
 - **Manage processes** through a centralized JSON configuration
 - **Auto-start dependencies** in the correct order
-- **Run in multiple environments** (local, Docker, Kubernetes)
+- **Run in multiple environments** (local, Docker, OrbStack, Docker Compose,
+  Kubernetes, CI)
 - **Monitor health** and automatically restart crashed processes
 - **View logs** in a beautiful terminal UI
 - **Track metrics** for all your running processes
@@ -74,11 +75,15 @@ sudo cp target/release/devcli target/release/pm-daemon /usr/local/bin/
 ### 1. Initialize Configuration
 
 ```bash
-# Create default config file at ~/.devcli/config.json
+# Create an empty config file at ~/.devcli/config.json
+# (it also prints an example project you can copy)
 devcli config init
 
 # Verify it was created
 cat ~/.devcli/config.json
+# {
+#   "projects": {}
+# }
 ```
 
 ### 2. Auto-Detect Your First App
@@ -90,9 +95,13 @@ cd ~/my-awesome-api
 devcli auto-add
 
 # This detects your app type and adds it to config
-# ✓ Detected: nodejs app "my-awesome-api"
-# ✓ Found commands: start, test, build
-# ✓ Added to config
+# (asks a few questions; pass --yes to accept the detected defaults)
+# Detecting app in ~/my-awesome-api...
+#
+# ✓ Detected: nodejs app
+#   - Local: 3 commands available
+#
+# ✓ Added successfully!
 ```
 
 ### 3. Start Your App
@@ -108,20 +117,22 @@ devcli start my-awesome-api --env docker
 devcli start frontend  # Also starts api, database, etc.
 ```
 
+By default `start` stays attached: it streams the app's output and stops the
+app on Ctrl+C. Add `--detached` (or `devcli pref set detached-mode true`) to
+get your prompt back while the app keeps running.
+
 ### 4. Check Status
 
 ```bash
 devcli status
 
 # Output:
-# ┌─────────────────────────────────────────┐
-# │ Running Processes                       │
-# ├─────────────────────────────────────────┤
-# │ my-awesome-api (PID 12345) ✓ healthy   │
-# │   Uptime: 2m 34s                        │
-# │   Project: awesome-project              │
-# └─────────────────────────────────────────┘
+# PROJECT: global
+#   [my-awesome-api (local) [start]]  PID: 12345  running  2m  npm run start
 ```
+
+(`auto-add --yes` puts apps in the project `global` unless you pass
+`--project`.)
 
 ### 5. View Logs
 
@@ -129,8 +140,8 @@ devcli status
 # Launch interactive TUI to view logs
 devcli ui
 
-# Or get current status
-devcli status my-awesome-api
+# Or print the last lines of the app's log file
+devcli logs my-awesome-api -n 50
 ```
 
 ### 6. Stop
@@ -139,7 +150,7 @@ devcli status my-awesome-api
 # Stop specific app
 devcli stop my-awesome-api
 
-# Stop all apps
+# Stop all apps (refused when run by an AI agent)
 devcli stop --all
 ```
 
@@ -166,18 +177,38 @@ Located at `~/.devcli/config.json`, this file defines:
               "start": "docker compose up api"
             }
           },
+          "defaults": {
+            "local": "start",
+            "docker": "start"
+          },
           "dependencies": [
-            "database"
+            { "project": "awesome-project", "app": "database" }
           ],
           "health_check": {
-            "http": {
-              "url": "http://localhost:3000/health",
-              "expected_status": 200
-            }
+            "type": "http",
+            "url": "http://localhost:3000/health",
+            "expected_status": 200
           },
           "restart_policy": {
             "max_restarts": 5,
             "restart_window_secs": 300
+          }
+        },
+        "database": {
+          "type": "docker",
+          "path": "~/code/awesome-project/docker",
+          "commands": {
+            "local": {
+              "start": "docker compose up postgres"
+            }
+          },
+          "defaults": {
+            "local": "start"
+          },
+          "health_check": {
+            "type": "tcp",
+            "host": "localhost",
+            "port": 5432
           }
         }
       }
@@ -193,7 +224,8 @@ A **project** is a logical grouping of related apps (e.g., your microservices).
 ### Apps
 
 An **app** is a single process/service you want to manage. Each app has:
-- **Commands** for different environments (local, docker, k8s)
+- **Commands** for different environments (local, docker, orbstack,
+  docker-compose, k8s, ci)
 - **Dependencies** on other apps
 - **Health checks** to monitor status
 - **Restart policies** for automatic recovery
@@ -203,8 +235,13 @@ An **app** is a single process/service you want to manage. Each app has:
 Run the same app in different environments:
 - **local**: Native execution (npm, cargo, go, etc.)
 - **docker**: Docker Compose or standalone containers
+- **orbstack**: Docker commands with the OrbStack context
+- **docker-compose** (`--env compose` also works): Docker Compose commands
 - **k8s**: Kubernetes manifests
-- **orbstack**: OrbStack optimized commands
+- **ci**: CI pipeline commands
+
+Commands run without a shell: wrap pipes, `&&` or `VAR=value` prefixes in
+`sh -c '...'`.
 
 ## Common Workflows
 
@@ -236,8 +273,8 @@ devcli run api test
 ### Workflow 3: Docker Development
 
 ```bash
-# Start everything in Docker
-devcli start --all --env docker
+# Start the apps you need in Docker (dependencies follow)
+devcli start api worker frontend --env docker
 
 # Health checks ensure containers are ready
 devcli health-check api
@@ -249,16 +286,15 @@ devcli ui
 ### Workflow 4: Managing Long-Running Services
 
 ```bash
-# Start with monitor daemon (auto-restarts on crash)
-devcli start database
+# Start it; pm-daemon (health checks, auto-restart) starts automatically in
+# the background
+devcli start database --detached
 
-# Monitor starts automatically in background
-# Check metrics
+# Check metrics (computed from the process state)
 devcli metrics
-
-# View metrics API
-curl http://localhost:9090/metrics | jq
 ```
+
+Automatic restarts need a `restart_policy` on the app (see below).
 
 ## Next Steps
 
@@ -285,14 +321,17 @@ Add health checks to detect when apps need restart:
 ```json
 {
   "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health",
-      "timeout_secs": 5,
-      "expected_status": 200
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "timeout_secs": 5,
+    "expected_status": 200
   }
 }
 ```
+
+The other types are `tcp` (`host`, `port`), `command` (`command`,
+`expected_exit_code`) and `process` (alive is healthy). See the
+[Configuration Reference](./configuration-reference.md#health_check).
 
 ### Set Up Restart Policies
 
@@ -303,10 +342,14 @@ Automatically restart crashed processes:
   "restart_policy": {
     "max_restarts": 5,
     "restart_window_secs": 300,
-    "backoff_secs": 5
+    "initial_backoff_secs": 1,
+    "max_backoff_secs": 60
   }
 }
 ```
+
+The delay before each restart doubles (1s, 1s, 2s, 4s, ...) up to
+`max_backoff_secs`.
 
 ### Add Environment Files
 
@@ -320,8 +363,8 @@ devcli env add api --stage prod --context k8s --file .env.prod
 # List env files
 devcli env list api
 
-# Start with specific stage
-devcli start api --stage qa
+# Start with specific stage (dev, qa, preprod or prod)
+devcli start api --stage qa --env docker
 ```
 
 ### Set Preferences
@@ -332,6 +375,12 @@ devcli pref set default-env docker
 
 # Enable auto-start dependencies
 devcli pref set auto-start-deps true
+
+# Return right away from start instead of streaming output
+devcli pref set detached-mode true
+
+# Stage used when --stage is not given
+devcli pref set default-stage dev
 
 # View current preferences
 devcli pref show
@@ -346,24 +395,17 @@ devcli pref show
 
 ## Tips & Tricks
 
-### Tip 1: Use Tab Completion
+### Tip 1: Filter Logs
 
 ```bash
-# Install completion (bash example)
-devcli --generate-completion bash > /etc/bash_completion.d/devcli
+# Set log level (off, error, warn, info, debug, trace)
+LOG_LEVEL=debug devcli start api
+
+# View devcli's structured JSON logs
+tail -f ~/.devcli/logs/devcli.json.$(date +%Y-%m-%d) | jq
 ```
 
-### Tip 2: Filter Logs
-
-```bash
-# Set log level
-RUST_LOG=debug devcli start api
-
-# View structured JSON logs
-tail -f ~/.devcli/logs/devcli.$(date +%Y-%m-%d).json | jq
-```
-
-### Tip 3: Quick Status Check
+### Tip 2: Quick Status Check
 
 ```bash
 # Add alias to your shell
@@ -376,7 +418,7 @@ dcs
 dcl
 ```
 
-### Tip 4: Multiple Environments
+### Tip 3: Multiple Environments
 
 ```bash
 # Dev environment

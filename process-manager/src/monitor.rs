@@ -19,6 +19,9 @@ pub struct Monitor {
     health_engine: Arc<HealthCheckEngine>,
     restart_coordinator: Arc<RestartCoordinator>,
     health_grace: Duration,
+    /// Entries whose worktree looked deleted on the previous tick: one
+    /// look is not enough to stop a running app.
+    worktree_gone_once: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Monitor {
@@ -32,6 +35,7 @@ impl Monitor {
             health_engine,
             restart_coordinator,
             health_grace: DEFAULT_HEALTH_GRACE,
+            worktree_gone_once: Default::default(),
         }
     }
 
@@ -73,19 +77,36 @@ impl Monitor {
             return Ok(false);
         }
 
+        // Stopped together after the loop: one at a time, up to 5s each, an
+        // owner of ten apps dying stalled health checks and restarts ~50s.
+        let mut orphans = Vec::new();
+
         for mut proc in processes {
             if proc.is_stopping() {
-                // `stop` owns this entry until it deletes it.
+                // `stop` owns this entry until it deletes it, unless whoever
+                // was stopping it died midway: finish the job, or the app
+                // would run untracked forever.
+                if proc.stopper_gone() {
+                    orphans.push(proc);
+                }
                 continue;
             }
 
-            if proc.owner_gone() || proc.worktree_gone() {
+            let worktree_gone = self.worktree_gone_twice(&proc);
+            if proc.owner_gone() && proc.is_shared() && !worktree_gone {
+                // Its owner is gone, but another app depends on it.
+                tracing::info!(id = %proc.id, "Owner exited; releasing a shared process");
+                if let Err(e) = self.state.release(&proc.id) {
+                    tracing::warn!(id = %proc.id, error = %e, "Failed to release process");
+                }
+                continue;
+            }
+
+            if proc.owner_gone() || worktree_gone {
                 // The attached `devcli start` that owned it exited without
                 // stopping it (killed, terminal closed), or the git worktree
                 // it runs from was deleted.
-                if let Err(e) = self.stop_orphan(&proc).await {
-                    tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
-                }
+                orphans.push(proc);
                 continue;
             }
 
@@ -95,7 +116,28 @@ impl Monitor {
             }
         }
 
+        let results =
+            futures::future::join_all(orphans.iter().map(|proc| self.stop_orphan(proc))).await;
+        for (proc, result) in orphans.iter().zip(results) {
+            if let Err(e) = result {
+                tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
+            }
+        }
+
         Ok(true)
+    }
+
+    /// Whether `proc`'s worktree looked deleted on this tick and the previous.
+    fn worktree_gone_twice(&self, proc: &crate::state::ManagedProcess) -> bool {
+        let gone = proc.worktree_gone();
+        let Ok(mut seen) = self.worktree_gone_once.lock() else {
+            return false;
+        };
+        if !gone {
+            seen.remove(&proc.id);
+            return false;
+        }
+        !seen.insert(proc.id.clone())
     }
 
     /// Stop a process whose owner or worktree is gone: SIGTERM, then SIGKILL
@@ -110,6 +152,10 @@ impl Monitor {
         let Some(current) = self.state.mark_stopping(&proc.id)? else {
             return Ok(());
         };
+        // Dead already: its PID may belong to an unrelated process by now.
+        if !self.state.is_running(&current) {
+            return self.state.delete(&current.id);
+        }
 
         engine::terminate(current.pid, current.pgid, false).await?;
         for _ in 0..50 {

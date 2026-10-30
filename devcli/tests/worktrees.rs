@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// Prints its worktree variables, then stays up.
 const APP: &str = "echo wt=$DEVCLI_WORKTREE index=$DEVCLI_WORKTREE_INDEX port=$PORT \
-                   key=$API_KEY; sleep 30";
+                   key=$API_KEY api=$DEVCLI_PORT_API; sleep 30";
 
 struct Sandbox {
     dir: tempfile::TempDir,
@@ -197,11 +197,11 @@ fn a_sub_agent_runs_its_worktrees_copy_without_touching_the_main_checkout() {
     // env file since the worktree has none.
     assert_eq!(
         sb.first_log_line(&main, "api"),
-        "wt= index=0 port=3000 key=from-main"
+        "wt= index=0 port=3000 key=from-main api="
     );
     assert_eq!(
         sb.first_log_line(&agent, "api"),
-        "wt=agent-1 index=1 port=3100 key=from-main"
+        "wt=agent-1 index=1 port=3100 key=from-main api="
     );
 
     // From the worktree, `stop api` and `stop --project shop` only ever
@@ -227,6 +227,9 @@ fn dependencies_start_in_the_same_worktree() {
     let agent = sb.add_worktree("agent-1");
 
     sb.json(&agent.join("web"), &["start", "web"]);
+    // web reaches the api of its own worktree.
+    let line = sb.first_log_line(&agent.join("web"), "web");
+    assert!(line.ends_with("api=3100"), "{line}");
     assert_eq!(
         sb.processes(),
         vec![
@@ -360,6 +363,33 @@ fn agents_cannot_act_on_every_worktree() {
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
+}
+
+/// A worktree moved with plain `mv` is unknown to git at its new path: a
+/// command run from there is refused instead of acting on the main checkout.
+#[test]
+fn a_moved_worktree_is_refused_not_mistaken_for_the_main_checkout() {
+    let sb = Sandbox::new();
+    let main = sb.repo();
+    sb.json(&main, &["start", "api"]);
+    let agent = sb.add_worktree("agent-1");
+    let moved = sb.root().join("moved");
+    std::fs::rename(&agent, &moved).unwrap();
+
+    let out = sb
+        .command(&moved.join("api"), &["--json", "stop", "api"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("git worktree repair"),
+        "{err}"
     );
     assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
 }

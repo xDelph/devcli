@@ -13,7 +13,7 @@ DevCLI looks for configuration files in the following priority order:
 
 This allows you to have:
 - **Global config** at `~/.devcli/config.json` for all your personal projects
-- **Project-specific config** at `./devcli/config.json` for team projects or specific workflows
+- **Project-specific config** at `./.devcli/config.json` for team projects or specific workflows
 
 ```bash
 # Override for testing
@@ -24,7 +24,7 @@ devcli start api
 cd ~/my-project
 mkdir .devcli
 # Create .devcli/config.json
-devcli start api  # Uses ./devcli/config.json
+devcli start api  # Uses ./.devcli/config.json
 ```
 
 ### Preferences File
@@ -33,6 +33,9 @@ Similarly, preferences are loaded from:
 1. `DEVCLI_CONFIG_DIR/preferences.json` (if env var set)
 2. `./.devcli/preferences.json` (current directory)
 3. `~/.devcli/preferences.json` (home directory)
+
+The directory chosen this way also holds process state (`processes/`) and
+logs (`logs/`).
 
 ## File Structure
 
@@ -44,7 +47,10 @@ Similarly, preferences are loaded from:
         "app-name": {
           "type": "nodejs",
           "path": "~/code/app-name",
-          "commands": {}
+          "commands": {
+            "local": { "start": "npm start" }
+          },
+          "defaults": { "local": "start" }
         }
       }
     }
@@ -73,18 +79,22 @@ Similarly, preferences are loaded from:
               "stop": "docker compose stop postgres"
             }
           },
+          "defaults": {
+            "local": "start",
+            "docker": "start"
+          },
           "health_check": {
-            "tcp": {
-              "host": "localhost",
-              "port": 5432,
-              "timeout_secs": 10
-            }
+            "type": "tcp",
+            "host": "localhost",
+            "port": 5432,
+            "timeout_secs": 10
           }
         },
         "api": {
           "type": "nodejs",
           "alternative_name": "Backend",
           "path": "~/code/awesome-monorepo/apps/api",
+          "port": 3000,
           "commands": {
             "local": {
               "start": "npm run dev",
@@ -108,20 +118,19 @@ Similarly, preferences are loaded from:
             "k8s": "apply"
           },
           "dependencies": [
-            "database",
-            "redis"
+            { "project": "awesome-monorepo", "app": "database" }
           ],
           "health_check": {
-            "http": {
-              "url": "http://localhost:3000/health",
-              "expected_status": 200,
-              "timeout_secs": 5
-            }
+            "type": "http",
+            "url": "http://localhost:3000/health",
+            "expected_status": 200,
+            "timeout_secs": 5
           },
           "restart_policy": {
             "max_restarts": 5,
             "restart_window_secs": 300,
-            "backoff_secs": 5
+            "initial_backoff_secs": 2,
+            "max_backoff_secs": 60
           },
           "env_files": {
             "dev": {
@@ -130,11 +139,15 @@ Similarly, preferences are loaded from:
             },
             "qa": {
               "docker": ".env.qa",
-              "k8s": "k8s/env/qa.yaml"
+              "k8s": "k8s/env/qa.env"
             },
             "prod": {
-              "k8s": "k8s/env/prod.yaml"
+              "k8s": "k8s/env/prod.env"
             }
+          },
+          "default_stages": {
+            "local": "dev",
+            "docker": "qa"
           }
         },
         "worker": {
@@ -153,9 +166,8 @@ Similarly, preferences are loaded from:
             "docker": "start"
           },
           "dependencies": [
-            "database",
-            "redis",
-            "api"
+            { "project": "awesome-monorepo", "app": "database" },
+            { "project": "awesome-monorepo", "app": "api" }
           ],
           "restart_policy": {
             "max_restarts": 10,
@@ -180,13 +192,11 @@ Similarly, preferences are loaded from:
             "docker": "start"
           },
           "dependencies": [
-            "api"
+            { "project": "awesome-monorepo", "app": "api" }
           ],
           "health_check": {
-            "http": {
-              "url": "http://localhost:5173",
-              "expected_status": 200
-            }
+            "type": "http",
+            "url": "http://localhost:5173"
           }
         }
       }
@@ -249,7 +259,24 @@ commands are run.
 ```
 
 **Environments**: `local`, `docker`, `orbstack`, `docker-compose`, `k8s`,
-`ci`. Each one is optional; define only the environments the app uses.
+`ci`. Each one is optional; define only the environments the app uses, but at
+least one. On the command line, `--env compose` is accepted for
+`docker-compose`.
+
+**How commands run**: a command string is split into arguments the way a
+shell would (quotes are honoured), then executed directly, without a shell.
+Pipes, `&&`, redirections, `$VAR` expansion and `VAR=value` prefixes therefore
+do not work as such; wrap them in `sh -c '...'`:
+
+```json
+{
+  "commands": {
+    "local": {
+      "start": "sh -c 'npm install && npm run dev'"
+    }
+  }
+}
+```
 
 The default command of each environment lives in the app-level `defaults`
 object (see [Default Commands](#default-commands)), not inside `commands`.
@@ -298,7 +325,11 @@ object (see [Default Commands](#default-commands)), not inside `commands`.
       "alternative_name": "ProjectX",
       "apps": {
         "internal-api": {
-          "alternative_name": "API"
+          "alternative_name": "API",
+          "type": "nodejs",
+          "path": "~/code/internal-api",
+          "commands": { "local": { "start": "npm start" } },
+          "defaults": { "local": "start" }
         }
       }
     }
@@ -313,7 +344,9 @@ object (see [Default Commands](#default-commands)), not inside `commands`.
     "sensitive-app-name": {
       "alternative_name": "MyApp",
       "type": "nodejs",
-      "path": "~/code/sensitive-app-name"
+      "path": "~/code/sensitive-app-name",
+      "commands": { "local": { "start": "npm start" } },
+      "defaults": { "local": "start" }
     }
   }
 }
@@ -340,23 +373,27 @@ devcli config show sensitive-app-name
 - Training materials
 
 #### `dependencies`
-**Type**: Array of strings
+**Type**: Array of `{ "project": "<project>", "app": "<app>" }` objects
 **Default**: `[]`
-**Description**: Apps that must be started before this app
+**Description**: Apps that must be started before this app. Each entry names
+the project and the app (a dependency can live in another project). Plain
+strings such as `"database"` are rejected when the config is loaded.
 
 **Features**:
 - Automatic dependency resolution
 - Transitive dependencies supported
 - Circular dependency detection
 - Can be disabled with `--skip-deps`
+- With the `auto-start-deps` preference set to `false`, missing dependencies
+  are an error instead of being started
 
 **Example**:
 ```json
 {
   "dependencies": [
-    "database",
-    "redis",
-    "auth-service"
+    { "project": "my-project", "app": "database" },
+    { "project": "infrastructure", "app": "redis" },
+    { "project": "my-project", "app": "auth-service" }
   ]
 }
 ```
@@ -374,7 +411,8 @@ devcli start frontend
 devcli exports `PORT` and `DEVCLI_PORT` to the app. In a git worktree they
 are shifted by `DEVCLI_PORT_OFFSET` (100 per worktree slot), so the copies of
 several worktrees run side by side; health checks on this port are shifted
-too. Without it, a `PORT` from the app's env files is shifted in worktrees.
+too. A `PORT` set by the app's env files wins over `port` (and is the one
+shifted in worktrees).
 
 ```json
 {
@@ -382,85 +420,121 @@ too. Without it, a `PORT` from the app's env files is shifted in worktrees.
 }
 ```
 
-Every app also gets `DEVCLI_WORKTREE` (the worktree's slug, empty in the
+Every app also gets `DEVCLI_PORT_<APP>` for each of its dependencies that
+declares a `port` (as that dependency runs for this app, shifted when it runs in
+the same worktree), and `DEVCLI_WORKTREE` (the worktree's slug, empty in the
 configured checkout), `DEVCLI_WORKTREE_INDEX` and `DEVCLI_PORT_OFFSET`, plus
 `DEVCLI_WORKTREE_PATH` and `DEVCLI_WORKTREE_BRANCH` in a worktree. Health
 check URLs, hosts and commands can use `${DEVCLI_PORT}` and the other
 variables.
 
 #### `health_check`
-**Type**: Object
-**Default**: None
-**Description**: Health check configuration
+**Type**: Object, tagged by `type`
+**Default**: None (only "the process is alive" is checked)
+**Description**: How the monitor (pm-daemon) decides that a running app is
+healthy
 
-**Types**: `http`, `tcp`, `command`
+**Types**: `http`, `tcp`, `command`, `process`
 
-**HTTP Health Check**:
+**HTTP Health Check** (a GET on `url`; `timeout_secs` defaults to 5,
+`expected_status` to 200, and with 200 any 2xx status passes):
 ```json
 {
   "health_check": {
-    "http": {
-      "url": "http://localhost:3000/health",
-      "expected_status": 200,
-      "timeout_secs": 5
-    }
+    "type": "http",
+    "url": "http://localhost:3000/health",
+    "expected_status": 200,
+    "timeout_secs": 5
   }
 }
 ```
 
-**TCP Health Check**:
+**TCP Health Check** (a connection to `host:port`; `timeout_secs` defaults
+to 5):
 ```json
 {
   "health_check": {
-    "tcp": {
-      "host": "localhost",
-      "port": 5432,
-      "timeout_secs": 10
-    }
+    "type": "tcp",
+    "host": "localhost",
+    "port": 5432,
+    "timeout_secs": 10
   }
 }
 ```
 
-**Command Health Check**:
+**Command Health Check** (run with `sh -c`; healthy when it exits with
+`expected_exit_code`, default 0; `timeout_secs` defaults to 5):
 ```json
 {
   "health_check": {
-    "command": {
-      "cmd": "curl -f http://localhost:3000/health",
-      "timeout_secs": 5
-    }
+    "type": "command",
+    "command": "curl -f http://localhost:3000/health",
+    "timeout_secs": 5,
+    "expected_exit_code": 0
   }
 }
 ```
+
+**Process Health Check** (healthy as long as the process runs; the same as no
+`health_check`):
+```json
+{
+  "health_check": {
+    "type": "process"
+  }
+}
+```
+
+URLs, hosts and commands can use `${DEVCLI_PORT}`, `${PORT}` and the other
+`DEVCLI_*` variables (see [`port`](#port)).
 
 **Features**:
-- Monitor daemon runs checks every 3 seconds
+- The monitor runs checks every 3 seconds
+- Failures are not counted during the first 30 seconds after a (re)start
 - Tracks failure count
-- Triggers restart after 3 consecutive failures
+- Triggers a restart after 3 consecutive failures (when the app has an
+  enabled `restart_policy`; otherwise the app is stopped)
 - Resets on successful check
 
 #### `restart_policy`
 **Type**: Object
-**Default**: None
+**Default**: None (no automatic restart)
 **Description**: Automatic restart configuration
 
-**Fields**:
+**Fields** (all optional; defaults shown):
 ```json
 {
   "restart_policy": {
+    "enabled": true,
     "max_restarts": 5,
     "restart_window_secs": 300,
-    "backoff_secs": 5
+    "initial_backoff_secs": 1,
+    "max_backoff_secs": 60,
+    "backoff_multiplier": 2.0,
+    "restart_on_exit_codes": [1, 137]
   }
 }
 ```
 
+- `enabled`: `false` keeps the policy but never restarts
+- `max_restarts`: restarts allowed within `restart_window_secs` (`0` = unlimited)
+- `restart_window_secs`: the sliding window restarts are counted in
+- `initial_backoff_secs`, `backoff_multiplier`, `max_backoff_secs`: delay
+  before a restart
+- `restart_on_exit_codes`: restart only on these exit codes; without it, any
+  non-zero exit code restarts and exit code 0 does not
+
 **Behavior**:
-- Restarts process on crash (non-zero exit code; the exit code of the first
-  instance started by `devcli start` is not observable, so any exit of it counts)
-- Exponential backoff: 5s, 10s, 20s, 40s, 80s...
-- Resets restart count after window expires
-- Stops restarting after max_restarts reached
+- Restarts the process when it dies or fails 3 health checks in a row (the
+  exit code of the first instance started by `devcli start` is not
+  observable, so any exit of it counts as a crash)
+- Exponential backoff: `initial_backoff_secs × backoff_multiplier^(n-1)`,
+  capped at `max_backoff_secs`; with the defaults 1s, 1s, 2s, 4s, 8s, ... up
+  to 60s
+- Only restarts within the last `restart_window_secs` count towards
+  `max_restarts`
+- Once `max_restarts` is reached, the process is stopped and no longer
+  tracked
 
 **Example**:
 ```json
@@ -468,7 +542,7 @@ variables.
   "restart_policy": {
     "max_restarts": 10,
     "restart_window_secs": 600,
-    "backoff_secs": 3
+    "initial_backoff_secs": 3
   }
 }
 ```
@@ -489,8 +563,14 @@ variables.
 }
 ```
 
-**Stages**: Any string (e.g., `dev`, `qa`, `staging`, `prod`)
-**Contexts**: `local`, `docker`, `orbstack`, `k8s`
+**Stages**: `dev`, `qa`, `preprod`, `prod`, or `base` for a file used by every
+stage (when the selected stage has no file for that context, or no stage is
+selected)
+**Contexts**: the environment names: `local`, `docker`, `orbstack`,
+`docker-compose`, `k8s`, `ci`
+
+Without `env_files`, devcli looks for `.env` files in the app directory
+(`.env`, `.env.<stage>`, ...) and layers them.
 
 **Example**:
 ```json
@@ -502,11 +582,13 @@ variables.
     },
     "qa": {
       "docker": ".env.qa",
-      "k8s": "k8s/qa/env.yaml"
+      "k8s": "k8s/qa/.env"
     },
     "prod": {
-      "k8s": "k8s/prod/env.yaml",
-      "default_context": "k8s"
+      "k8s": "k8s/prod/.env"
+    },
+    "base": {
+      "local": ".env"
     }
   }
 }
@@ -524,7 +606,31 @@ devcli start api --stage qa --env docker
 **File Paths**:
 - Relative to app's `path` directory
 - Absolute paths supported
-- `~` expansion supported
+- `~` is not expanded here
+
+#### `default_stages`
+**Type**: Object (environment → stage)
+**Default**: None
+**Description**: The stage `start` uses in each environment when `--stage` is
+not given; falls back to the `default-stage` preference. Set it with
+`devcli env set-default APP --context ENV --stage STAGE`.
+
+```json
+{
+  "default_stages": {
+    "local": "dev",
+    "docker": "qa"
+  }
+}
+```
+
+#### `dockerfile_path`
+**Type**: String
+**Default**: None
+**Description**: Dockerfile path relative to the app's `path`. In the
+`docker` and `orbstack` environments it is passed as `-f` to `docker build`
+commands that have no `-f`/`--file`, and `.env` files next to it are also
+looked for. Set by `auto-add` when it finds a Dockerfile.
 
 ## Command Variants
 
@@ -553,7 +659,7 @@ Commands can have **variants** for different build targets, test suites, etc.
       "build": "npm run build",
       "build:development": "npm run build --mode development",
       "build:production": "npm run build --mode production",
-      "build:staging": "npm run build --mode staging"
+      "build:preprod": "npm run build --mode preprod"
     }
   }
 }
@@ -603,7 +709,8 @@ devcli run api build
 and `restart` run that command when no variant is given. `defaults` is
 optional: an app without it can still run named commands with
 `devcli run APP COMMAND`, but `devcli start APP --env ENV` fails when
-`defaults.ENV` is missing (`config validate` warns about it).
+`defaults.ENV` is missing, and `config validate` reports an environment that
+has commands but no default as an error.
 
 ```json
 {
@@ -657,26 +764,39 @@ devcli auto-add
 
 ### In Commands
 
+Commands run without a shell, so a `VAR=value` prefix needs `sh -c` (or set
+the variable in an env file, or use the app's [`port`](#port) for `PORT`):
+
 ```json
 {
   "commands": {
     "local": {
-      "start": "PORT=3000 npm run dev",
-      "test": "NODE_ENV=test npm test"
+      "start": "sh -c 'PORT=3000 npm run dev'",
+      "test": "sh -c 'NODE_ENV=test npm test'"
     }
   }
 }
 ```
 
-### Env Files (Docker)
+### Env Files (local, k8s, ci)
 
-Docker commands automatically inject `--env-file`:
+The selected env file (or the detected `.env` layers) is loaded into the
+process environment of the command.
+
+### Env Files (docker, orbstack, docker-compose)
+
+`--env-file <file>` is added to `docker run` and `docker create` commands
+(before the image name, unless the command already has `--env-file`). The file
+is the one pinned in `env_files` (an error if it does not exist) or, without
+one, the detected `.env` layers merged into
+`~/.devcli/env-files/<project>_<app>_<env>.env`. Other commands, such as
+`docker compose up`, are left unchanged.
 
 ```json
 {
   "commands": {
     "docker": {
-      "start": "docker compose up api"
+      "start": "docker run --rm -p 3000:3000 my-api"
     }
   },
   "env_files": {
@@ -687,14 +807,14 @@ Docker commands automatically inject `--env-file`:
 }
 ```
 
-**Becomes**:
+**Becomes** (with `--stage dev`):
 ```bash
-docker compose --env-file .env.dev up api
+docker run --platform linux/amd64 --rm -p 3000:3000 --env-file .env.dev my-api
 ```
 
-### Env Files (Kubernetes)
-
-K8s commands use env files as ConfigMaps/Secrets (manual setup required).
+`docker run`, `build`, `create` and `pull` commands in these environments also
+get `--platform` from the `docker-platform` preference (unless they have one),
+and `DOCKER_CONTEXT` is set to `default` (docker) or `orbstack` (orbstack).
 
 ## Validation
 
@@ -705,47 +825,50 @@ K8s commands use env files as ConfigMaps/Secrets (manual setup required).
 devcli config validate
 
 # Output:
-# ✓ Config is valid
-# ✓ 5 projects, 12 apps
-# ✓ No circular dependencies
+# Validating configuration...
+#
+# ✓ Configuration is valid!
+#   - 5 projects
+#   - 12 apps
 ```
+
+Errors make it exit with code 1; warnings (an unknown field, a missing env
+file) do not.
 
 ### Common Errors
 
-**Missing required fields**:
+**Missing required fields** (the file does not load at all):
 ```
-Error: App 'api' missing required field 'type'
+Error: Failed to load configuration: Failed to parse JSON from ~/.devcli/config.json: missing field `type` at line 12 column 5
 ```
 
 **Invalid dependencies**:
 ```
-Error: App 'api' depends on non-existent app 'database'
+  - [my-project/api] Invalid dependency my-project/database: App 'database' not found in project 'my-project'.
 ```
 
 **Circular dependencies**:
 ```
-Error: Circular dependency detected: api → worker → api
+  - [my-project/api] Dependency resolution error: Circular dependency detected: my-project/api -> my-project/worker -> my-project/api. Check app dependencies in config.
+```
+
+**Unknown field** (warning):
+```
+  - [my-project/api] Unknown field 'dependecies' is ignored. Did you mean 'dependencies'?
 ```
 
 ## Best Practices
 
 ### 1. Use Projects to Group Related Apps
 
-```json
+```text
 {
   "projects": {
     "main-app": {
-      "apps": {
-        "api": "...",
-        "worker": "...",
-        "frontend": "..."
-      }
+      "apps": { "api": { ... }, "worker": { ... }, "frontend": { ... } }
     },
     "monitoring": {
-      "apps": {
-        "prometheus": "...",
-        "grafana": "..."
-      }
+      "apps": { "prometheus": { ... }, "grafana": { ... } }
     }
   }
 }
@@ -757,13 +880,13 @@ Error: Circular dependency detected: api → worker → api
 {
   "frontend": {
     "dependencies": [
-      "api"
+      { "project": "main-app", "app": "api" }
     ]
   },
   "api": {
     "dependencies": [
-      "database",
-      "redis"
+      { "project": "main-app", "app": "database" },
+      { "project": "main-app", "app": "redis" }
     ]
   }
 }
@@ -775,17 +898,15 @@ Error: Circular dependency detected: api → worker → api
 {
   "database": {
     "health_check": {
-      "tcp": {
-        "host": "localhost",
-        "port": 5432
-      }
+      "type": "tcp",
+      "host": "localhost",
+      "port": 5432
     }
   },
   "api": {
     "health_check": {
-      "http": {
-        "url": "http://localhost:3000/health"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/health"
     }
   }
 }
@@ -817,7 +938,7 @@ apps/api/
 ├── .env.dev          # Local development
 ├── .env.docker.dev   # Docker development
 ├── .env.qa           # QA environment
-└── .env.staging      # Staging environment
+└── .env.preprod      # Pre-production environment
 ```
 
 ### 6. Use Command Variants for Build Targets
@@ -867,7 +988,7 @@ devcli config list --project awesome-monorepo
 devcli auto-add
 
 # Remove app
-# (Manual edit required, or use config remove)
+# (manual edit required: there is no remove command)
 ```
 
 **Manual Edit**:

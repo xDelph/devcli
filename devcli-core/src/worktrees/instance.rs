@@ -84,11 +84,15 @@ pub fn split(name: &str) -> (&str, Selector) {
 
 /// The name that designates exactly this project's instance (`proj@` for the
 /// configured checkout), for devcli's own follow-up commands.
-pub fn pinned(project: &str) -> String {
-    if project.contains('@') {
-        project.to_string()
-    } else {
+///
+/// A project of the config is pinned with a trailing `@`, even when its own
+/// name contains one (`org@team` → `org@team@`); an instance name
+/// (`proj@slug`) is already exact.
+pub fn pinned(config: &Config, project: &str) -> String {
+    if config.projects.contains_key(project) || !project.contains('@') {
         format!("{project}@")
+    } else {
+        project.to_string()
     }
 }
 
@@ -103,7 +107,7 @@ fn combine(app: Selector, project: Selector) -> Result<Selector> {
     }
 }
 
-fn app_named(config: &Config, name: &str, project: Option<&str>) -> bool {
+pub(crate) fn app_named(config: &Config, name: &str, project: Option<&str>) -> bool {
     config
         .projects
         .iter()
@@ -122,6 +126,27 @@ pub fn resolve_all(
     app_name: &str,
     project: Option<&str>,
     mode: Mode,
+) -> Result<Vec<ResolvedApp>> {
+    resolve_all_with(config, app_name, project, mode, true)
+}
+
+/// [`resolve_all`] for commands that only look (`status`, which processes
+/// `stop` selects): worktree slots are computed, never recorded.
+pub(crate) fn resolve_all_readonly(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+) -> Result<Vec<ResolvedApp>> {
+    resolve_all_with(config, app_name, project, mode, false)
+}
+
+fn resolve_all_with(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+    persist: bool,
 ) -> Result<Vec<ResolvedApp>> {
     // A name that really contains `@` in the config is taken as is.
     let (project, project_sel) = match project {
@@ -144,9 +169,9 @@ pub fn resolve_all(
     let base = resolve_app(config, app, project)?;
     match selector {
         Selector::Base => Ok(vec![base]),
-        Selector::Auto => Ok(vec![current(base)?]),
+        Selector::Auto => Ok(vec![current(base, persist)?]),
         Selector::Slug(slug) => {
-            let Some(view) = View::of(&base)? else {
+            let Some(view) = View::of(&base, persist)? else {
                 anyhow::bail!(
                     "'{}' is not in a git repository, so it has no worktree '{slug}'",
                     base.app_name
@@ -163,7 +188,7 @@ pub fn resolve_all(
         }
         Selector::All => {
             let mut all = Vec::new();
-            if let Some(view) = View::of(&base)? {
+            if let Some(view) = View::of(&base, persist)? {
                 for (worktree, slot) in &view.slots {
                     // Apps added on one branch only exist in some worktrees.
                     if let Ok(instance) = derive(&base, &view.home, worktree, slot) {
@@ -193,7 +218,7 @@ pub fn resolve(
 
 /// The instance of `base` for the current directory: its worktree when the
 /// command runs inside another worktree of the same repository.
-fn current(base: ResolvedApp) -> Result<ResolvedApp> {
+fn current(base: ResolvedApp, persist: bool) -> Result<ResolvedApp> {
     let Ok(cwd) = std::env::current_dir() else {
         return Ok(base);
     };
@@ -203,15 +228,42 @@ fn current(base: ResolvedApp) -> Result<ResolvedApp> {
     let Some(home) = git::checkout_of(&expand_path(&base.app.path)) else {
         return Ok(base);
     };
-    if here.common_dir != home.common_dir || here.root == home.root {
+    if here.root == home.root {
+        return Ok(base);
+    }
+    if here.common_dir != home.common_dir {
+        // Another clone of the same repository: devcli runs worktrees of the
+        // configured checkout, not clones; say which one is used.
+        if git::origin_url(&here.root).is_some_and(|url| git::origin_url(&home.root) == Some(url))
+            && crate::output::human(false)
+        {
+            eprintln!(
+                "note: {} is another clone of the repository of project '{}'; '{}' runs from the \
+                 configured checkout, {}",
+                here.root.display(),
+                base.project,
+                base.app_name,
+                home.root.display()
+            );
+        }
         return Ok(base);
     }
 
-    let Some(view) = View::of(&base)? else {
+    let Some(view) = View::of(&base, persist)? else {
         return Ok(base);
     };
     let Some((worktree, slot)) = view.slots.iter().find(|(w, _)| w.root == here.root) else {
-        return Ok(base);
+        // A worktree of this repository that git does not list at this path:
+        // moved with `mv`. Falling back to the configured checkout would make
+        // `stop api` run here stop the main checkout's api.
+        anyhow::bail!(
+            "{} is a worktree of the repository of project '{}' that git does not list at this path \
+             (moved without `git worktree move`?). Run `git worktree repair` here, or name \
+             the instance: {app}@SLUG for a worktree, {app}@ for the configured checkout.",
+            here.root.display(),
+            base.project,
+            app = base.app_name
+        );
     };
     match derive(&base, &view.home, worktree, slot) {
         Ok(instance) => Ok(instance),
@@ -233,7 +285,7 @@ struct View {
 }
 
 impl View {
-    fn of(base: &ResolvedApp) -> Result<Option<Self>> {
+    fn of(base: &ResolvedApp, persist: bool) -> Result<Option<Self>> {
         let Some(home) = git::checkout_of(&expand_path(&base.app.path)) else {
             return Ok(None);
         };
@@ -242,7 +294,12 @@ impl View {
             .iter()
             .filter(|w| w.is_usable() && w.root != home.root)
             .collect();
-        let slots = Registry::open().assign(&home.common_dir, &others)?;
+        let registry = Registry::open();
+        let slots = if persist {
+            registry.assign(&home.common_dir, &others)?
+        } else {
+            registry.peek(&home.common_dir, &others)?
+        };
         let slots = others.into_iter().cloned().zip(slots).collect();
         Ok(Some(Self { home, slots }))
     }
@@ -316,8 +373,14 @@ mod tests {
         assert_eq!(split("api@*"), ("api", Selector::All));
         assert_eq!(split("api@feat"), ("api", Selector::Slug("feat".into())));
         assert_eq!(split("a@b@c"), ("a@b", Selector::Slug("c".into())));
-        assert_eq!(pinned("proj"), "proj@");
-        assert_eq!(pinned("proj@feat"), "proj@feat");
+        let config: Config = serde_json::from_value(serde_json::json!({ "projects": {
+            "proj": { "apps": {} }, "org@team": { "apps": {} }
+        } }))
+        .unwrap();
+        assert_eq!(pinned(&config, "proj"), "proj@");
+        assert_eq!(pinned(&config, "proj@feat"), "proj@feat");
+        assert_eq!(pinned(&config, "org@team"), "org@team@");
+        assert_eq!(split("org@team@"), ("org@team", Selector::Base));
     }
 
     #[test]

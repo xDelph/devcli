@@ -36,6 +36,7 @@ mod tests {
             silent: false,
             stage: None,
             detached: false,
+            owner_override: None,
             output_tx: None,
         };
 
@@ -53,6 +54,7 @@ mod tests {
             silent: false,
             stage: Some("dev".to_string()),
             detached: false,
+            owner_override: None,
             output_tx: None,
         };
 
@@ -74,6 +76,7 @@ mod tests {
             silent: false,
             stage: None,
             detached: false,
+            owner_override: None,
             output_tx: None,
         };
 

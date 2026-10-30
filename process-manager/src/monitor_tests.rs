@@ -442,7 +442,9 @@ mod tests {
         let worktree = temp_dir.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        let mut proc = spawn_and_track(&store, sleep_task("in-worktree", 30)).await;
+        let mut task = sleep_task("in-worktree", 30);
+        task.working_dir = worktree.clone();
+        let mut proc = spawn_and_track(&store, task).await;
         proc.metadata.insert(
             WORKTREE_ROOT_KEY.to_string(),
             worktree.to_string_lossy().into_owned(),
@@ -454,8 +456,171 @@ mod tests {
 
         std::fs::remove_dir_all(&worktree).unwrap();
         monitor.tick().await.unwrap();
+        assert!(store.is_running(&proc), "one look is not enough");
+        monitor.tick().await.unwrap();
         reap_child(proc.pid);
         assert!(store.load("in-worktree").unwrap().is_none());
         assert!(!crate::engine::pid_alive(proc.pid));
+    }
+
+    /// An orphan that another app depends on is released, not stopped.
+    #[tokio::test]
+    async fn tick_releases_shared_processes_whose_owner_is_gone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut shared = spawn_and_track(&store, sleep_task("shared", 30)).await;
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+        shared
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        shared
+            .metadata
+            .insert(crate::state::SHARED_KEY.to_string(), "true".to_string());
+        store.save(&shared).unwrap();
+
+        monitor.tick().await.unwrap();
+        let after = store.load("shared").unwrap().expect("still tracked");
+        assert!(store.is_running(&after), "a shared process keeps running");
+        assert_eq!(after.owner_pid(), None);
+        assert!(!after.is_shared());
+
+        kill_and_reap(&shared).await;
+    }
+
+    /// A stop abandoned midway (the stopping devcli was killed) is finished
+    /// by pm-daemon; a stop in progress is left alone.
+    #[tokio::test]
+    async fn tick_finishes_stops_whose_stopper_died() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+
+        let mut abandoned = spawn_and_track(&store, sleep_task("abandoned", 30)).await;
+        abandoned
+            .metadata
+            .insert(crate::state::STOPPING_KEY.to_string(), dead.to_string());
+        store.save(&abandoned).unwrap();
+
+        let mut in_progress = spawn_and_track(&store, sleep_task("in-progress", 30)).await;
+        in_progress.metadata.insert(
+            crate::state::STOPPING_KEY.to_string(),
+            std::process::id().to_string(),
+        );
+        store.save(&in_progress).unwrap();
+
+        monitor.tick().await.unwrap();
+        reap_child(abandoned.pid);
+        assert!(store.load("abandoned").unwrap().is_none());
+        assert!(!crate::engine::pid_alive(abandoned.pid));
+        assert!(
+            store.is_running(&in_progress),
+            "a live stopper keeps its entry"
+        );
+
+        kill_and_reap(&in_progress).await;
+    }
+
+    /// A worktree moved with `mv` is not a deleted one: its apps keep running.
+    #[tokio::test]
+    async fn tick_leaves_processes_whose_worktree_was_moved() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let worktree = temp_dir.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let mut task = sleep_task("moved", 30);
+        task.working_dir = worktree.clone();
+        let mut proc = spawn_and_track(&store, task).await;
+        proc.metadata.insert(
+            WORKTREE_ROOT_KEY.to_string(),
+            worktree.to_string_lossy().into_owned(),
+        );
+        store.save(&proc).unwrap();
+
+        std::fs::rename(&worktree, temp_dir.path().join("moved-elsewhere")).unwrap();
+        for _ in 0..3 {
+            monitor.tick().await.unwrap();
+        }
+        assert!(store.is_running(&proc), "a moved worktree is not deleted");
+        kill_and_reap(&proc).await;
+    }
+
+    /// Finishing the stop of a dead entry signals nothing: its PID may have
+    /// been given to an unrelated process.
+    #[tokio::test]
+    async fn stopping_a_dead_entry_signals_nobody() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        // An entry whose PID now belongs to a process started long after it.
+        let mut bystander = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let mut entry = spawn_and_track(&store, sleep_task("reused", 30)).await;
+        kill_and_reap(&entry).await;
+        entry.pid = bystander.id();
+        entry.pgid = None;
+        entry.start_time = Utc::now() - chrono::Duration::minutes(10);
+        let mut owner = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = owner.id();
+        owner.wait().unwrap();
+        entry
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        store.save(&entry).unwrap();
+
+        monitor.tick().await.unwrap();
+        assert!(store.load("reused").unwrap().is_none(), "entry forgotten");
+        assert!(
+            bystander.try_wait().unwrap().is_none(),
+            "the process that got the PID was signalled"
+        );
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+    }
+
+    /// Orphans are stopped together, not one after another: apps that ignore
+    /// SIGTERM take 5s each to be killed.
+    #[tokio::test]
+    async fn orphans_are_stopped_in_parallel() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+
+        let mut tracked = Vec::new();
+        for i in 0..3 {
+            let mut task = sleep_task(&format!("stubborn-{i}"), 30);
+            task.command = "sh -c 'trap \"\" TERM; sleep 30'".to_string();
+            let mut proc = spawn_and_track(&store, task).await;
+            proc.metadata
+                .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+            store.save(&proc).unwrap();
+            tracked.push(proc);
+        }
+
+        let started = std::time::Instant::now();
+        monitor.tick().await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(9),
+            "stopped one after another: {:?}",
+            started.elapsed()
+        );
+        for proc in &tracked {
+            reap_child(proc.pid);
+            assert!(store.load(&proc.id).unwrap().is_none());
+        }
     }
 }
