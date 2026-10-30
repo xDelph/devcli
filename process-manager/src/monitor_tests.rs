@@ -442,7 +442,9 @@ mod tests {
         let worktree = temp_dir.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        let mut proc = spawn_and_track(&store, sleep_task("in-worktree", 30)).await;
+        let mut task = sleep_task("in-worktree", 30);
+        task.working_dir = worktree.clone();
+        let mut proc = spawn_and_track(&store, task).await;
         proc.metadata.insert(
             WORKTREE_ROOT_KEY.to_string(),
             worktree.to_string_lossy().into_owned(),
@@ -453,6 +455,8 @@ mod tests {
         assert!(store.is_running(&proc), "the worktree is still there");
 
         std::fs::remove_dir_all(&worktree).unwrap();
+        monitor.tick().await.unwrap();
+        assert!(store.is_running(&proc), "one look is not enough");
         monitor.tick().await.unwrap();
         reap_child(proc.pid);
         assert!(store.load("in-worktree").unwrap().is_none());
@@ -521,5 +525,31 @@ mod tests {
         );
 
         kill_and_reap(&in_progress).await;
+    }
+
+    /// A worktree moved with `mv` is not a deleted one: its apps keep running.
+    #[tokio::test]
+    async fn tick_leaves_processes_whose_worktree_was_moved() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let worktree = temp_dir.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let mut task = sleep_task("moved", 30);
+        task.working_dir = worktree.clone();
+        let mut proc = spawn_and_track(&store, task).await;
+        proc.metadata.insert(
+            WORKTREE_ROOT_KEY.to_string(),
+            worktree.to_string_lossy().into_owned(),
+        );
+        store.save(&proc).unwrap();
+
+        std::fs::rename(&worktree, temp_dir.path().join("moved-elsewhere")).unwrap();
+        for _ in 0..3 {
+            monitor.tick().await.unwrap();
+        }
+        assert!(store.is_running(&proc), "a moved worktree is not deleted");
+        kill_and_reap(&proc).await;
     }
 }

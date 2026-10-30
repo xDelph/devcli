@@ -19,6 +19,9 @@ pub struct Monitor {
     health_engine: Arc<HealthCheckEngine>,
     restart_coordinator: Arc<RestartCoordinator>,
     health_grace: Duration,
+    /// Entries whose worktree looked deleted on the previous tick: one
+    /// look is not enough to stop a running app.
+    worktree_gone_once: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Monitor {
@@ -32,6 +35,7 @@ impl Monitor {
             health_engine,
             restart_coordinator,
             health_grace: DEFAULT_HEALTH_GRACE,
+            worktree_gone_once: Default::default(),
         }
     }
 
@@ -86,7 +90,8 @@ impl Monitor {
                 continue;
             }
 
-            if proc.owner_gone() && proc.is_shared() && !proc.worktree_gone() {
+            let worktree_gone = self.worktree_gone_twice(&proc);
+            if proc.owner_gone() && proc.is_shared() && !worktree_gone {
                 // Its owner is gone, but another app depends on it.
                 tracing::info!(id = %proc.id, "Owner exited; releasing a shared process");
                 if let Err(e) = self.state.release(&proc.id) {
@@ -95,7 +100,7 @@ impl Monitor {
                 continue;
             }
 
-            if proc.owner_gone() || proc.worktree_gone() {
+            if proc.owner_gone() || worktree_gone {
                 // The attached `devcli start` that owned it exited without
                 // stopping it (killed, terminal closed), or the git worktree
                 // it runs from was deleted.
@@ -112,6 +117,19 @@ impl Monitor {
         }
 
         Ok(true)
+    }
+
+    /// Whether `proc`'s worktree looked deleted on this tick and the previous.
+    fn worktree_gone_twice(&self, proc: &crate::state::ManagedProcess) -> bool {
+        let gone = proc.worktree_gone();
+        let Ok(mut seen) = self.worktree_gone_once.lock() else {
+            return false;
+        };
+        if !gone {
+            seen.remove(&proc.id);
+            return false;
+        }
+        !seen.insert(proc.id.clone())
     }
 
     /// Stop a process whose owner or worktree is gone: SIGTERM, then SIGKILL

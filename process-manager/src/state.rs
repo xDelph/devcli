@@ -551,10 +551,19 @@ impl ManagedProcess {
     }
 
     /// Whether the process runs from a git worktree that has been deleted.
+    ///
+    /// Only a root reported as not found counts, not one that cannot be read
+    /// for a moment. And a worktree moved with `mv` is not deleted: the
+    /// process's working directory then still exists, at its new path.
     pub fn worktree_gone(&self) -> bool {
-        self.metadata
-            .get(WORKTREE_ROOT_KEY)
-            .is_some_and(|root| !std::path::Path::new(root).is_dir())
+        let Some(root) = self.metadata.get(WORKTREE_ROOT_KEY) else {
+            return false;
+        };
+        let missing = matches!(
+            std::fs::symlink_metadata(root),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        );
+        missing && !crate::engine::process_cwd(self.pid).is_some_and(|cwd| cwd.is_dir())
     }
 
     /// The attached `devcli start` this process lives and dies with, if any.
