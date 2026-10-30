@@ -59,6 +59,16 @@ pub fn config_home() -> PathBuf {
     PathBuf::from(home).join(".devcli")
 }
 
+/// devcli's per-user directory: `DEVCLI_CONFIG_DIR` when set, else `~/.devcli`.
+///
+/// Unlike [`config_home`] it never resolves to a project's `./.devcli`: files
+/// written here (such as the agent rules reference) must not depend on the
+/// directory a command happened to run from.
+pub fn user_config_home() -> PathBuf {
+    env_config_dir()
+        .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".devcli"))
+}
+
 // Get the full path to the config file
 // Returns: ./.devcli/config.json (current dir) or ~/.devcli/config.json (home dir)
 // Priority: 1) devcli_CONFIG_DIR env var, 2) current directory, 3) home directory

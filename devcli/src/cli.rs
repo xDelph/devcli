@@ -183,22 +183,64 @@ pub enum Commands {
         force: bool,
     },
 
-    #[command(about = "Install devcli's agent rules into AGENTS.md so AI agents can use it")]
+    #[command(
+        about = "Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, ...) to use devcli",
+        long_about = "Teach AI coding agents to use devcli.\n\n\
+            By default, writes devcli's rules into ./AGENTS.md (read by Codex, Cursor, Copilot and \
+            Claude Code) and, when the project has a CLAUDE.md, adds an @AGENTS.md import to it.\n\n\
+            With --global, writes a short block into the user-level file of every agent found \
+            (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md), pointing at the full \
+            rules in ~/.devcli/AGENTS.md. Re-run after upgrading devcli to refresh them."
+    )]
     InstallAgents {
-        #[arg(long, help = "Install for the current user (~/.agents/AGENTS.md)")]
+        #[arg(
+            long,
+            conflicts_with = "local",
+            help = "Install into the user-level files of your agents instead of a project"
+        )]
         global: bool,
 
-        #[arg(long, value_name = "PATH", help = "Install into <PATH>/AGENTS.md")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Install into the project at <PATH> (default: current directory)"
+        )]
         local: Option<String>,
+
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            requires = "global",
+            value_parser = ["claude", "codex", "gemini"],
+            help = "With --global: only this agent (repeatable; default: every agent found)"
+        )]
+        agents: Vec<String>,
     },
 
-    #[command(about = "Remove devcli's agent rules from AGENTS.md")]
+    #[command(about = "Remove devcli's agent rules installed by install-agents")]
     UninstallAgents {
-        #[arg(long, help = "Remove from the current user's AGENTS.md")]
+        #[arg(
+            long,
+            conflicts_with = "local",
+            help = "Remove from the user-level files of your agents"
+        )]
         global: bool,
 
-        #[arg(long, value_name = "PATH", help = "Remove from <PATH>/AGENTS.md")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Remove from the project at <PATH> (default: current directory)"
+        )]
         local: Option<String>,
+
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            requires = "global",
+            value_parser = ["claude", "codex", "gemini"],
+            help = "With --global: only this agent (repeatable; default: all of them)"
+        )]
+        agents: Vec<String>,
     },
 
     #[command(about = "Manually check the health of a running app")]

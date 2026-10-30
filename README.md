@@ -234,15 +234,28 @@ without a TTY. The contract lives in [`AGENTS.md`](AGENTS.md) — but an agent
 has no reason to know devcli exists, so install the rules once:
 
 ```bash
-devcli install-agents --global     # ~/.agents/AGENTS.md  (all projects)
-devcli install-agents --local .    # ./AGENTS.md          (this project)
-devcli uninstall-agents --global   # remove the block again
+devcli install-agents --global     # every agent you use, all projects
+devcli install-agents              # this project (or --local PATH)
+devcli uninstall-agents --global   # remove them again
 ```
 
-`AGENTS.md` is read natively by Claude Code, Cursor, Codex, Copilot, Gemini,
-Windsurf, Zed, Amp, JetBrains and Aider. The block is fenced by two markers so
-devcli can refresh or remove it without touching your own lines, and the
-previous file is saved as `AGENTS.md.backup` before every write.
+Each agent reads its own files, so devcli writes where they actually look:
+
+| Scope | Files written |
+|-------|---------------|
+| `--global` | A short block in `~/.claude/CLAUDE.md` (Claude Code), `~/.codex/AGENTS.md` (Codex, honours `CODEX_HOME`) and `~/.gemini/GEMINI.md` (Gemini CLI), for each agent whose directory exists (`--agent NAME` picks them explicitly). It points at the full rules, written to `~/.devcli/AGENTS.md`. |
+| project | The full rules in `AGENTS.md` (Codex, Cursor, Copilot, and Claude Code when there is no `CLAUDE.md`). If the project has a `CLAUDE.md`, Claude Code ignores `AGENTS.md`, so an `@AGENTS.md` import is added to it. |
+
+The global block is short on purpose: those files load into every session of
+every project. Cursor keeps its user rules in its settings, so it only picks
+devcli up per project. Gemini CLI reads `AGENTS.md` in a project only if you add
+it to `context.fileName` in its settings.
+
+The blocks are fenced by HTML-comment markers, so devcli can refresh or remove
+them without touching your own lines; a file devcli created is deleted again on
+uninstall. The previous version of every file it changes is saved under
+`~/.devcli/backups/agents/`. Re-run `install-agents` after upgrading devcli to
+refresh the rules.
 
 ## Features
 
