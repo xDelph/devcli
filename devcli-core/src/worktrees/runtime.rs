@@ -121,27 +121,49 @@ pub fn apply(
     Ok(applied)
 }
 
-/// Whether `dir` has the env files the app would load: the file pinned in
-/// `env_files`, or any `.env*` file of the cascade.
-fn has_env_files(dir: &Path, pinned: Option<&str>) -> bool {
-    if let Some(path) = pinned {
-        return dir.join(path).exists();
+/// The env files the cascade would load for an app at `root`, relative to
+/// it: the app directory's layers, plus those of its Dockerfile directory.
+fn cascade_files(
+    root: &Path,
+    stage: Option<&str>,
+    environment: &str,
+    dockerfile_path: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::new()];
+    if let Some(parent) = dockerfile_path.and_then(|df| Path::new(df).parent())
+        && !parent.as_os_str().is_empty()
+    {
+        roots.push(parent.to_path_buf());
     }
-    std::fs::read_dir(dir).is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with(".env") && name != ".envrc"
-        })
-    })
+    let mut files = Vec::new();
+    for prefix in roots {
+        let layers = env_flow::EnvFlow::from_dir(root.join(&prefix))
+            .stage_opt(crate::env_flow_support::effective_stage(stage))
+            .context(crate::env_flow_support::context_from_env(environment))
+            .layers();
+        for layer in layers.into_iter().flatten() {
+            let file = prefix.join(&layer.relative_path);
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+    }
+    files
 }
 
 /// The directory to read env files from.
 ///
-/// Env files are usually gitignored, so a new worktree has none: its instance
-/// then uses the configured checkout's, with a note, rather than starting
-/// without its variables (or failing on a pinned file that is "missing").
-/// Env files the worktree does have always win.
+/// Env files are usually gitignored, so a worktree lacks some or all of the
+/// configured checkout's (`.env.local` with the secrets, while `.env` is
+/// committed). Each file the cascade loads is taken from the worktree when it
+/// has it, else from the configured checkout:
+/// - the worktree has them all: the worktree
+/// - it has none: the configured checkout
+/// - a mix: an overlay directory of links to each file, so the cascade loads
+///   (and interpolates) them as usual
+///
+/// A file pinned in `env_files` is looked up the same way. Files the cascade
+/// does not load (`.env.example`, `.envrc`) play no part.
 pub fn env_dir(
     resolved: &ResolvedApp,
     working_dir: &Path,
@@ -151,22 +173,74 @@ pub fn env_dir(
     let Some(instance) = &resolved.worktree else {
         return Ok((working_dir.to_path_buf(), None));
     };
+    let base = &instance.base_path;
     let pinned = crate::env_flow_support::resolve_config_env_path(
         resolved.app.env_files.as_ref(),
         stage,
         environment,
     )?;
-    if has_env_files(working_dir, pinned.as_deref())
-        || !has_env_files(&instance.base_path, pinned.as_deref())
-    {
+    let files = match &pinned {
+        Some(path) => vec![PathBuf::from(path)],
+        None => cascade_files(
+            base,
+            stage,
+            environment,
+            resolved.app.dockerfile_path.as_deref(),
+        ),
+    };
+
+    let from_base: Vec<&PathBuf> = files
+        .iter()
+        .filter(|f| base.join(f).is_file() && !working_dir.join(f).is_file())
+        .collect();
+    if from_base.is_empty() {
         return Ok((working_dir.to_path_buf(), None));
     }
+    let names = from_base
+        .iter()
+        .map(|f| f.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let in_worktree = files.iter().any(|f| working_dir.join(f).is_file());
+    if !in_worktree {
+        let note = format!(
+            "Env files: none in worktree '{}', using {} ({names})",
+            instance.slug,
+            base.display()
+        );
+        return Ok((base.clone(), Some(note)));
+    }
+
+    let overlay = crate::config::loader::config_home()
+        .join("env-overlays")
+        .join(super::registry::sanitize_slug(&format!(
+            "{}_{}",
+            resolved.project, resolved.app_name
+        )));
+    let _ = std::fs::remove_dir_all(&overlay);
+    for file in &files {
+        let source = if working_dir.join(file).is_file() {
+            working_dir.join(file)
+        } else if base.join(file).is_file() {
+            base.join(file)
+        } else {
+            continue;
+        };
+        let link = overlay.join(file);
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&source, &link)?;
+        #[cfg(not(unix))]
+        std::fs::copy(&source, &link).map(|_| ())?;
+    }
     let note = format!(
-        "Env files: none in worktree '{}', using {}",
-        instance.slug,
-        instance.base_path.display()
+        "Env files: {names} from {} (missing in worktree '{}')",
+        base.display(),
+        instance.slug
     );
-    Ok((instance.base_path.clone(), Some(note)))
+    Ok((overlay, Some(note)))
 }
 
 /// `${NAME}` replaced by the instance's variables (`DEVCLI_*`, `PORT`), so a
@@ -381,23 +455,41 @@ mod tests {
     }
 
     #[test]
-    fn a_worktree_without_env_files_uses_the_configured_checkouts() {
+    fn env_files_missing_in_a_worktree_come_from_the_configured_checkout() {
+        let _env = crate::test_utils::TempConfigDir::new();
         let dir = tempfile::TempDir::new().unwrap();
         let base = dir.path().join("repo/api");
         let worktree = dir.path().join("w/feat/api");
         std::fs::create_dir_all(&base).unwrap();
         std::fs::create_dir_all(&worktree).unwrap();
-        std::fs::write(base.join(".env"), "PORT=3000\n").unwrap();
+        std::fs::write(base.join(".env"), "A=main\nPORT=3000\n").unwrap();
+        std::fs::write(base.join(".env.local"), "SECRET=main\n").unwrap();
+        // Not loaded by the cascade: they must not count as "has env files".
+        std::fs::write(worktree.join(".env.example"), "SECRET=\n").unwrap();
         std::fs::write(worktree.join(".envrc"), "use nix\n").unwrap();
 
         let mut app = resolved(None, Some(1));
         app.worktree.as_mut().unwrap().base_path = base.clone();
+
+        // None in the worktree: the configured checkout's directory.
         let (used, note) = env_dir(&app, &worktree, None, "local").unwrap();
         assert_eq!(used, base);
         assert!(note.unwrap().contains("none in worktree 'feat'"));
 
-        // The worktree's own env files win.
-        std::fs::write(worktree.join(".env.local"), "PORT=4000\n").unwrap();
+        // `.env` committed, `.env.local` gitignored: a mix of both.
+        std::fs::write(worktree.join(".env"), "A=branch\nPORT=3000\n").unwrap();
+        let (used, note) = env_dir(&app, &worktree, None, "local").unwrap();
+        assert_ne!(used, worktree);
+        assert!(note.unwrap().contains(".env.local"));
+        let loaded =
+            crate::env_flow_support::load_process_runtime(&used, None, None, "local", None)
+                .unwrap()
+                .unwrap();
+        assert_eq!(loaded.vars["A"], "branch", "the worktree's own file wins");
+        assert_eq!(loaded.vars["SECRET"], "main");
+
+        // All of them in the worktree: the worktree.
+        std::fs::write(worktree.join(".env.local"), "SECRET=branch\n").unwrap();
         assert_eq!(env_dir(&app, &worktree, None, "local").unwrap().0, worktree);
 
         // A pinned file is looked up by name.
@@ -406,7 +498,7 @@ mod tests {
             HashMap::from([("local".to_string(), "config/.env.dev".to_string())]),
         )]));
         std::fs::create_dir_all(base.join("config")).unwrap();
-        std::fs::write(base.join("config/.env.dev"), "A=1\n").unwrap();
+        std::fs::write(base.join("config/.env.dev"), "B=1\n").unwrap();
         assert_eq!(env_dir(&app, &worktree, None, "local").unwrap().0, base);
 
         // The configured checkout always reads its own.
