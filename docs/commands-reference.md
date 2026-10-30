@@ -163,11 +163,15 @@ devcli restart <app-name> [OPTIONS]
 - `-p, --project <NAME>` - Project name
 - `-e, --env <ENV>` - Environment (can change from current)
 - `--skip-deps` - Skip restarting dependencies
+- `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
 **Examples**:
 ```bash
 # Restart app
 devcli restart api
+
+# Restart and return, leaving it running in the background
+devcli restart api --detached
 
 # Restart in different environment
 devcli restart api --env docker
@@ -178,7 +182,7 @@ devcli restart api --skip-deps
 
 **Behavior**:
 - Stops current process
-- Starts new process with same config
+- Starts new process with same config, attached or detached like `start`
 - Preserves restart count
 - Can change environment on restart
 

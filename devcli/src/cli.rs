@@ -68,6 +68,12 @@ pub enum Commands {
 
         #[arg(long, help = "Skip dependency checks")]
         skip_deps: bool,
+
+        #[arg(
+            long,
+            help = "Leave the app running in the background and return immediately (overrides the detached-mode preference)"
+        )]
+        detached: bool,
     },
 
     #[command(about = "Stop one or more running processes")]
@@ -479,6 +485,7 @@ mod tests {
                 project: Some("qm".into()),
                 env: Some("local".into()),
                 skip_deps: true,
+                detached: false,
             }
         );
 

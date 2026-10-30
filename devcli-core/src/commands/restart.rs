@@ -15,6 +15,7 @@ pub struct RestartCommandArgs {
     pub project: Option<String>,          // Optional: specify project if name is ambiguous
     pub env: Option<String>, // Optional: "local" or "docker" (overrides existing config)
     pub skip_deps: bool,     // If true, don't check/start dependencies
+    pub detached: bool,      // If true, return right away instead of staying attached
     pub silent: bool,        // If true, don't print to terminal (for TUI mode)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
 }
@@ -126,7 +127,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             skip_deps: args.skip_deps,
             silent: inner_silent,
             stage: process.metadata.get("stage").cloned(),
-            detached: false,
+            detached: args.detached,
             output_tx: args.output_tx.clone(),
         };
 

@@ -327,3 +327,30 @@ fn attached_start_leaves_apps_it_did_not_start() {
     let left: Vec<String> = sb.running().into_iter().map(|(app, _)| app).collect();
     assert_eq!(left, vec!["ticker".to_string()]);
 }
+
+/// `restart --detached` returns and leaves the new instance running, even
+/// without `--json`.
+#[test]
+fn restart_detached_returns_and_keeps_the_app_running() {
+    let sb = Sandbox::new();
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 1));
+    let old_pid = sb.running()[0].1;
+
+    let mut restart = sb
+        .command(&["restart", "ticker", "--project", "smoke", "--detached"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn restart");
+    let status = wait_exit(&mut restart, Duration::from_secs(20));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "restart --detached did not return ({status:?})"
+    );
+
+    let running = sb.running();
+    assert_eq!(running.len(), 1, "running: {running:?}");
+    assert_ne!(running[0].1, old_pid, "the app was not restarted");
+}

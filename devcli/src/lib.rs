@@ -47,12 +47,14 @@ pub async fn run(cli: Cli) -> Result<()> {
             project,
             env,
             skip_deps,
+            detached,
         } => {
             let args = devcli_core::commands::restart::RestartCommandArgs {
                 app_name,
                 project,
                 env,
                 skip_deps,
+                detached,
                 silent: false,
                 output_tx: None,
             };

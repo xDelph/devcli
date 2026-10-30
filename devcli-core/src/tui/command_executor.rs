@@ -105,6 +105,7 @@ async fn execute_restart_command(
             Some(request.environment)
         },
         skip_deps: false,
+        detached: true,
         silent: true,
         output_tx: Some(core_output),
     };
