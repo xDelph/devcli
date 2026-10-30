@@ -374,7 +374,8 @@ devcli start frontend
 devcli exports `PORT` and `DEVCLI_PORT` to the app. In a git worktree they
 are shifted by `DEVCLI_PORT_OFFSET` (100 per worktree slot), so the copies of
 several worktrees run side by side; health checks on this port are shifted
-too. Without it, a `PORT` from the app's env files is shifted in worktrees.
+too. A `PORT` set by the app's env files wins over `port` (and is the one
+shifted in worktrees).
 
 ```json
 {

@@ -227,9 +227,9 @@ pub struct App {
     // Port the app listens on, when it reads it from `$PORT`. devcli then
     // exports PORT (and DEVCLI_PORT) to the app, shifted by DEVCLI_PORT_OFFSET
     // in a git worktree so instances of several worktrees can run side by
-    // side; health checks on this port are shifted too.
-    // OPTIONAL: without it, a PORT from the app's env files is shifted in
-    // worktrees only.
+    // side; health checks on this port are shifted too. A PORT set by the
+    // app's env files wins over it (and is the one shifted).
+    // OPTIONAL: without it, only an env files' PORT is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 

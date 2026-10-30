@@ -41,9 +41,9 @@ fn shifted(port: u16, offset: u32) -> Result<u16> {
 /// - `DEVCLI_WORKTREE` (slug, empty in the configured checkout),
 ///   `DEVCLI_WORKTREE_INDEX`, `DEVCLI_PORT_OFFSET` (index × 100), and in a
 ///   worktree `DEVCLI_WORKTREE_PATH` and `DEVCLI_WORKTREE_BRANCH`.
-/// - With `port` declared: `PORT` and `DEVCLI_PORT`, shifted by the offset.
-///   Without it, in a worktree, a numeric `PORT` from the env files is
-///   shifted, since the copies would otherwise all bind the same port.
+/// - `PORT` and `DEVCLI_PORT`: the env files' `PORT`, else the declared
+///   `port`, shifted by the offset in a worktree (the copies would otherwise
+///   all bind the same port). Without either, nothing is set.
 /// - In a worktree, for Docker environments: `COMPOSE_PROJECT_NAME`, unless
 ///   set, since Compose names its project after the compose file's
 ///   directory, which is the same in every worktree.
@@ -75,17 +75,13 @@ pub fn apply(
         }
     }
 
-    let declared = resolved.app.port;
-    let from_env = || {
-        env_vars
-            .get("PORT")
-            .and_then(|p| p.trim().parse::<u16>().ok())
-    };
-    let base_port = match (declared, instance) {
-        (Some(port), _) => Some(port),
-        (None, Some(_)) => from_env(),
-        (None, None) => None,
-    };
+    // The port the app really uses in the configured checkout: the env
+    // files' PORT when they set one (it always won there, and still does),
+    // else the declared `port`. A worktree shifts that one.
+    let from_env = env_vars
+        .get("PORT")
+        .and_then(|p| p.trim().parse::<u16>().ok());
+    let base_port = from_env.or(resolved.app.port);
     if let Some(from) = base_port {
         let to = shifted(from, offset)?;
         env_vars.insert("PORT".to_string(), to.to_string());
@@ -416,5 +412,20 @@ mod tests {
         // The configured checkout always reads its own.
         let main = resolved(None, None);
         assert_eq!(env_dir(&main, &base, None, "local").unwrap().0, base);
+    }
+
+    #[test]
+    fn the_env_files_port_wins_over_the_declared_one() {
+        let mut env = HashMap::from([("PORT".to_string(), "4000".to_string())]);
+        apply(&resolved(Some(3000), None), "local", &mut env).unwrap();
+        assert_eq!(
+            env["PORT"], "4000",
+            "the configured checkout keeps its env file's port"
+        );
+        assert_eq!(env[DEVCLI_PORT], "4000");
+
+        let mut env = HashMap::from([("PORT".to_string(), "4000".to_string())]);
+        apply(&resolved(Some(3000), Some(1)), "local", &mut env).unwrap();
+        assert_eq!(env["PORT"], "4100");
     }
 }
