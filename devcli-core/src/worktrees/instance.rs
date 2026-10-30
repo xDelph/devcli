@@ -103,7 +103,7 @@ fn combine(app: Selector, project: Selector) -> Result<Selector> {
     }
 }
 
-fn app_named(config: &Config, name: &str, project: Option<&str>) -> bool {
+pub(crate) fn app_named(config: &Config, name: &str, project: Option<&str>) -> bool {
     config
         .projects
         .iter()

@@ -212,10 +212,12 @@ fn filter_processes(
         args.app_name.as_deref(),
         args.project.as_deref(),
     )?;
-    Ok(processes
+    let matched: Vec<_> = processes
         .into_iter()
         .filter(|p| selection.matches(&p.metadata))
-        .collect())
+        .collect();
+    selection.check_unambiguous(matched.iter().map(|p| &p.metadata))?;
+    Ok(matched)
 }
 
 /// An agent stops the apps it works on, by name. `stop --all`, `APP@*` /
