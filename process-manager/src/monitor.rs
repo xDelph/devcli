@@ -79,6 +79,15 @@ impl Monitor {
                 continue;
             }
 
+            if proc.owner_gone() && proc.is_shared() && !proc.worktree_gone() {
+                // Its owner is gone, but another app depends on it.
+                tracing::info!(id = %proc.id, "Owner exited; releasing a shared process");
+                if let Err(e) = self.state.release(&proc.id) {
+                    tracing::warn!(id = %proc.id, error = %e, "Failed to release process");
+                }
+                continue;
+            }
+
             if proc.owner_gone() || proc.worktree_gone() {
                 // The attached `devcli start` that owned it exited without
                 // stopping it (killed, terminal closed), or the git worktree

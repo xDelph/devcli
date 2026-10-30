@@ -458,4 +458,32 @@ mod tests {
         assert!(store.load("in-worktree").unwrap().is_none());
         assert!(!crate::engine::pid_alive(proc.pid));
     }
+
+    /// An orphan that another app depends on is released, not stopped.
+    #[tokio::test]
+    async fn tick_releases_shared_processes_whose_owner_is_gone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut shared = spawn_and_track(&store, sleep_task("shared", 30)).await;
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+        shared
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        shared
+            .metadata
+            .insert(crate::state::SHARED_KEY.to_string(), "true".to_string());
+        store.save(&shared).unwrap();
+
+        monitor.tick().await.unwrap();
+        let after = store.load("shared").unwrap().expect("still tracked");
+        assert!(store.is_running(&after), "a shared process keeps running");
+        assert_eq!(after.owner_pid(), None);
+        assert!(!after.is_shared());
+
+        kill_and_reap(&shared).await;
+    }
 }

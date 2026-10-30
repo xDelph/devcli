@@ -400,3 +400,75 @@ fn agents_cannot_stop_everything() {
     assert!(named.status.success());
     assert_eq!(sb.running(), vec![]);
 }
+
+fn running_apps(sb: &Sandbox) -> Vec<String> {
+    let mut apps: Vec<String> = sb.running().into_iter().map(|(app, _)| app).collect();
+    apps.sort();
+    apps
+}
+
+/// Interrupting an attached session leaves running what another app
+/// started meanwhile depends on.
+#[test]
+fn an_attached_session_leaves_what_others_depend_on() {
+    let sb = Sandbox::new();
+    let mut attached = sb.spawn_attached(&["ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(15), || sb.running().len() == 1));
+
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+
+    send_signal(&attached, "-INT");
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+}
+
+/// A detached restart of a session's app keeps it in the session: no gap
+/// where the session ends and stops what the new instance depends on.
+#[test]
+fn a_detached_restart_keeps_the_app_in_its_session() {
+    let sb = Sandbox::new();
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(15), || sb.running().len() == 2));
+
+    sb.json(&["restart", "web", "--project", "smoke"]);
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+    assert!(
+        attached.try_wait().unwrap().is_none(),
+        "the session still owns the restarted web"
+    );
+
+    // Ctrl+C still stops the restarted web with its dependency.
+    send_signal(&attached, "-INT");
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(running_apps(&sb), Vec::<String>::new());
+}
+
+/// An attached start of an app that already runs has nothing to attach to:
+/// it returns at once and stops nothing.
+#[test]
+fn an_attached_start_of_a_running_app_stops_nothing() {
+    let sb = Sandbox::new();
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(wait_exit(&mut attached, Duration::from_secs(20)).is_some_and(|s| s.success()));
+    assert_eq!(
+        running_apps(&sb),
+        vec!["ticker", "web"],
+        "{}",
+        sb.attached_output()
+    );
+}

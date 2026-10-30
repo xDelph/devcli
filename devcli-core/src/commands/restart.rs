@@ -135,10 +135,17 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             silent: inner_silent,
             stage: process.metadata.get("stage").cloned(),
             detached: args.detached,
+            // A detached restart replaces the process, not its owner: the
+            // attached `devcli start` the app belongs to keeps it (and stops
+            // it on Ctrl+C). An attached restart takes it over instead.
+            owner_override: process.owner_pid(),
             output_tx: args.output_tx.clone(),
         };
 
         crate::commands::start::start_command(start_args).await?;
+        if process.is_shared() {
+            mark_shared_again(&store, &process, &environment);
+        }
     }
 
     emit_line(
@@ -156,4 +163,21 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The restarted instance of a shared process is shared too.
+fn mark_shared_again(
+    store: &process_manager::StateStore,
+    previous: &process_manager::state::ManagedProcess,
+    environment: &str,
+) {
+    let (Some(project), Some(app)) = (
+        previous.metadata.get("project"),
+        previous.metadata.get("app_config_name"),
+    ) else {
+        return;
+    };
+    if let Ok(Some(new)) = find_process(store, project, app, Some(environment)) {
+        let _ = store.mark_shared(&new.id);
+    }
 }

@@ -37,6 +37,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 silent: false,
                 stage,
                 detached,
+                owner_override: None,
                 output_tx: None,
             };
             start_command(args).await?;

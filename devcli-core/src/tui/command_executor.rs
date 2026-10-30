@@ -34,6 +34,7 @@ async fn execute_start_command(
         silent: true,
         stage: None,
         detached: false,
+        owner_override: None,
         output_tx: Some(core_output),
     };
     crate::commands::start::start_command(args).await?;

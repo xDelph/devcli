@@ -38,6 +38,44 @@ pub async fn handle_dependencies(
     silent: bool,
     owner: Option<u32>,
 ) -> Result<()> {
+    ensure_dependencies(apps, environment, silent, owner).await?;
+    share_dependencies_owned_by_others(apps, owner)
+}
+
+/// A dependency owned by another attached session is now needed by these
+/// apps too: mark it shared, so that session (or pm-daemon, if it dies)
+/// releases it instead of stopping it under them.
+fn share_dependencies_owned_by_others(
+    apps: &[&crate::config::resolver::ResolvedApp],
+    owner: Option<u32>,
+) -> Result<()> {
+    let config = load_config()?;
+    let store = state_store()?;
+    for app in apps {
+        for dep in resolve_dependency_chain(&config, app)? {
+            let Some(process) = crate::process_manager_support::find_process(
+                &store,
+                &dep.project,
+                &dep.app_name,
+                None,
+            )?
+            else {
+                continue;
+            };
+            if process.owner_pid().is_some() && process.owner_pid() != owner {
+                store.mark_shared(&process.id)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_dependencies(
+    apps: &[&crate::config::resolver::ResolvedApp],
+    environment: &str,
+    silent: bool,
+    owner: Option<u32>,
+) -> Result<()> {
     let config = load_config()?;
     let preferences = load_preferences()?;
     let store = state_store()?;
@@ -272,6 +310,7 @@ async fn start_missing_dependencies(
                     silent,
                     stage: None, // Dependencies use their own configured stage, not parent's override
                     detached: false,
+                    owner_override: None,
                     output_tx: None,
                 };
 

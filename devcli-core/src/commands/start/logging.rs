@@ -65,6 +65,60 @@ pub async fn stop_after_failed_start(signals: &mut Signals) {
     }
 }
 
+/// Hand back what this command owns without stopping it: when it started
+/// only dependencies (the apps it was asked for were already running), those
+/// serve apps it does not own.
+pub fn release_owned() {
+    let Ok(store) = state_store() else {
+        return;
+    };
+    let owner = std::process::id().to_string();
+    for process in store
+        .find_by_metadata(OWNER_PID_KEY, &owner)
+        .unwrap_or_default()
+    {
+        let _ = store.release(&process.id);
+    }
+}
+
+/// `(project, app)` of every dependency of the running apps this command
+/// does not own.
+fn needed_by_others(
+    store: &StateStore,
+    owner: &str,
+) -> std::collections::HashSet<(String, String)> {
+    let mut needed = std::collections::HashSet::new();
+    let Ok(config) = crate::config::load_config() else {
+        return needed;
+    };
+    for process in store.list().unwrap_or_default() {
+        let ours = process.metadata.get(OWNER_PID_KEY).map(String::as_str) == Some(owner);
+        if ours || process.is_stopping() || !store.is_running(&process) {
+            continue;
+        }
+        let (Some(project), Some(app)) = (
+            process.metadata.get("project"),
+            process.metadata.get("app_config_name"),
+        ) else {
+            continue;
+        };
+        let Ok(resolved) = crate::worktrees::resolve(
+            &config,
+            app,
+            Some(&crate::worktrees::pinned(project)),
+            crate::worktrees::Mode::Exact,
+        ) else {
+            continue;
+        };
+        for dep in crate::config::dependencies::resolve_dependency_chain(&config, &resolved)
+            .unwrap_or_default()
+        {
+            needed.insert((dep.project, dep.app_name));
+        }
+    }
+    needed
+}
+
 async fn wait_until_ended(
     store: &StateStore,
     owner: &str,
@@ -72,12 +126,20 @@ async fn wait_until_ended(
     signals: &mut Signals,
 ) -> Ended {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+    // Gone on two polls in a row: `restart` stops an app and starts it
+    // again, and the session must not end (and stop what the new instance
+    // depends on) in between.
+    let mut gone_once = false;
     loop {
         tokio::select! {
             ended = signals.recv() => return ended,
             _ = interval.tick() => {
-                if !any_started_app_alive(store, owner, started_apps) {
+                if any_started_app_alive(store, owner, started_apps) {
+                    gone_once = false;
+                } else if gone_once {
                     return Ended::AppsExited;
+                } else {
+                    gone_once = true;
                 }
             }
         }
@@ -119,6 +181,32 @@ async fn stop_owned(
     signals: &mut Signals,
 ) -> Result<usize> {
     let owned = store.find_by_metadata(OWNER_PID_KEY, owner)?;
+
+    // What other apps still need keeps running: stopping it would break
+    // them (another session's app depending on it, or our app restarted by
+    // another command, which this session no longer owns).
+    let needed = needed_by_others(store, owner);
+    let (kept, owned): (Vec<_>, Vec<_>) = owned.into_iter().partition(|p| {
+        p.is_shared()
+            || p.metadata
+                .get("project")
+                .zip(p.metadata.get("app_config_name"))
+                .is_some_and(|(proj, app)| needed.contains(&(proj.clone(), app.clone())))
+    });
+    for process in &kept {
+        let _ = store.release(&process.id);
+        if !quiet {
+            println!(
+                "Left '{}' running: other running apps depend on it",
+                process
+                    .metadata
+                    .get("app_config_name")
+                    .map(String::as_str)
+                    .unwrap_or(&process.id)
+            );
+        }
+    }
+
     let count = owned.len();
     let (apps, dependencies): (Vec<_>, Vec<_>) = owned
         .into_iter()

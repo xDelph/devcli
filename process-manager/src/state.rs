@@ -51,6 +51,11 @@ pub const STOPPING_KEY: &str = "stopping";
 /// if the owner died without doing so (killed, crashed, terminal closed).
 pub const OWNER_PID_KEY: &str = "owner_pid";
 
+/// Metadata key set on an owned process that another app depends on: when
+/// its owner ends (or dies), the process is released (it loses its owner and
+/// keeps running) instead of being stopped under the app that needs it.
+pub const SHARED_KEY: &str = "shared";
+
 /// Metadata key holding the root of the git worktree the process runs from.
 /// When that directory is deleted (a sub-agent removing its worktree), the
 /// app has nothing left to serve and pm-daemon stops it.
@@ -260,6 +265,31 @@ impl StateStore {
             .insert(STOPPING_KEY.to_string(), "true".to_string());
         self.save(&process)?;
         Ok(Some(process))
+    }
+
+    /// Mark entry `id` as needed by another app (see [`SHARED_KEY`]).
+    pub fn mark_shared(&self, id: &str) -> Result<()> {
+        let _guard = self.lock_entry(id)?;
+        if let Some(mut process) = self.load(id)?
+            && !process.is_shared()
+        {
+            process
+                .metadata
+                .insert(SHARED_KEY.to_string(), "true".to_string());
+            self.save(&process)?;
+        }
+        Ok(())
+    }
+
+    /// Let entry `id` go: it keeps running, owned by nobody, until stopped.
+    pub fn release(&self, id: &str) -> Result<()> {
+        let _guard = self.lock_entry(id)?;
+        if let Some(mut process) = self.load(id)? {
+            process.metadata.remove(OWNER_PID_KEY);
+            process.metadata.remove(SHARED_KEY);
+            self.save(&process)?;
+        }
+        Ok(())
     }
 
     /// Take the monitor singleton lock, or `None` if a monitor already holds it.
@@ -499,6 +529,11 @@ impl ManagedProcess {
     pub fn pid_was_reused(&self) -> bool {
         os_start_time(self.pid)
             .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+    }
+
+    /// Whether another app depends on this owned process.
+    pub fn is_shared(&self) -> bool {
+        self.metadata.contains_key(SHARED_KEY)
     }
 
     /// Whether the process runs from a git worktree that has been deleted.

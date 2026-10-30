@@ -22,6 +22,9 @@ pub struct StartCommandArgs {
     pub stage: Option<String>,  // Optional: deployment stage override (dev, qa, preprod, prod)
     pub detached: bool,         // If true, force detached mode (return immediately)
     pub output_tx: Option<OutputChannel>, // Optional output stream (for TUI popup)
+    /// For a detached start: the attached `devcli start` the new processes
+    /// belong to (a detached `restart` keeps an app in its session).
+    pub owner_override: Option<u32>,
 }
 
 /// Information about an app that's ready to start

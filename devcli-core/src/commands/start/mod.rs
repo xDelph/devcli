@@ -79,7 +79,11 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     // Listen for Ctrl+C before anything starts, so an interrupt during start-up
     // stops what was already launched instead of leaving it behind.
     let mut signals = attached.then(logging::Signals::new).transpose()?;
-    let owner = attached.then(std::process::id);
+    let owner = if attached {
+        Some(std::process::id())
+    } else {
+        args.owner_override
+    };
 
     let started = start_apps(&args, owner).await;
     let (started_apps, environment) = match (started, signals.as_mut()) {
@@ -93,7 +97,13 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     };
 
     // Step 4: Stream logs and stop the apps on exit, or return right away
-    if let Some(signals) = signals.as_mut() {
+    if signals.is_some() && started_apps.is_empty() {
+        // The apps asked for were already running: only their missing
+        // dependencies were started, and those serve apps this command does
+        // not own. Attaching would end at once and stop them.
+        logging::release_owned();
+        println!("\nNothing new to attach to; the dependencies started keep running.");
+    } else if let Some(signals) = signals.as_mut() {
         run_attached(&started_apps, signals).await?;
     } else if !silent {
         if crate::output::json_enabled() {
