@@ -6,7 +6,7 @@
 //! a sub-agent inside a worktree would have stopped the main checkout's apps.
 
 use super::git;
-use super::instance::{app_named, resolve_all, split, Mode, Selector};
+use super::instance::{app_named, resolve_all_readonly, split, Mode, Selector};
 use super::meta;
 use crate::config::models::Config;
 use crate::utils::path::expand_path;
@@ -44,7 +44,7 @@ pub fn base_project(metadata: &HashMap<String, String>) -> Option<&str> {
 impl Selection {
     pub fn of(config: &Config, app: Option<&str>, project: Option<&str>) -> Result<Self> {
         if let Some(app) = app {
-            return match resolve_all(config, app, project, Mode::FromCwd) {
+            return match resolve_all_readonly(config, app, project, Mode::FromCwd) {
                 Ok(instances) => Ok(Selection::Instances(
                     instances
                         .into_iter()

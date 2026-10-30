@@ -78,7 +78,8 @@ pub async fn worktrees_command(args: WorktreesArgs) -> Result<()> {
             .iter()
             .filter(|w| w.is_usable() && w.root != home.root)
             .collect();
-        let slots = Registry::open().assign(common_dir, &usable)?;
+        // Listing does not hand out slots: those shown are what `start` gives.
+        let slots = Registry::open().peek(common_dir, &usable)?;
 
         let instances = |root: &PathBuf, slug: Option<&str>| -> Vec<Value> {
             apps.iter()

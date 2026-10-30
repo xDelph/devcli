@@ -123,6 +123,27 @@ pub fn resolve_all(
     project: Option<&str>,
     mode: Mode,
 ) -> Result<Vec<ResolvedApp>> {
+    resolve_all_with(config, app_name, project, mode, true)
+}
+
+/// [`resolve_all`] for commands that only look (`status`, which processes
+/// `stop` selects): worktree slots are computed, never recorded.
+pub(crate) fn resolve_all_readonly(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+) -> Result<Vec<ResolvedApp>> {
+    resolve_all_with(config, app_name, project, mode, false)
+}
+
+fn resolve_all_with(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+    persist: bool,
+) -> Result<Vec<ResolvedApp>> {
     // A name that really contains `@` in the config is taken as is.
     let (project, project_sel) = match project {
         Some(p) if p.contains('@') && !config.projects.contains_key(p) => {
@@ -144,9 +165,9 @@ pub fn resolve_all(
     let base = resolve_app(config, app, project)?;
     match selector {
         Selector::Base => Ok(vec![base]),
-        Selector::Auto => Ok(vec![current(base)?]),
+        Selector::Auto => Ok(vec![current(base, persist)?]),
         Selector::Slug(slug) => {
-            let Some(view) = View::of(&base)? else {
+            let Some(view) = View::of(&base, persist)? else {
                 anyhow::bail!(
                     "'{}' is not in a git repository, so it has no worktree '{slug}'",
                     base.app_name
@@ -163,7 +184,7 @@ pub fn resolve_all(
         }
         Selector::All => {
             let mut all = Vec::new();
-            if let Some(view) = View::of(&base)? {
+            if let Some(view) = View::of(&base, persist)? {
                 for (worktree, slot) in &view.slots {
                     // Apps added on one branch only exist in some worktrees.
                     if let Ok(instance) = derive(&base, &view.home, worktree, slot) {
@@ -193,7 +214,7 @@ pub fn resolve(
 
 /// The instance of `base` for the current directory: its worktree when the
 /// command runs inside another worktree of the same repository.
-fn current(base: ResolvedApp) -> Result<ResolvedApp> {
+fn current(base: ResolvedApp, persist: bool) -> Result<ResolvedApp> {
     let Ok(cwd) = std::env::current_dir() else {
         return Ok(base);
     };
@@ -224,7 +245,7 @@ fn current(base: ResolvedApp) -> Result<ResolvedApp> {
         return Ok(base);
     }
 
-    let Some(view) = View::of(&base)? else {
+    let Some(view) = View::of(&base, persist)? else {
         return Ok(base);
     };
     let Some((worktree, slot)) = view.slots.iter().find(|(w, _)| w.root == here.root) else {
@@ -260,7 +281,7 @@ struct View {
 }
 
 impl View {
-    fn of(base: &ResolvedApp) -> Result<Option<Self>> {
+    fn of(base: &ResolvedApp, persist: bool) -> Result<Option<Self>> {
         let Some(home) = git::checkout_of(&expand_path(&base.app.path)) else {
             return Ok(None);
         };
@@ -269,7 +290,12 @@ impl View {
             .iter()
             .filter(|w| w.is_usable() && w.root != home.root)
             .collect();
-        let slots = Registry::open().assign(&home.common_dir, &others)?;
+        let registry = Registry::open();
+        let slots = if persist {
+            registry.assign(&home.common_dir, &others)?
+        } else {
+            registry.peek(&home.common_dir, &others)?
+        };
         let slots = others.into_iter().cloned().zip(slots).collect();
         Ok(Some(Self { home, slots }))
     }

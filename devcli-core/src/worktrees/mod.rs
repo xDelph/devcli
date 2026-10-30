@@ -86,10 +86,17 @@ pub fn registration_for(path: &std::path::Path) -> Registration {
     if main.root == here.root {
         return Registration::AsIs;
     }
-    let worktree = worktrees
+    // The slug devcli names this worktree by (sanitized, maybe suffixed),
+    // not git's raw admin name.
+    let usable: Vec<&git::Worktree> = worktrees
         .iter()
-        .find(|w| w.root == here.root)
-        .and_then(|w| w.admin_name.clone())
+        .filter(|w| w.is_usable() && w.root != main.root)
+        .collect();
+    let worktree = registry::Registry::open()
+        .peek(&here.common_dir, &usable)
+        .ok()
+        .and_then(|slots| slots.into_iter().find(|s| s.root == here.root))
+        .map(|s| s.slug)
         .unwrap_or_else(|| here.root.display().to_string());
     let relative = path
         .strip_prefix(&here.root)
