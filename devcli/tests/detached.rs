@@ -547,3 +547,14 @@ fn json_monitor_prints_one_json_value() {
     let cleaned = sb.json(&["monitor"]);
     assert_eq!(cleaned["cleaned"], serde_json::json!([]));
 }
+
+/// `start` says which apps asked for were running already.
+#[test]
+fn start_reports_apps_already_running() {
+    let sb = Sandbox::new();
+    let first = sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert_eq!(first["already_running"], serde_json::json!([]));
+    let again = sb.json(&["start", "ticker", "web", "--project", "smoke"]);
+    assert_eq!(again["started"], serde_json::json!(["web"]));
+    assert_eq!(again["already_running"], serde_json::json!(["ticker"]));
+}

@@ -89,8 +89,13 @@ devcli --json start api worker --project proj --env local --stage dev
 `--json` (or `--detached`) starts processes in the background and prints:
 
 ```json
-{ "started": ["api", "worker"], "environment": "local", "detached": true }
+{ "started": ["api", "worker"], "already_running": [], "environment": "local",
+  "detached": true }
 ```
+
+`started` lists what this command started; `already_running` the apps asked
+for that were running already (nothing was started for them). An app started
+as another's dependency appears in neither.
 
 A worktree instance is reported as `api@slug`.
 

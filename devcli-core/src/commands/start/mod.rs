@@ -126,6 +126,7 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         if crate::output::json_enabled() {
             crate::output::print_json(&serde_json::json!({
                 "started": started_apps,
+                "already_running": already_running(&args, &environment, &started_apps),
                 "environment": environment,
                 "detached": true,
             }))?;
@@ -193,4 +194,41 @@ async fn start_apps(args: &StartCommandArgs, owner: Option<u32>) -> Result<(Vec<
     .await?;
 
     Ok((started_apps, environment))
+}
+
+/// The instances asked for that were running already (so nothing was
+/// started for them): `started` alone could not tell an agent "already up"
+/// from "not started".
+fn already_running(args: &StartCommandArgs, environment: &str, started: &[String]) -> Vec<String> {
+    let (Ok(config), Ok(store)) = (crate::config::load_config(), state_store()) else {
+        return Vec::new();
+    };
+    let mut running = Vec::new();
+    for name in &args.app_names {
+        let Ok(instances) = crate::worktrees::resolve_all(
+            &config,
+            name,
+            args.project.as_deref(),
+            crate::worktrees::Mode::FromCwd,
+        ) else {
+            continue;
+        };
+        for instance in instances {
+            let label =
+                crate::worktrees::instance_name(&instance.app_name, instance.worktree.as_ref());
+            let is_running = find_process(
+                &store,
+                &instance.project,
+                &instance.app_name,
+                Some(environment),
+            )
+            .ok()
+            .flatten()
+            .is_some_and(|p| store.is_running(&p));
+            if is_running && !started.contains(&label) && !running.contains(&label) {
+                running.push(label);
+            }
+        }
+    }
+    running
 }
