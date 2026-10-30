@@ -82,7 +82,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     });
     // Name exactly this instance for the stop and start below: without a
     // suffix they would pick the instance of the current directory again.
-    let project = Some(crate::worktrees::pinned(&project_name));
+    let project = Some(crate::worktrees::pinned(&config, &project_name));
 
     emit_line(
         silent,

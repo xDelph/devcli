@@ -124,7 +124,7 @@ fn needed_by_others(
         let Ok(resolved) = crate::worktrees::resolve(
             &config,
             app,
-            Some(&crate::worktrees::pinned(project)),
+            Some(&crate::worktrees::pinned(&config, project)),
             crate::worktrees::Mode::Exact,
         ) else {
             continue;

@@ -84,11 +84,15 @@ pub fn split(name: &str) -> (&str, Selector) {
 
 /// The name that designates exactly this project's instance (`proj@` for the
 /// configured checkout), for devcli's own follow-up commands.
-pub fn pinned(project: &str) -> String {
-    if project.contains('@') {
-        project.to_string()
-    } else {
+///
+/// A project of the config is pinned with a trailing `@`, even when its own
+/// name contains one (`org@team` → `org@team@`); an instance name
+/// (`proj@slug`) is already exact.
+pub fn pinned(config: &Config, project: &str) -> String {
+    if config.projects.contains_key(project) || !project.contains('@') {
         format!("{project}@")
+    } else {
+        project.to_string()
     }
 }
 
@@ -369,8 +373,14 @@ mod tests {
         assert_eq!(split("api@*"), ("api", Selector::All));
         assert_eq!(split("api@feat"), ("api", Selector::Slug("feat".into())));
         assert_eq!(split("a@b@c"), ("a@b", Selector::Slug("c".into())));
-        assert_eq!(pinned("proj"), "proj@");
-        assert_eq!(pinned("proj@feat"), "proj@feat");
+        let config: Config = serde_json::from_value(serde_json::json!({ "projects": {
+            "proj": { "apps": {} }, "org@team": { "apps": {} }
+        } }))
+        .unwrap();
+        assert_eq!(pinned(&config, "proj"), "proj@");
+        assert_eq!(pinned(&config, "proj@feat"), "proj@feat");
+        assert_eq!(pinned(&config, "org@team"), "org@team@");
+        assert_eq!(split("org@team@"), ("org@team", Selector::Base));
     }
 
     #[test]

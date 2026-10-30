@@ -533,5 +533,12 @@ impl MainView {
 /// The project in `config.json` behind a TUI row: a git worktree instance
 /// (`proj@slug`) is configured by its project `proj`.
 fn configured_project(project: &str) -> &str {
-    crate::worktrees::split(project).0
+    // A project of the config whose name contains `@` is itself.
+    let configured = crate::config::loader::load_config_cached()
+        .is_ok_and(|config| config.projects.contains_key(project));
+    if configured {
+        project
+    } else {
+        crate::worktrees::split(project).0
+    }
 }
