@@ -59,6 +59,7 @@ mod tests {
             alternative_name: None,
             health_check: None,
             restart_policy: None,
+            port: None,
         };
 
         let envs = crate::utils::app::get_available_environments(&app);
@@ -79,6 +80,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -97,6 +99,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -117,6 +120,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -138,6 +142,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -160,6 +165,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =

@@ -708,6 +708,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "env-flow",
+ "fs2",
  "futures",
  "indexmap",
  "inquire",

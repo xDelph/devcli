@@ -55,6 +55,21 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
 
     let silent = args.silent;
 
+    // `APP@*` starts the app in every git worktree, including the ones the
+    // user and other agents work in: not something an agent may do.
+    let every_worktree = args.app_names.iter().any(|a| a.ends_with("@*"))
+        || args.project.as_deref().is_some_and(|p| p.ends_with("@*"));
+    if every_worktree
+        && !silent
+        && let Some(agent) = crate::utils::agent::detect()
+    {
+        anyhow::bail!(
+            "Starting an app in every git worktree (`@*`) is not allowed when devcli runs \
+             under an AI agent ({agent}). Start it in your worktree: run `devcli --json start \
+             APP` from inside it, or name the worktree (`APP@slug`)."
+        );
+    }
+
     // Attached (the default): the apps live as long as this command, like
     // `docker compose up`. Detached: they keep running after it returns.
     // `--json` implies detached mode: an agent wants a result, not a live log

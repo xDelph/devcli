@@ -24,7 +24,21 @@ pub struct StopCommandArgs {
 // Main implementation of the stop command
 #[tracing::instrument(skip(args), fields(app_name = ?args.app_name, project = ?args.project, all = args.all, force = args.force))]
 pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
-    refuse_bulk_stop_for_agents(&args, crate::utils::agent::detect())?;
+    if let Some(agent) = crate::utils::agent::detect() {
+        // `--project P` alone, run inside one of the project's worktrees, only
+        // reaches that worktree's processes: the agent's own.
+        let own_worktree = args.app_name.is_none()
+            && args.project.is_some()
+            && matches!(
+                crate::worktrees::Selection::of(
+                    &crate::config::load_config()?,
+                    None,
+                    args.project.as_deref()
+                )?,
+                crate::worktrees::Selection::Worktree { .. }
+            );
+        refuse_bulk_stop_for_agents(&args, Some(agent), own_worktree)?;
+    }
     let store = state_store()?;
     let silent = args.silent;
     store.cleanup_dead()?;
@@ -37,23 +51,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         "Stop command initiated"
     );
 
-    // Resolve alternative_name to actual app name if provided
-    let actual_app_name = if let Some(ref app_name) = args.app_name {
-        let config = crate::config::load_config()?;
-        match crate::config::resolve_app(&config, app_name, args.project.as_deref()) {
-            Ok(resolved) => Some(resolved.app_name),
-            Err(_) => Some(app_name.clone()),
-        }
-    } else {
-        None
-    };
-
     let processes = store.list()?;
     let running_processes: Vec<_> = processes
         .into_iter()
         .filter(|p| store.is_running(p))
         .collect();
-    let processes_to_stop = filter_processes(&args, &actual_app_name, running_processes, &store)?;
+    let processes_to_stop = filter_processes(&args, running_processes)?;
 
     if processes_to_stop.is_empty() {
         if crate::output::json_enabled() && !silent {
@@ -192,57 +195,52 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
 // Filter processes based on command arguments
 fn filter_processes(
     args: &StopCommandArgs,
-    actual_app_name: &Option<String>,
     processes: Vec<process_manager::state::ManagedProcess>,
-    _store: &process_manager::StateStore,
 ) -> Result<Vec<process_manager::state::ManagedProcess>> {
-    let mut filtered = Vec::new();
-
     if args.all {
-        filtered.extend(processes);
-    } else if let Some(app_name) = actual_app_name {
-        for process in processes {
-            let matches_app = process.metadata.get("app_config_name").map(String::as_str)
-                == Some(app_name.as_str())
-                || process.id.contains(&format!(".{}.", app_name));
-
-            if !matches_app {
-                continue;
-            }
-
-            if let Some(ref project_filter) = args.project {
-                if process.metadata.get("project").map(String::as_str) == Some(project_filter) {
-                    filtered.push(process);
-                    break;
-                }
-            } else {
-                filtered.push(process);
-                break;
-            }
-        }
-    } else if let Some(ref project) = args.project {
-        for process in processes {
-            if process.metadata.get("project").map(String::as_str) == Some(project) {
-                filtered.push(process);
-            }
-        }
+        return Ok(processes);
     }
-
-    Ok(filtered)
+    if args.app_name.is_none() && args.project.is_none() {
+        return Ok(Vec::new());
+    }
+    // `stop api` stops the instance of the worktree the command runs in (or
+    // of the configured checkout), never another worktree's; `stop api@*`
+    // every instance.
+    let config = crate::config::load_config()?;
+    let selection = crate::worktrees::Selection::of(
+        &config,
+        args.app_name.as_deref(),
+        args.project.as_deref(),
+    )?;
+    Ok(processes
+        .into_iter()
+        .filter(|p| selection.matches(&p.metadata))
+        .collect())
 }
 
-/// An agent stops the apps it works on, by name. `stop --all` and a stop of
-/// a whole project would also take down what the user and other agents run,
-/// so they are refused when devcli detects it runs under an AI agent.
-/// Listing them (`--dry-run`) is fine, and devcli's own callers (the TUI,
-/// `restart`) are not concerned.
-fn refuse_bulk_stop_for_agents(args: &StopCommandArgs, agent: Option<&str>) -> Result<()> {
-    let bulk = args.all || (args.app_name.is_none() && args.project.is_some());
+/// An agent stops the apps it works on, by name. `stop --all`, `APP@*` /
+/// `--project P@*` (every git worktree) and a stop of a whole project would
+/// also take down what the user and other agents run, so they are refused
+/// when devcli detects it runs under an AI agent. A whole-project stop run
+/// inside one of the project's worktrees (`own_worktree`) only reaches that
+/// worktree's processes and is allowed. Listing (`--dry-run`) is fine, and
+/// devcli's own callers (the TUI, `restart`) are not concerned.
+fn refuse_bulk_stop_for_agents(
+    args: &StopCommandArgs,
+    agent: Option<&str>,
+    own_worktree: bool,
+) -> Result<()> {
+    let every_worktree = args.app_name.as_deref().is_some_and(|a| a.ends_with("@*"))
+        || args.project.as_deref().is_some_and(|p| p.ends_with("@*"));
+    let whole_project = args.app_name.is_none() && args.project.is_some() && !own_worktree;
+    let bulk = args.all || every_worktree || whole_project;
     let (true, false, false, Some(agent)) = (bulk, args.dry_run, args.silent, agent) else {
         return Ok(());
     };
     let what = if args.all {
         "`stop --all`".to_string()
+    } else if every_worktree {
+        "stopping an app in every git worktree (`@*`)".to_string()
     } else {
         format!(
             "stopping every app of project '{}'",
@@ -393,25 +391,53 @@ mod agent_guard_tests {
     #[test]
     fn agents_cannot_stop_everything() {
         let agent = Some("Claude Code");
-        let err = refuse_bulk_stop_for_agents(&args(None, None, true, false), agent).unwrap_err();
+        let err =
+            refuse_bulk_stop_for_agents(&args(None, None, true, false), agent, false).unwrap_err();
         assert!(err.to_string().contains("stop --all"), "{err}");
         assert!(
-            refuse_bulk_stop_for_agents(&args(None, Some("shop"), false, false), agent).is_err()
+            refuse_bulk_stop_for_agents(&args(None, Some("shop"), false, false), agent, false)
+                .is_err()
         );
 
         // Named apps, and listing, are fine.
+        assert!(refuse_bulk_stop_for_agents(
+            &args(Some("api"), Some("shop"), false, false),
+            agent,
+            false
+        )
+        .is_ok());
+        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, true), agent, false).is_ok());
+
+        // Every worktree at once is refused; the agent's own worktree is not.
+        assert!(refuse_bulk_stop_for_agents(
+            &args(Some("api@*"), None, false, false),
+            agent,
+            false
+        )
+        .is_err());
+        assert!(refuse_bulk_stop_for_agents(
+            &args(None, Some("shop@*"), false, false),
+            agent,
+            false
+        )
+        .is_err());
         assert!(
-            refuse_bulk_stop_for_agents(&args(Some("api"), Some("shop"), false, false), agent)
+            refuse_bulk_stop_for_agents(&args(None, Some("shop"), false, false), agent, true)
                 .is_ok()
         );
-        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, true), agent).is_ok());
+        assert!(refuse_bulk_stop_for_agents(
+            &args(Some("api@feat"), None, false, false),
+            agent,
+            false
+        )
+        .is_ok());
     }
 
     #[test]
     fn people_and_devcli_itself_still_can() {
-        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, false), None).is_ok());
+        assert!(refuse_bulk_stop_for_agents(&args(None, None, true, false), None, false).is_ok());
         let mut tui = args(None, Some("shop"), false, false);
         tui.silent = true;
-        assert!(refuse_bulk_stop_for_agents(&tui, Some("Claude Code")).is_ok());
+        assert!(refuse_bulk_stop_for_agents(&tui, Some("Claude Code"), false).is_ok());
     }
 }

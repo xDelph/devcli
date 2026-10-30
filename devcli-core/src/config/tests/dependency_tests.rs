@@ -141,11 +141,13 @@ mod tests {
             app: AppBuilder::new("redis", "/tmp/a").build(),
             app_name: "redis".to_string(),
             project: "project-a".to_string(),
+            worktree: None,
         };
         let dep_b = crate::config::resolver::ResolvedApp {
             app: AppBuilder::new("redis", "/tmp/b").build(),
             app_name: "redis".to_string(),
             project: "project-b".to_string(),
+            worktree: None,
         };
 
         let mut deps = vec![dep_a.clone(), dep_b.clone(), dep_a];

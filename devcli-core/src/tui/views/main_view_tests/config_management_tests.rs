@@ -85,6 +85,7 @@ fn create_test_config() -> Config {
             default_stages: None,
             health_check: None,
             restart_policy: None,
+            port: None,
         },
     );
 

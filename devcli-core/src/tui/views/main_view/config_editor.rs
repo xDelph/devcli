@@ -11,6 +11,7 @@ use std::collections::HashMap;
 impl MainView {
     /// Loads an app into the config form for editing
     pub(crate) fn load_app_into_form(&mut self, project: &str, app_name: &str, app: &AppStateData) {
+        let project = configured_project(project);
         use crate::tui::widgets::TextEditor;
         self.config_form.project_name = TextEditor::with_content(project.to_string());
         self.config_form.app_name = TextEditor::with_content(app_name.to_string());
@@ -43,6 +44,7 @@ impl MainView {
 
     /// Loads a specific command into the form for editing
     pub(crate) fn load_command_into_form(&mut self, project: &str, app_name: &str) -> Result<()> {
+        let project = configured_project(project);
         let config = load_config()?;
 
         if let Some(proj) = config.projects.get(project)
@@ -130,6 +132,7 @@ impl MainView {
 
     /// Saves a new command to an existing app
     pub(crate) fn save_new_command(&mut self, project: &str, app_name: &str) -> Result<()> {
+        let project = configured_project(project);
         use super::ConfigMode;
 
         let mut config = load_config()?;
@@ -160,6 +163,7 @@ impl MainView {
 
     /// Saves a command edit
     pub(crate) fn save_command_edit(&mut self, project: &str, app_name: &str) -> Result<()> {
+        let project = configured_project(project);
         use super::ConfigMode;
 
         let mut config = load_config()?;
@@ -244,11 +248,13 @@ impl MainView {
             alternative_name: None,
             health_check: None,
             restart_policy: None,
+            port: None,
         }
     }
 
     /// Deletes an app from the config
     pub(crate) fn delete_app(&self, project: &str, app: &str) -> Result<()> {
+        let project = configured_project(project);
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project) {
@@ -265,6 +271,7 @@ impl MainView {
 
     /// Sets the selected command as default for its environment
     pub(crate) fn set_command_as_default(&self, project: &str, app_name: &str) -> Result<()> {
+        let project = configured_project(project);
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project)
@@ -321,6 +328,7 @@ impl MainView {
         app_name: &str,
         dep_idx: usize,
     ) -> Result<()> {
+        let project = configured_project(project);
         let mut config = load_config()?;
 
         let mut new_len = 0;
@@ -351,6 +359,7 @@ impl MainView {
         dep_project: &str,
         dep_app: &str,
     ) -> Result<()> {
+        let project = configured_project(project);
         use super::ConfigMode;
 
         let mut config = load_config()?;
@@ -408,6 +417,7 @@ impl MainView {
         env: &str,
         command_name: &str,
     ) -> Result<()> {
+        let project = configured_project(project);
         let mut config = load_config()?;
 
         if let Some(proj) = config.projects.get_mut(project)
@@ -518,4 +528,10 @@ impl MainView {
         }
         Ok(())
     }
+}
+
+/// The project in `config.json` behind a TUI row: a git worktree instance
+/// (`proj@slug`) is configured by its project `proj`.
+fn configured_project(project: &str) -> &str {
+    crate::worktrees::split(project).0
 }

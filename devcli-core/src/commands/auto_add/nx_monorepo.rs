@@ -109,6 +109,7 @@ pub async fn handle_nx_monorepo(workspace_root: &std::path::Path, force: bool) -
         // Build the App struct from detected data
         let app = App {
             extra: Default::default(),
+            port: None,
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {

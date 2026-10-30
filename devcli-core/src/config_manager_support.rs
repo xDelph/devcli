@@ -177,6 +177,7 @@ impl ProjectAppResolver {
                 project: project.to_string(),
                 app_name: app_name.to_string(),
                 app: app.clone(),
+                worktree: None,
             });
         }
 
@@ -186,6 +187,7 @@ impl ProjectAppResolver {
                     project: project.to_string(),
                     app_name: actual_name.clone(),
                     app: app.clone(),
+                    worktree: None,
                 });
             }
         }
@@ -259,6 +261,7 @@ impl Resolver<Config, ResolvedApp> for ProjectAppResolver {
                     project,
                     app_name,
                     app,
+                    worktree: None,
                 })
             }
             _ => {

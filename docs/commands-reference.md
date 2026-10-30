@@ -11,6 +11,7 @@ Complete reference for all devcli CLI commands.
   - [run](#run) - Run command variants
   - [status](#status) - Show process status
   - [logs](#logs) - Show app logs
+  - [worktrees](#worktrees) - Git worktrees and their instances
 - [Monitoring](#monitoring)
   - [monitor](#monitor) - Health monitoring daemon
   - [health-check](#health-check) - Manual health check
@@ -42,6 +43,13 @@ Complete reference for all devcli CLI commands.
 ---
 
 ## Process Management
+
+> **Git worktrees.** Every command taking an app name runs, from inside a
+> git worktree of the app's repository, against that worktree's copy of the
+> app (project `proj@slug`). `APP@slug` names a worktree's instance from
+> anywhere, `APP@` the configured checkout, and `APP@*` every checkout
+> (`start`, `stop`, `status`). The suffix also works on `--project`. See
+> [`worktrees`](#worktrees).
 
 ### `start`
 
@@ -372,6 +380,36 @@ devcli monitor
 - Tracks metrics
 - Exposes metrics API on localhost:9090
 - Exits automatically when no processes remain
+
+---
+
+### `worktrees`
+
+List the git worktrees of the repositories holding configured apps.
+
+**Usage**:
+```bash
+devcli worktrees [--project <NAME>]
+```
+
+**Output** (per repository): each worktree's name (`(configured)` for the
+checkout in the config), port offset, branch, running apps and path; `*`
+marks the current directory's worktree. `--json` gives the full document
+(see AGENTS.md).
+
+**Behavior**:
+- Worktrees are found through git (`git worktree list`), wherever they live
+- Each worktree keeps a slot (1, 2, ...) while it exists; `DEVCLI_PORT_OFFSET`
+  is slot × 100 and an app's configured `port` is shifted by it
+- Worktrees deleted without `git worktree remove` are shown as stale; run
+  `git worktree prune` to forget them (devcli never does)
+
+**Examples**:
+```bash
+devcli worktrees
+devcli start api@agent-1     # start api in worktree agent-1
+devcli stop api@*            # stop api in every checkout
+```
 
 ---
 

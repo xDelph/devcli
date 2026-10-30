@@ -124,7 +124,8 @@ pub(super) fn start_waves(config: &Config, missing: &[String]) -> Result<Vec<Vec
         let Some((project, app)) = key.split_once('/') else {
             continue;
         };
-        let resolved = crate::config::resolve_app(config, app, Some(project))?;
+        let resolved =
+            crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)?;
         let chain = resolve_dependency_chain(config, &resolved)?;
         let blocking = chain
             .iter()
@@ -167,11 +168,31 @@ async fn wait_until_ready(config: &Config, wave: &[String], silent: bool) {
         let Some((project, app)) = key.split_once('/') else {
             continue;
         };
-        let Ok(resolved) = crate::config::resolve_app(config, app, Some(project)) else {
+        let Ok(resolved) =
+            crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)
+        else {
             continue;
         };
-        let check =
-            crate::process_manager_support::to_pm_health_check(resolved.app.health_check.as_ref());
+        // The check the dependency was just started with: in a git worktree
+        // it targets the instance's shifted port, not the configured one.
+        let started = crate::process_manager_support::state_store()
+            .ok()
+            .and_then(|store| {
+                crate::process_manager_support::find_process(
+                    &store,
+                    &resolved.project,
+                    &resolved.app_name,
+                    None,
+                )
+                .ok()
+                .flatten()
+            });
+        let check = match started {
+            Some(process) => process.task.health_check,
+            None => crate::process_manager_support::to_pm_health_check(
+                resolved.app.health_check.as_ref(),
+            ),
+        };
         if matches!(check, process_manager::HealthCheck::Process {}) {
             continue;
         }

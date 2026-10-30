@@ -368,6 +368,26 @@ devcli start frontend
 # → Starts: database → api → frontend
 ```
 
+#### `port`
+**Default**: None
+**Description**: Port the app listens on, when it reads it from `$PORT`.
+devcli exports `PORT` and `DEVCLI_PORT` to the app. In a git worktree they
+are shifted by `DEVCLI_PORT_OFFSET` (100 per worktree slot), so the copies of
+several worktrees run side by side; health checks on this port are shifted
+too. Without it, a `PORT` from the app's env files is shifted in worktrees.
+
+```json
+{
+  "port": 3000
+}
+```
+
+Every app also gets `DEVCLI_WORKTREE` (the worktree's slug, empty in the
+configured checkout), `DEVCLI_WORKTREE_INDEX` and `DEVCLI_PORT_OFFSET`, plus
+`DEVCLI_WORKTREE_PATH` and `DEVCLI_WORKTREE_BRANCH` in a worktree. Health
+check URLs, hosts and commands can use `${DEVCLI_PORT}` and the other
+variables.
+
 #### `health_check`
 **Type**: Object
 **Default**: None

@@ -224,6 +224,15 @@ pub struct App {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_stages: Option<HashMap<String, String>>,
 
+    // Port the app listens on, when it reads it from `$PORT`. devcli then
+    // exports PORT (and DEVCLI_PORT) to the app, shifted by DEVCLI_PORT_OFFSET
+    // in a git worktree so instances of several worktrees can run side by
+    // side; health checks on this port are shifted too.
+    // OPTIONAL: without it, a PORT from the app's env files is shifted in
+    // worktrees only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+
     // Health check configuration for monitoring process health
     // Supports HTTP endpoints, TCP ports, custom commands, and process-alive checks
     // OPTIONAL: If not set, only process existence is checked

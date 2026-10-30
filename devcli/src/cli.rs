@@ -246,6 +246,18 @@ pub enum Commands {
         agents: Vec<String>,
     },
 
+    #[command(
+        about = "List the git worktrees of your apps' repositories and what runs in them",
+        long_about = "List the git worktrees of the configured apps' repositories: each one's \
+            slug (run an app there with `APP@SLUG`, or from inside it), port offset, branch, \
+            path and running apps. Worktrees are found through git wherever they are; \
+            nothing is added to config.json."
+    )]
+    Worktrees {
+        #[arg(short, long, help = "Only the repositories of this project")]
+        project: Option<String>,
+    },
+
     #[command(about = "Manually check the health of a running app")]
     HealthCheck {
         #[arg(help = "Name of the application to check")]

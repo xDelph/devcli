@@ -3,7 +3,7 @@
 // Example: devcli status
 // Example: devcli status api-private --deps
 
-use crate::config::{dependencies::resolve_dependency_chain, load_config, resolve_app};
+use crate::config::{dependencies::resolve_dependency_chain, load_config};
 use crate::process_manager_support::{find_process, state_store};
 use crate::Result;
 use chrono::Utc;
@@ -25,12 +25,13 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     store.cleanup_dead()?;
     let config = load_config()?;
 
-    // Keep only processes that map to apps in current config.
+    // Keep only processes that map to apps in current config (worktree
+    // instances `proj@slug` through their configured project).
     let mut processes: Vec<ManagedProcess> = store
         .list()?
         .into_iter()
         .filter(|p| {
-            let Some(project_name) = p.metadata.get("project") else {
+            let Some(project_name) = crate::worktrees::base_project(&p.metadata) else {
                 return false;
             };
             let Some(app_name) = p.metadata.get("app_config_name") else {
@@ -44,16 +45,14 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
         })
         .collect();
 
-    if let Some(ref project_filter) = args.project {
-        processes.retain(|p| p.metadata.get("project").map(String::as_str) == Some(project_filter));
-    }
-
-    if let Some(ref app_filter) = args.app_name {
-        processes.retain(|p| {
-            p.metadata.get("app_config_name").map(String::as_str) == Some(app_filter)
-                || p.id.contains(&format!(".{}.", app_filter))
-        });
-    }
+    // `status api` is the instance of the worktree the command runs in (or
+    // the configured checkout); `status api@*` every instance.
+    let selection = crate::worktrees::Selection::of(
+        &config,
+        args.app_name.as_deref(),
+        args.project.as_deref(),
+    )?;
+    processes.retain(|p| selection.matches(&p.metadata));
 
     if crate::output::json_enabled() {
         return status_json(&args, &store, processes).await;
@@ -91,7 +90,20 @@ pub async fn status_command(args: StatusCommandArgs) -> Result<()> {
     project_names.sort();
 
     for project_name in project_names {
-        println!("\nPROJECT: {}", project_name);
+        let worktree = grouped
+            .get(&project_name)
+            .and_then(|procs| procs.first())
+            .and_then(|p| worktree_json(&p.metadata));
+        match worktree {
+            Some(w) => println!(
+                "\nPROJECT: {} (worktree {}, branch {}, {})",
+                project_name,
+                w["slug"].as_str().unwrap_or_default(),
+                w["branch"].as_str().unwrap_or("detached"),
+                w["path"].as_str().unwrap_or_default()
+            ),
+            None => println!("\nPROJECT: {}", project_name),
+        }
 
         if let Some(procs) = grouped.get(&project_name) {
             for process in procs {
@@ -158,7 +170,12 @@ async fn status_json(
         && let Some(app_name) = &args.app_name
     {
         let config = load_config()?;
-        let resolved = resolve_app(&config, app_name, args.project.as_deref())?;
+        let resolved = crate::worktrees::resolve(
+            &config,
+            app_name,
+            args.project.as_deref(),
+            crate::worktrees::Mode::FromCwd,
+        )?;
         let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
         let deps: Vec<_> = dependencies
@@ -214,6 +231,7 @@ async fn status_json(
                     None
                 },
                 "command": p.task.command,
+                "worktree": worktree_json(&p.metadata),
             })
         })
         .collect();
@@ -231,7 +249,8 @@ async fn show_with_dependencies(
     store: &process_manager::StateStore,
 ) -> Result<()> {
     let config = load_config()?;
-    let resolved = resolve_app(&config, &app_name, project)?;
+    let resolved =
+        crate::worktrees::resolve(&config, &app_name, project, crate::worktrees::Mode::FromCwd)?;
     let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
     println!(
@@ -307,4 +326,16 @@ fn format_uptime(is_running: bool, start_time: chrono::DateTime<Utc>) -> String 
     } else {
         format!("{}m", minutes)
     }
+}
+
+/// The git worktree a process runs from, for `status`; `None` in the
+/// configured checkout.
+fn worktree_json(metadata: &HashMap<String, String>) -> Option<serde_json::Value> {
+    use crate::worktrees::meta;
+    let slug = metadata.get(meta::WORKTREE)?;
+    Some(json!({
+        "slug": slug,
+        "path": metadata.get(meta::WORKTREE_ROOT),
+        "branch": metadata.get(meta::WORKTREE_BRANCH),
+    }))
 }

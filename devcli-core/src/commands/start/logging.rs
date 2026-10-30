@@ -98,10 +98,14 @@ fn any_started_app_alive(store: &StateStore, owner: &str, started_apps: &[String
 }
 
 fn is_started_app(process: &ManagedProcess, started_apps: &[String]) -> bool {
-    process
-        .metadata
-        .get("app_config_name")
-        .is_some_and(|name| started_apps.contains(name))
+    process.metadata.get("app_config_name").is_some_and(|name| {
+        let worktree = process.metadata.get(crate::worktrees::meta::WORKTREE);
+        let instance = match worktree {
+            Some(slug) => format!("{name}@{slug}"),
+            None => name.clone(),
+        };
+        started_apps.contains(&instance)
+    })
 }
 
 /// Stop what this command owns: the requested apps first, then the

@@ -409,7 +409,7 @@ pub fn format_env_display(summary: &str, layers: &[LayerInfo]) -> String {
     }
 }
 
-fn resolve_config_env_path(
+pub(crate) fn resolve_config_env_path(
     env_files_map: Option<&HashMap<String, HashMap<String, String>>>,
     stage: Option<&str>,
     environment: &str,

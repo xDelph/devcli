@@ -9,11 +9,11 @@
 use super::resolver::{AppToStart, StartCommandArgs};
 use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},
-    load_config, load_preferences, resolve_app,
+    load_config, load_preferences,
 };
 use crate::process_manager_support::{
     emit_line, find_process, log_file_path, process_id, state_store, stream_output,
-    to_pm_health_check, to_pm_restart_policy, OutputChannel,
+    to_pm_restart_policy, OutputChannel,
 };
 use crate::utils::path::expand_path;
 use crate::Result;
@@ -211,6 +211,7 @@ async fn start_single_app_process(
         show_output,
     )?;
 
+    let health_check = prepared.health_check(&resolved_app);
     let final_command = prepared.final_command;
     let env_vars = prepared.env_vars;
 
@@ -254,7 +255,7 @@ async fn start_single_app_process(
         env: env_vars,
         is_detached: true,
         log_file: Some(log_path),
-        health_check: to_pm_health_check(resolved_app.app.health_check.as_ref()),
+        health_check,
         restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
     };
 
@@ -286,6 +287,7 @@ async fn start_single_app_process(
     if let Some(owner) = owner {
         metadata.insert(OWNER_PID_KEY.to_string(), owner.to_string());
     }
+    crate::worktrees::record(&mut metadata, &resolved_app);
 
     let managed = ManagedProcess {
         id,
@@ -322,7 +324,10 @@ async fn start_single_app_process(
         drop(output_rx);
     }
 
-    Ok(app_name)
+    Ok(crate::worktrees::instance_name(
+        &app_name,
+        resolved_app.worktree.as_ref(),
+    ))
 }
 
 /// Helper function for internal use (starting dependencies)
@@ -346,8 +351,14 @@ pub async fn start_single_app_internal(
     let config = load_config()?;
     let preferences = load_preferences()?;
 
-    // Resolve which app to start
-    let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
+    // Resolve which app to start: exactly the instance named (`project` is
+    // `proj@slug` for a dependency inside a git worktree).
+    let resolved_app = crate::worktrees::resolve(
+        &config,
+        app_name,
+        args.project.as_deref(),
+        crate::worktrees::Mode::Exact,
+    )?;
 
     // Determine which environment to use
     let environment = args

@@ -89,6 +89,35 @@ pub async fn auto_add_command(args: AutoAddArgs) -> Result<()> {
     };
 
     let target_path = normalize_scan_root(&target_path);
+    let target_path = match crate::worktrees::registration_for(&target_path) {
+        crate::worktrees::Registration::AsIs => target_path,
+        crate::worktrees::Registration::MainCheckout { path, worktree } => {
+            // With --json the answer's `path` says it; stderr is for errors.
+            let quiet = crate::output::json_enabled();
+            tracing::info!(%worktree, path = %path.display(), "Registering the main checkout's copy");
+            if !quiet {
+                eprintln!(
+                    "note: {} is in git worktree '{worktree}'; registering the main checkout's \
+                 copy, {}. devcli runs the worktree's copy as APP@{worktree}, or from inside it.",
+                    target_path.display(),
+                    path.display()
+                );
+            }
+            path
+        }
+        crate::worktrees::Registration::WorktreeOnly { worktree } => {
+            tracing::warn!(%worktree, "App only exists in a git worktree");
+            if !crate::output::json_enabled() {
+                eprintln!(
+                    "warning: {} only exists in git worktree '{worktree}'; the app will stop \
+                 working when the worktree is removed. Register it from the main checkout \
+                 once its branch is merged.",
+                    target_path.display()
+                );
+            }
+            target_path
+        }
+    };
 
     // Verify the path exists before proceeding
     if !target_path.exists() {
@@ -681,6 +710,7 @@ async fn handle_multiple_apps(
         // Build the App struct from detected data
         let app = App {
             extra: Default::default(),
+            port: None,
             app_type: detected.app_type.clone(),
             path: detected.path.clone(),
             commands: Commands {
@@ -872,6 +902,7 @@ fn add_to_config(
     // Build the App struct from detection results
     let app = App {
         extra: Default::default(),
+        port: None,
         app_type: detected.app_type,
         path: detected.path,
         commands: Commands {

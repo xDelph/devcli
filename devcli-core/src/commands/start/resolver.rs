@@ -6,7 +6,7 @@
 //! - Validating that requested environments exist for each app
 //! - Checking for already running processes
 
-use crate::config::{load_config, load_preferences, resolve_app};
+use crate::config::{load_config, load_preferences};
 use crate::process_manager_support::{find_process, state_store, OutputChannel};
 use crate::Result;
 
@@ -64,10 +64,21 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
     // Step 4: Collect all apps to start and validate them
     let mut apps_to_start = Vec::new();
 
-    // Process each app name provided by the user
-    for app_name in &args.app_names {
-        // Find the app in the config based on name and optional project
-        let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
+    // Process each app name provided by the user. A name can designate
+    // several instances (`api@*`: every worktree checkout).
+    let mut resolved_apps = Vec::new();
+    for name in &args.app_names {
+        resolved_apps.extend(crate::worktrees::resolve_all(
+            &config,
+            name,
+            args.project.as_deref(),
+            crate::worktrees::Mode::FromCwd,
+        )?);
+    }
+
+    for resolved_app in resolved_apps {
+        let app_name = resolved_app.app_name.clone();
+        let app_name = &app_name;
 
         // Check if this app is already running
         if let Some(existing) =

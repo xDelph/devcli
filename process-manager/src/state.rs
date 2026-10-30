@@ -51,6 +51,11 @@ pub const STOPPING_KEY: &str = "stopping";
 /// if the owner died without doing so (killed, crashed, terminal closed).
 pub const OWNER_PID_KEY: &str = "owner_pid";
 
+/// Metadata key holding the root of the git worktree the process runs from.
+/// When that directory is deleted (a sub-agent removing its worktree), the
+/// app has nothing left to serve and pm-daemon stops it.
+pub const WORKTREE_ROOT_KEY: &str = "worktree_root";
+
 /// Exclusive hold on one state entry; released on drop.
 ///
 /// Serialises the read-modify-write sequences of `stop` and of pm-daemon's
@@ -494,6 +499,13 @@ impl ManagedProcess {
     pub fn pid_was_reused(&self) -> bool {
         os_start_time(self.pid)
             .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+    }
+
+    /// Whether the process runs from a git worktree that has been deleted.
+    pub fn worktree_gone(&self) -> bool {
+        self.metadata
+            .get(WORKTREE_ROOT_KEY)
+            .is_some_and(|root| !std::path::Path::new(root).is_dir())
     }
 
     /// The attached `devcli start` this process lives and dies with, if any.

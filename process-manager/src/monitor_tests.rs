@@ -7,7 +7,9 @@ mod tests {
     use crate::health::HealthCheckEngine;
     use crate::monitor::Monitor;
     use crate::restart::RestartCoordinator;
-    use crate::state::{ManagedProcess, ProcessRuntime, StateStore, OWNER_PID_KEY};
+    use crate::state::{
+        ManagedProcess, ProcessRuntime, StateStore, OWNER_PID_KEY, WORKTREE_ROOT_KEY,
+    };
     use crate::{HealthCheck, RestartPolicy, Task};
     use chrono::Utc;
     use std::collections::HashMap;
@@ -428,5 +430,32 @@ mod tests {
         assert!(store.is_running(&owned), "owned process left running");
 
         kill_and_reap(&owned).await;
+    }
+
+    /// A sub-agent deleting its git worktree leaves its apps running with
+    /// nothing to serve: pm-daemon stops them.
+    #[tokio::test]
+    async fn tick_stops_processes_whose_worktree_was_deleted() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let worktree = temp_dir.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let mut proc = spawn_and_track(&store, sleep_task("in-worktree", 30)).await;
+        proc.metadata.insert(
+            WORKTREE_ROOT_KEY.to_string(),
+            worktree.to_string_lossy().into_owned(),
+        );
+        store.save(&proc).unwrap();
+
+        monitor.tick().await.unwrap();
+        assert!(store.is_running(&proc), "the worktree is still there");
+
+        std::fs::remove_dir_all(&worktree).unwrap();
+        monitor.tick().await.unwrap();
+        reap_child(proc.pid);
+        assert!(store.load("in-worktree").unwrap().is_none());
+        assert!(!crate::engine::pid_alive(proc.pid));
     }
 }
