@@ -10,9 +10,8 @@
 
 `app-detector` is a powerful Rust library that automatically analyzes project directories to detect:
 
-- **Languages**: Rust, Node.js, Python, and more
-- **Frameworks**: React, Vue, Django, Flask (extensible)
-- **Monorepos**: Nx, Turborepo, Lerna, Bazel
+- **Languages**: Rust, Node.js, Python
+- **Monorepos**: Nx workspaces, Cargo workspaces, uv workspaces
 - **Services**: Redis, Traefik, and other infrastructure
 - **Containers**: Docker, with multi-stage build analysis
 - **Orchestration**: Kubernetes (manifests, Helm, Kustomize)

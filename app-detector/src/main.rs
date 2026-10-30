@@ -19,10 +19,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[command(
     name = "app-detector",
     version,
-    about = "Automatically detect application types, frameworks, and deployment environments",
+    about = "Automatically detect application types and deployment environments",
     long_about = "A strategy-based detection platform that discovers:\n  \
-                  • Languages (Rust, Node.js, Python, etc.)\n  \
-                  • Frameworks (React, Django, etc.)\n  \
+                  • Languages (Rust, Node.js, Python)\n  \
+                  • Monorepos (Nx, Cargo and uv workspaces)\n  \
                   • Deployment environments (Docker, Kubernetes, etc.)\n  \
                   • Available commands and configurations"
 )]

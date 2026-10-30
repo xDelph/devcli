@@ -900,11 +900,11 @@ devcli --json auto-add --path ./apps/api --yes --project awesome-project --name 
 **Supported Detection**:
 - Node.js (`package.json`)
 - Nx Monorepo (`nx.json`)
-- Docker (`Dockerfile`, `docker-compose.yml`)
+- Docker (`Dockerfile`, `compose.yaml`, `docker-compose.yml` and variants)
 - Kubernetes (`k8s/*.yaml`)
-- Rust (`Cargo.toml`)
-- Go (`go.mod`)
-- Python (`setup.py`, `pyproject.toml`)
+- Rust (`Cargo.toml`, including workspaces)
+- Python (`setup.py`, `pyproject.toml`, including uv workspaces)
+- Redis (`redis.conf`) and Traefik (`traefik.yml`/`traefik.toml`) configs
 
 ---
 
