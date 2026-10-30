@@ -443,8 +443,14 @@ fn backup(homes: &Homes, path: &Path, previous: &str) -> Result<PathBuf> {
         .collect();
     let dir = homes.devcli.join("backups").join("agents");
     std::fs::create_dir_all(&dir)?;
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.6f");
-    let backup_path = dir.join(format!("{escaped}.{stamp}"));
+    // No `.` in the stamp: the escaped path ends at the last one.
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%6f").to_string();
+    let mut backup_path = dir.join(format!("{escaped}.{stamp}"));
+    let mut n = 1;
+    while backup_path.exists() {
+        backup_path = dir.join(format!("{escaped}.{stamp}-{n}"));
+        n += 1;
+    }
     std::fs::write(&backup_path, previous)?;
 
     let prefix = format!("{escaped}.");
