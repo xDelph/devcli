@@ -97,7 +97,17 @@ impl AppState {
             }
         }
         self.projects = projects;
+        self.restore_selection(selected_project, selected_app);
+        Ok(())
+    }
 
+    /// Select `project`/`app` again by name after the project list changed,
+    /// or the nearest valid position.
+    fn restore_selection(
+        &mut self,
+        selected_project: Option<String>,
+        selected_app: Option<String>,
+    ) {
         let project_idx = selected_project
             .and_then(|name| self.projects.iter().position(|p| p.name == name))
             .unwrap_or(self.selected_project_idx)
@@ -115,7 +125,81 @@ impl AppState {
         self.selected_project_idx = project_idx;
         self.selected_app_idx = app_idx;
         self.status_updated = true;
-        Ok(())
+    }
+
+    /// List the git worktree instances devcli tracks (`proj@slug`) as
+    /// projects of their own, right after their configured project, while
+    /// any of their processes is tracked. Returns whether the list changed.
+    ///
+    /// They carry the configured project's apps, so any of them can be
+    /// started in that worktree from here; actions name the instance
+    /// exactly (`proj@slug`).
+    pub fn sync_worktree_projects(&mut self, tracked: &[TrackedInstance]) -> bool {
+        let before: Vec<String> = self.projects.iter().map(|p| p.name.clone()).collect();
+        let selected_project = self.selected_project().map(|p| p.name.clone());
+        let selected_app = self.selected_app().map(|a| a.name.clone());
+
+        self.projects
+            .retain(|p| p.worktree.is_none() || tracked.iter().any(|t| t.project == p.name));
+
+        for t in tracked {
+            if let Some(existing) = self.projects.iter_mut().find(|p| p.name == t.project) {
+                if let Some(app) = existing.apps.iter_mut().find(|a| a.name == t.app) {
+                    app.path = Some(t.path.clone());
+                }
+                continue;
+            }
+            let Some(base_idx) = self
+                .projects
+                .iter()
+                .position(|p| p.worktree.is_none() && p.name == t.base_project)
+            else {
+                continue;
+            };
+            let base = &self.projects[base_idx];
+            let apps = base
+                .apps
+                .iter()
+                .cloned()
+                .map(|mut app| {
+                    let stopped = RuntimeSnapshot::stopped();
+                    app.project = t.project.clone();
+                    app.status = stopped.status;
+                    app.active_stage = None;
+                    app.restart_count = 0;
+                    app.last_exit_code = None;
+                    app.health_status = stopped.health_status;
+                    // Known once it has run in this worktree.
+                    app.path = (app.name == t.app).then(|| t.path.clone());
+                    app
+                })
+                .collect();
+            let project = ProjectState {
+                name: t.project.clone(),
+                alternative_name: base
+                    .alternative_name
+                    .as_ref()
+                    .map(|a| format!("{a}@{}", t.slug)),
+                apps,
+                expanded: true,
+                worktree: Some(t.slug.clone()),
+            };
+            let mut at = base_idx + 1;
+            while self
+                .projects
+                .get(at)
+                .is_some_and(|p| p.worktree.is_some() && p.name < project.name)
+            {
+                at += 1;
+            }
+            self.projects.insert(at, project);
+        }
+
+        let changed = self.projects.iter().map(|p| &p.name).ne(before.iter());
+        if changed {
+            self.restore_selection(selected_project, selected_app);
+        }
+        changed
     }
 
     /// Build the projects/apps from `config`, asking `runtime` for each app's
@@ -179,6 +263,7 @@ impl AppState {
                 alternative_name: project_config.alternative_name.clone(),
                 apps,
                 expanded: true, // Start with all projects expanded
+                worktree: None,
             });
         }
 
@@ -441,6 +526,22 @@ pub struct ProjectState {
     pub apps: Vec<AppStateData>,
     /// Whether the project is expanded in the UI
     pub expanded: bool,
+    /// Set for a git worktree instance of a configured project
+    /// (`proj@slug`): listed while devcli tracks one of its processes.
+    pub worktree: Option<String>,
+}
+
+/// A git worktree instance of an app that devcli tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedInstance {
+    /// `proj@slug`.
+    pub project: String,
+    /// `proj`.
+    pub base_project: String,
+    pub slug: String,
+    pub app: String,
+    /// Where it runs.
+    pub path: String,
 }
 
 /// Represents an individual application's state
@@ -744,5 +845,57 @@ mod selection_tests {
         let commands = &state.projects[0].apps[0].commands;
         assert!(commands.contains_key("docker-compose"), "{commands:?}");
         assert!(commands.contains_key("ci"), "{commands:?}");
+    }
+
+    fn tracked(project: &str, slug: &str, app: &str) -> TrackedInstance {
+        TrackedInstance {
+            project: format!("{project}@{slug}"),
+            base_project: project.to_string(),
+            slug: slug.to_string(),
+            app: app.to_string(),
+            path: format!("/w/{slug}"),
+        }
+    }
+
+    #[test]
+    fn worktree_instances_are_listed_after_their_project() {
+        let (mut state, _dir) = state();
+        let b = state.projects.iter().position(|p| p.name == "b").unwrap();
+        state.selected_project_idx = b;
+        state.selected_app_idx = 1; // b2
+
+        let instances = [tracked("a", "z", "a1"), tracked("a", "feat", "a2")];
+        assert!(state.sync_worktree_projects(&instances));
+        let names: Vec<_> = state.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "a@feat", "a@z", "b"]);
+        assert_eq!(
+            at(&state),
+            ("b".to_string(), 1),
+            "the selection stays on b2"
+        );
+
+        let feat = &state.projects[1];
+        assert_eq!(feat.worktree.as_deref(), Some("feat"));
+        assert_eq!(
+            feat.apps.len(),
+            2,
+            "every app can be started in the worktree"
+        );
+        assert!(feat.apps.iter().all(|a| a.project == "a@feat"));
+        let a2 = feat.apps.iter().find(|a| a.name == "a2").unwrap();
+        assert_eq!(a2.path.as_deref(), Some("/w/feat"));
+        assert_eq!(
+            feat.apps.iter().find(|a| a.name == "a1").unwrap().path,
+            None
+        );
+
+        // Nothing new: nothing changes.
+        assert!(!state.sync_worktree_projects(&instances));
+
+        // Their processes are gone: so are they.
+        assert!(state.sync_worktree_projects(&[]));
+        let names: Vec<_> = state.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b"]);
+        assert_eq!(at(&state), ("b".to_string(), 1));
     }
 }

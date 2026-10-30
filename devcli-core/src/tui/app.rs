@@ -655,9 +655,26 @@ impl TuiApp {
         // AppState mutex on a runtime worker - the UI thread blocked on the
         // lock in tick/render meanwhile.
         let store = Arc::clone(state_store);
-        let Ok(snapshots) = tokio::task::spawn_blocking(move || {
+        let Ok((tracked, snapshots)) = tokio::task::spawn_blocking(move || {
             let processes = store.list().unwrap_or_default();
-            keys.into_iter()
+            // Worktree instances, which the config does not list.
+            let tracked: Vec<crate::tui::state::TrackedInstance> = processes
+                .iter()
+                .filter_map(|p| {
+                    let slug = p.metadata.get(crate::worktrees::meta::WORKTREE)?;
+                    Some(crate::tui::state::TrackedInstance {
+                        project: p.metadata.get("project")?.clone(),
+                        base_project: crate::worktrees::base_project(&p.metadata)?.to_string(),
+                        slug: slug.clone(),
+                        app: p.metadata.get("app_config_name")?.clone(),
+                        path: p.task.working_dir.to_string_lossy().into_owned(),
+                    })
+                })
+                .collect();
+            let mut keys = keys;
+            keys.extend(tracked.iter().map(|t| (t.project.clone(), t.app.clone())));
+            let snapshots = keys
+                .into_iter()
                 .map(|(project, app)| {
                     let process = processes.iter().find(|p| {
                         p.metadata.get("project") == Some(&project)
@@ -667,7 +684,8 @@ impl TuiApp {
                         crate::tui::state::RuntimeSnapshot::from_process(&store, process);
                     ((project, app), snapshot)
                 })
-                .collect::<std::collections::HashMap<_, _>>()
+                .collect::<std::collections::HashMap<_, _>>();
+            (tracked, snapshots)
         })
         .await
         else {
@@ -677,7 +695,7 @@ impl TuiApp {
         let Ok(mut state) = state.lock() else {
             return;
         };
-        let mut any_changed = false;
+        let mut any_changed = state.sync_worktree_projects(&tracked);
         for project in &mut state.projects {
             for app in &mut project.apps {
                 let Some(new) = snapshots.get(&(app.project.clone(), app.name.clone())) else {
