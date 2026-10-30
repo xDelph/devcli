@@ -89,7 +89,20 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
         args.owner_override
     };
 
-    let started = start_apps(&args, owner).await;
+    // An interrupt during start-up (which can wait up to 30s per wave of
+    // dependencies) ends it right away and stops what was already launched.
+    let started = match signals.as_mut() {
+        Some(signals) => tokio::select! {
+            result = start_apps(&args, owner) => result,
+            ended = signals.recv() => {
+                // Let the starts already spawned record themselves first.
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                logging::stop_after_interrupted_start(signals, ended).await;
+                return Ok(());
+            }
+        },
+        None => start_apps(&args, owner).await,
+    };
     let (started_apps, environment) = match (started, signals.as_mut()) {
         (Ok(started), _) => started,
         (Err(e), Some(signals)) => {

@@ -15,7 +15,7 @@ use process_manager::StateStore;
 
 /// Why an attached session ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ended {
+pub enum Ended {
     /// Ctrl+C or SIGTERM.
     Interrupted,
     /// The terminal went away: nothing can be printed any more.
@@ -62,6 +62,25 @@ pub async fn stop_after_failed_start(signals: &mut Signals) {
     let owner = std::process::id().to_string();
     if let Err(e) = stop_owned(&store, &owner, &[], false, signals).await {
         tracing::warn!(error = %e, "Failed to stop apps after a failed start");
+    }
+}
+
+/// Stop whatever was launched before an interrupt cut start-up short.
+pub async fn stop_after_interrupted_start(signals: &mut Signals, ended: Ended) {
+    let Ok(store) = state_store() else {
+        return;
+    };
+    let quiet = ended == Ended::HangUp;
+    if !quiet {
+        println!(
+            "\n\nInterrupted during start-up; stopping what was started (Ctrl+C again to force)..."
+        );
+    }
+    let owner = std::process::id().to_string();
+    match stop_owned(&store, &owner, &[], quiet, signals).await {
+        Ok(stopped) if !quiet && stopped > 0 => println!("✓ Stopped {stopped} app(s)"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "Failed to stop apps after an interrupted start"),
     }
 }
 
@@ -278,7 +297,7 @@ impl Signals {
         }
     }
 
-    async fn recv(&mut self) -> Ended {
+    pub async fn recv(&mut self) -> Ended {
         #[cfg(unix)]
         {
             tokio::select! {

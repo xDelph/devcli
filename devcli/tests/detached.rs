@@ -494,3 +494,49 @@ fn under_an_agent_start_always_returns() {
     );
     assert!(wait_for(Duration::from_secs(5), || sb.running().len() == 1));
 }
+
+/// Ctrl+C during a long start-up (a dependency that never gets healthy is
+/// waited for 30s) stops it right away, with what was already started.
+#[test]
+fn ctrl_c_during_start_up_stops_it_right_away() {
+    let sb = Sandbox::new();
+    let config_path = sb.path().join("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    // web → ticker → db, and db never gets healthy: start-up waits for it
+    // before starting ticker.
+    let mut db = config["projects"]["smoke"]["apps"]["ticker"].clone();
+    db["health_check"] =
+        serde_json::json!({ "type": "tcp", "host": "127.0.0.1", "port": 1, "timeout_secs": 1 });
+    config["projects"]["smoke"]["apps"]["db"] = db;
+    config["projects"]["smoke"]["apps"]["ticker"]["dependencies"] =
+        serde_json::json!([{ "project": "smoke", "app": "db" }]);
+    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+
+    let mut attached = sb.spawn_attached(&["web", "--project", "smoke"]);
+    assert!(
+        wait_for(Duration::from_secs(10), || sb.running().len() == 1),
+        "{}",
+        sb.attached_output()
+    );
+    std::thread::sleep(Duration::from_secs(1));
+
+    let interrupted = Instant::now();
+    send_signal(&attached, "-INT");
+    let status = wait_exit(&mut attached, Duration::from_secs(15));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "{status:?}\n{}",
+        sb.attached_output()
+    );
+    assert!(
+        interrupted.elapsed() < Duration::from_secs(8),
+        "waited for start-up to finish: {:?}",
+        interrupted.elapsed()
+    );
+    assert_eq!(
+        running_apps(&sb),
+        Vec::<String>::new(),
+        "{}",
+        sb.attached_output()
+    );
+}
