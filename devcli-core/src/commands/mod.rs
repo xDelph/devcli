@@ -16,6 +16,7 @@ pub mod start;
 pub mod status;
 pub mod stop;
 pub mod ui;
+pub mod worktrees;
 
 pub use auto_add::{auto_add_command, AutoAddArgs};
 pub use config::{
@@ -37,3 +38,4 @@ pub use start::start_command;
 pub use status::status_command;
 pub use stop::stop_command;
 pub use ui::ui_command;
+pub use worktrees::{worktrees_command, WorktreesArgs};
