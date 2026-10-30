@@ -540,3 +540,10 @@ fn ctrl_c_during_start_up_stops_it_right_away() {
         sb.attached_output()
     );
 }
+
+#[test]
+fn json_monitor_prints_one_json_value() {
+    let sb = Sandbox::new();
+    let cleaned = sb.json(&["monitor"]);
+    assert_eq!(cleaned["cleaned"], serde_json::json!([]));
+}
