@@ -588,4 +588,39 @@ mod tests {
         let _ = bystander.kill();
         let _ = bystander.wait();
     }
+
+    /// Orphans are stopped together, not one after another: apps that ignore
+    /// SIGTERM take 5s each to be killed.
+    #[tokio::test]
+    async fn orphans_are_stopped_in_parallel() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = child.id();
+        child.wait().unwrap();
+
+        let mut tracked = Vec::new();
+        for i in 0..3 {
+            let mut task = sleep_task(&format!("stubborn-{i}"), 30);
+            task.command = "sh -c 'trap \"\" TERM; sleep 30'".to_string();
+            let mut proc = spawn_and_track(&store, task).await;
+            proc.metadata
+                .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+            store.save(&proc).unwrap();
+            tracked.push(proc);
+        }
+
+        let started = std::time::Instant::now();
+        monitor.tick().await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(9),
+            "stopped one after another: {:?}",
+            started.elapsed()
+        );
+        for proc in &tracked {
+            reap_child(proc.pid);
+            assert!(store.load(&proc.id).unwrap().is_none());
+        }
+    }
 }

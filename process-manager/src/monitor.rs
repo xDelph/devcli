@@ -77,15 +77,17 @@ impl Monitor {
             return Ok(false);
         }
 
+        // Stopped together after the loop: one at a time, up to 5s each, an
+        // owner of ten apps dying stalled health checks and restarts ~50s.
+        let mut orphans = Vec::new();
+
         for mut proc in processes {
             if proc.is_stopping() {
                 // `stop` owns this entry until it deletes it, unless whoever
                 // was stopping it died midway: finish the job, or the app
                 // would run untracked forever.
-                if proc.stopper_gone()
-                    && let Err(e) = self.stop_orphan(&proc).await
-                {
-                    tracing::warn!(id = %proc.id, error = %e, "Failed to finish an abandoned stop");
+                if proc.stopper_gone() {
+                    orphans.push(proc);
                 }
                 continue;
             }
@@ -104,15 +106,21 @@ impl Monitor {
                 // The attached `devcli start` that owned it exited without
                 // stopping it (killed, terminal closed), or the git worktree
                 // it runs from was deleted.
-                if let Err(e) = self.stop_orphan(&proc).await {
-                    tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
-                }
+                orphans.push(proc);
                 continue;
             }
 
             // One misbehaving entry must not stop the others from being checked.
             if let Err(e) = self.check_process(&mut proc).await {
                 tracing::warn!(id = %proc.id, error = %e, "Failed to check process");
+            }
+        }
+
+        let results =
+            futures::future::join_all(orphans.iter().map(|proc| self.stop_orphan(proc))).await;
+        for (proc, result) in orphans.iter().zip(results) {
+            if let Err(e) = result {
+                tracing::warn!(id = %proc.id, error = %e, "Failed to stop orphaned process");
             }
         }
 
