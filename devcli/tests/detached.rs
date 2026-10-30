@@ -571,3 +571,21 @@ fn stopping_an_unknown_app_is_an_error() {
     assert!(message.contains("Did you mean 'ticker'"), "{message}");
     assert!(message.contains("No process"), "{message}");
 }
+
+/// Every command taking an app name explains an unknown one.
+#[test]
+fn logs_and_health_check_explain_an_unknown_app() {
+    let sb = Sandbox::new();
+    for command in ["logs", "health-check"] {
+        let out = sb.devcli(&["--json", command, "tickr"]);
+        assert_eq!(out.status.code(), Some(1), "{command}");
+        let err = single_json(&out.stderr, &[command]);
+        assert!(
+            err["error"]
+                .as_str()
+                .unwrap()
+                .contains("Did you mean 'ticker'"),
+            "{command}: {err}"
+        );
+    }
+}

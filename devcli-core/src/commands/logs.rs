@@ -56,8 +56,7 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
         &args.app_name,
         args.project.as_deref(),
         crate::worktrees::Mode::FromCwd,
-    )
-    .context("Failed to resolve app")?;
+    )?;
 
     let file = find_latest_log(
         &resolved.project,

@@ -3,7 +3,6 @@
 use crate::config::load_config;
 use crate::process_manager_support::{find_process, state_store, to_pm_health_check};
 use crate::Result;
-use anyhow::Context;
 use chrono::Utc;
 use process_manager::HealthCheckEngine;
 use serde_json::json;
@@ -28,8 +27,7 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
         &args.app_name,
         args.project.as_deref(),
         crate::worktrees::Mode::FromCwd,
-    )
-    .context("Failed to resolve app")?;
+    )?;
 
     tracing::info!(
         project = %resolved.project,
