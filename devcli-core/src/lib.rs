@@ -13,6 +13,7 @@ pub mod output;
 pub mod process_manager_support;
 pub mod tui;
 pub mod utils;
+pub mod worktrees;
 
 // Test utilities for creating mock data in tests
 // Available for unit tests and integration tests
