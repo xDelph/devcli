@@ -28,7 +28,7 @@ async fn execute_start_command(
     let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::start::StartCommandArgs {
         app_names: vec![request.app_name.clone()],
-        project: Some(request.project),
+        project: Some(crate::worktrees::pinned(&request.project)),
         env: Some(request.environment),
         skip_deps: false,
         silent: true,
@@ -59,7 +59,7 @@ async fn execute_run_command(
     let args = crate::commands::run::RunCommandArgs {
         app_name: request.app_name.clone(),
         command_variant: command_name.to_string(),
-        project: Some(request.project),
+        project: Some(crate::worktrees::pinned(&request.project)),
         env: Some(env.to_string()),
         skip_deps: false,
         silent: true,
@@ -78,7 +78,7 @@ async fn execute_stop_command(
     let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::stop::StopCommandArgs {
         app_name: Some(request.app_name.clone()),
-        project: Some(request.project),
+        project: Some(crate::worktrees::pinned(&request.project)),
         all: false,
         force: false,
         dry_run: false,
@@ -98,7 +98,7 @@ async fn execute_restart_command(
     let core_output = spawn_output_bridge(request.id, output_tx.clone());
     let args = crate::commands::restart::RestartCommandArgs {
         app_name: request.app_name.clone(),
-        project: Some(request.project),
+        project: Some(crate::worktrees::pinned(&request.project)),
         env: if request.environment.is_empty() {
             None
         } else {

@@ -4,7 +4,7 @@
 // Example: devcli run api-private build:production
 // This runs the "build:production" command instead of the default
 
-use crate::config::{load_config, load_preferences, resolve_app};
+use crate::config::{load_config, load_preferences};
 use crate::process_manager_support::{
     emit_line, find_process, log_file_path, process_id, state_store, stream_output,
     to_pm_health_check, to_pm_restart_policy, OutputChannel,
@@ -43,8 +43,13 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let silent = args.silent;
     let show_output = crate::output::human(silent) && !preferences.detached_mode;
 
-    // Resolve the app in the config
-    let resolved_app = resolve_app(&config, &args.app_name, args.project.as_deref())?;
+    // Resolve the app in the config (or the git worktree the command runs in)
+    let resolved_app = crate::worktrees::resolve(
+        &config,
+        &args.app_name,
+        args.project.as_deref(),
+        crate::worktrees::Mode::FromCwd,
+    )?;
 
     // Determine environment (same priority as start)
     let environment = args
@@ -258,6 +263,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     if let Some(alt) = &resolved_app.app.alternative_name {
         metadata.insert("alternative_name".to_string(), alt.clone());
     }
+    crate::worktrees::record(&mut metadata, &resolved_app);
 
     let process_info = ManagedProcess {
         id,

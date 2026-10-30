@@ -79,6 +79,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -97,6 +98,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -117,6 +119,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -138,6 +141,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =
@@ -160,6 +164,7 @@ mod tests {
             app,
             app_name: "test-app".to_string(),
             project: "test-project".to_string(),
+            worktree: None,
         };
 
         let result =

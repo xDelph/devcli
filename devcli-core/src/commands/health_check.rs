@@ -1,6 +1,6 @@
 // Health check command - manually check the health of a running application
 
-use crate::config::{load_config, resolve_app};
+use crate::config::load_config;
 use crate::process_manager_support::{find_process, state_store, to_pm_health_check};
 use crate::Result;
 use anyhow::Context;
@@ -21,7 +21,13 @@ pub struct HealthCheckArgs {
 #[tracing::instrument(skip(args), fields(app_name = %args.app_name, environment = ?args.environment))]
 pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     let config = load_config()?;
-    let resolved = resolve_app(&config, &args.app_name, None).context("Failed to resolve app")?;
+    let resolved = crate::worktrees::resolve(
+        &config,
+        &args.app_name,
+        None,
+        crate::worktrees::Mode::FromCwd,
+    )
+    .context("Failed to resolve app")?;
 
     tracing::info!(
         project = %resolved.project,

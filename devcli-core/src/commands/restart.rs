@@ -30,10 +30,15 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let store = state_store()?;
     store.cleanup_dead()?;
 
-    // Resolve app to get project and actual app name
+    // Resolve app to get project and actual app name (`proj@slug` when the
+    // command runs in a git worktree of the app's repository)
     let config = crate::config::load_config()?;
-    let resolved_app =
-        crate::config::resolve_app(&config, &args.app_name, args.project.as_deref())?;
+    let resolved_app = crate::worktrees::resolve(
+        &config,
+        &args.app_name,
+        args.project.as_deref(),
+        crate::worktrees::Mode::FromCwd,
+    )?;
     let project_name = resolved_app.project.clone();
     let actual_app_name = resolved_app.app_name.clone();
 
@@ -75,7 +80,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
             .cloned()
             .unwrap_or_else(|| preferences.default_env.clone())
     });
-    let project = Some(project_name.clone());
+    // Name exactly this instance for the stop and start below: without a
+    // suffix they would pick the instance of the current directory again.
+    let project = Some(crate::worktrees::pinned(&project_name));
 
     emit_line(
         silent,
@@ -85,7 +92,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     // Stop current process first
     let stop_args = crate::commands::stop::StopCommandArgs {
-        app_name: Some(args.app_name.clone()),
+        app_name: Some(actual_app_name.clone()),
         project: project.clone(),
         all: false,
         force: false,
@@ -109,7 +116,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     if use_run_command {
         let run_args = crate::commands::run::RunCommandArgs {
-            app_name: args.app_name.clone(),
+            app_name: actual_app_name.clone(),
             command_variant: command_variant.unwrap_or_else(|| "start".to_string()),
             project,
             env: Some(environment.clone()),
@@ -121,7 +128,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         crate::commands::run::run_command(run_args).await?;
     } else {
         let start_args = crate::commands::start::StartCommandArgs {
-            app_names: vec![args.app_name.clone()],
+            app_names: vec![actual_app_name.clone()],
             project,
             env: Some(environment.clone()),
             skip_deps: args.skip_deps,

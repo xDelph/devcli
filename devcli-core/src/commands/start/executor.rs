@@ -9,7 +9,7 @@
 use super::resolver::{AppToStart, StartCommandArgs};
 use crate::config::{
     dependencies::{check_dependencies_running, resolve_dependency_chain},
-    load_config, load_preferences, resolve_app,
+    load_config, load_preferences,
 };
 use crate::process_manager_support::{
     emit_line, find_process, log_file_path, process_id, state_store, stream_output,
@@ -286,6 +286,7 @@ async fn start_single_app_process(
     if let Some(owner) = owner {
         metadata.insert(OWNER_PID_KEY.to_string(), owner.to_string());
     }
+    crate::worktrees::record(&mut metadata, &resolved_app);
 
     let managed = ManagedProcess {
         id,
@@ -346,8 +347,14 @@ pub async fn start_single_app_internal(
     let config = load_config()?;
     let preferences = load_preferences()?;
 
-    // Resolve which app to start
-    let resolved_app = resolve_app(&config, app_name, args.project.as_deref())?;
+    // Resolve which app to start: exactly the instance named (`project` is
+    // `proj@slug` for a dependency inside a git worktree).
+    let resolved_app = crate::worktrees::resolve(
+        &config,
+        app_name,
+        args.project.as_deref(),
+        crate::worktrees::Mode::Exact,
+    )?;
 
     // Determine which environment to use
     let environment = args

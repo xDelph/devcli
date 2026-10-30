@@ -23,7 +23,17 @@ pub fn resolve_dependency_chain(
     config: &Config,
     resolved_app: &ResolvedApp,
 ) -> Result<Vec<ResolvedApp>> {
-    crate::config_manager_support::resolve_dependency_chain(config, resolved_app)
+    let Some(instance) = &resolved_app.worktree else {
+        return crate::config_manager_support::resolve_dependency_chain(config, resolved_app);
+    };
+    // The dependencies are declared on the configured app.
+    let base = ResolvedApp {
+        project: instance.base_project.clone(),
+        app_name: resolved_app.app_name.clone(),
+        app: resolved_app.app.clone(),
+        worktree: None,
+    };
+    crate::config_manager_support::resolve_dependency_chain(config, &base)
 }
 
 // Check which dependencies are NOT currently running.

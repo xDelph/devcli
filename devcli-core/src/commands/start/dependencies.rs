@@ -124,7 +124,8 @@ pub(super) fn start_waves(config: &Config, missing: &[String]) -> Result<Vec<Vec
         let Some((project, app)) = key.split_once('/') else {
             continue;
         };
-        let resolved = crate::config::resolve_app(config, app, Some(project))?;
+        let resolved =
+            crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)?;
         let chain = resolve_dependency_chain(config, &resolved)?;
         let blocking = chain
             .iter()
@@ -167,7 +168,9 @@ async fn wait_until_ready(config: &Config, wave: &[String], silent: bool) {
         let Some((project, app)) = key.split_once('/') else {
             continue;
         };
-        let Ok(resolved) = crate::config::resolve_app(config, app, Some(project)) else {
+        let Ok(resolved) =
+            crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)
+        else {
             continue;
         };
         let check =

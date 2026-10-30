@@ -37,23 +37,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
         "Stop command initiated"
     );
 
-    // Resolve alternative_name to actual app name if provided
-    let actual_app_name = if let Some(ref app_name) = args.app_name {
-        let config = crate::config::load_config()?;
-        match crate::config::resolve_app(&config, app_name, args.project.as_deref()) {
-            Ok(resolved) => Some(resolved.app_name),
-            Err(_) => Some(app_name.clone()),
-        }
-    } else {
-        None
-    };
-
     let processes = store.list()?;
     let running_processes: Vec<_> = processes
         .into_iter()
         .filter(|p| store.is_running(p))
         .collect();
-    let processes_to_stop = filter_processes(&args, &actual_app_name, running_processes, &store)?;
+    let processes_to_stop = filter_processes(&args, running_processes)?;
 
     if processes_to_stop.is_empty() {
         if crate::output::json_enabled() && !silent {
@@ -192,43 +181,27 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
 // Filter processes based on command arguments
 fn filter_processes(
     args: &StopCommandArgs,
-    actual_app_name: &Option<String>,
     processes: Vec<process_manager::state::ManagedProcess>,
-    _store: &process_manager::StateStore,
 ) -> Result<Vec<process_manager::state::ManagedProcess>> {
-    let mut filtered = Vec::new();
-
     if args.all {
-        filtered.extend(processes);
-    } else if let Some(app_name) = actual_app_name {
-        for process in processes {
-            let matches_app = process.metadata.get("app_config_name").map(String::as_str)
-                == Some(app_name.as_str())
-                || process.id.contains(&format!(".{}.", app_name));
-
-            if !matches_app {
-                continue;
-            }
-
-            if let Some(ref project_filter) = args.project {
-                if process.metadata.get("project").map(String::as_str) == Some(project_filter) {
-                    filtered.push(process);
-                    break;
-                }
-            } else {
-                filtered.push(process);
-                break;
-            }
-        }
-    } else if let Some(ref project) = args.project {
-        for process in processes {
-            if process.metadata.get("project").map(String::as_str) == Some(project) {
-                filtered.push(process);
-            }
-        }
+        return Ok(processes);
     }
-
-    Ok(filtered)
+    if args.app_name.is_none() && args.project.is_none() {
+        return Ok(Vec::new());
+    }
+    // `stop api` stops the instance of the worktree the command runs in (or
+    // of the configured checkout), never another worktree's; `stop api@*`
+    // every instance.
+    let config = crate::config::load_config()?;
+    let selection = crate::worktrees::Selection::of(
+        &config,
+        args.app_name.as_deref(),
+        args.project.as_deref(),
+    )?;
+    Ok(processes
+        .into_iter()
+        .filter(|p| selection.matches(&p.metadata))
+        .collect())
 }
 
 /// An agent stops the apps it works on, by name. `stop --all` and a stop of

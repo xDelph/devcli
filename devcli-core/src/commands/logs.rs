@@ -11,7 +11,7 @@
 //! Example: `devcli logs api --follow`
 //! Example: `devcli logs api --json`
 
-use crate::config::{load_config, resolve_app};
+use crate::config::load_config;
 use crate::output;
 use crate::process_manager_support::logs_dir;
 use crate::Result;
@@ -51,8 +51,13 @@ struct LogsOutput {
 #[tracing::instrument(skip(args), fields(app = %args.app_name, project = ?args.project, env = ?args.environment, lines = args.lines, follow = args.follow))]
 pub async fn logs_command(args: LogsArgs) -> Result<()> {
     let config = load_config()?;
-    let resolved = resolve_app(&config, &args.app_name, args.project.as_deref())
-        .context("Failed to resolve app")?;
+    let resolved = crate::worktrees::resolve(
+        &config,
+        &args.app_name,
+        args.project.as_deref(),
+        crate::worktrees::Mode::FromCwd,
+    )
+    .context("Failed to resolve app")?;
 
     let file = find_latest_log(
         &resolved.project,

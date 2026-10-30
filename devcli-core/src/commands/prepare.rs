@@ -216,6 +216,7 @@ mod tests {
             app: AppBuilder::new("nodejs", path)
                 .with_local_command("start", "npm start")
                 .build(),
+            worktree: None,
         }
     }
 
@@ -263,6 +264,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(
@@ -298,6 +300,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(
@@ -332,6 +335,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(
@@ -365,6 +369,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(
@@ -401,6 +406,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(
@@ -442,6 +448,7 @@ mod tests {
             project: "test".to_string(),
             app_name: "app".to_string(),
             app,
+            worktree: None,
         };
 
         let prepared = prepare_command(

@@ -16,6 +16,9 @@ pub struct ResolvedApp {
     pub project: String,  // Which project contains this app
     pub app_name: String, // The app's name
     pub app: App,         // The actual app configuration
+    /// Set for a git worktree instance of the app: `project` is then
+    /// `<configured project>@<slug>` and `app.path` points into the worktree.
+    pub worktree: Option<crate::worktrees::Instance>,
 }
 
 // Find an app by name across all projects
@@ -97,6 +100,7 @@ pub fn pick_app_in_project(config: &Config, project: &str, app_name: &str) -> Re
             project: project.to_string(),
             app_name: app_name.to_string(),
             app: app.clone(),
+            worktree: None,
         });
     }
 
@@ -109,6 +113,7 @@ pub fn pick_app_in_project(config: &Config, project: &str, app_name: &str) -> Re
             project: project.to_string(),
             app_name: actual_name.clone(),
             app: app.clone(),
+            worktree: None,
         });
     }
 
