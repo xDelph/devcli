@@ -207,7 +207,8 @@ async fn stop_owned(
         }
     }
 
-    let count = owned.len();
+    // Only what still runs counts as stopped; dead entries are just removed.
+    let count = owned.iter().filter(|p| store.is_running(p)).count();
     let (apps, dependencies): (Vec<_>, Vec<_>) = owned
         .into_iter()
         .partition(|p| is_started_app(p, started_apps));

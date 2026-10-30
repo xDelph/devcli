@@ -144,6 +144,10 @@ impl Monitor {
         let Some(current) = self.state.mark_stopping(&proc.id)? else {
             return Ok(());
         };
+        // Dead already: its PID may belong to an unrelated process by now.
+        if !self.state.is_running(&current) {
+            return self.state.delete(&current.id);
+        }
 
         engine::terminate(current.pid, current.pgid, false).await?;
         for _ in 0..50 {

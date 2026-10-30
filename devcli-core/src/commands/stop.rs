@@ -315,6 +315,12 @@ pub(crate) async fn stop_single_process(
         return Ok(());
     };
     let process = &current;
+    // Dead already (crashed, waiting for a restart): its PID may belong to an
+    // unrelated process by now, so signal nothing and forget the entry.
+    if !store.is_running(process) {
+        store.delete(&process.id)?;
+        return Ok(());
+    }
 
     let display_name = process
         .metadata

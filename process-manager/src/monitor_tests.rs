@@ -552,4 +552,40 @@ mod tests {
         assert!(store.is_running(&proc), "a moved worktree is not deleted");
         kill_and_reap(&proc).await;
     }
+
+    /// Finishing the stop of a dead entry signals nothing: its PID may have
+    /// been given to an unrelated process.
+    #[tokio::test]
+    async fn stopping_a_dead_entry_signals_nobody() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        // An entry whose PID now belongs to a process started long after it.
+        let mut bystander = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let mut entry = spawn_and_track(&store, sleep_task("reused", 30)).await;
+        kill_and_reap(&entry).await;
+        entry.pid = bystander.id();
+        entry.pgid = None;
+        entry.start_time = Utc::now() - chrono::Duration::minutes(10);
+        let mut owner = std::process::Command::new("true").spawn().unwrap();
+        let dead_owner = owner.id();
+        owner.wait().unwrap();
+        entry
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), dead_owner.to_string());
+        store.save(&entry).unwrap();
+
+        monitor.tick().await.unwrap();
+        assert!(store.load("reused").unwrap().is_none(), "entry forgotten");
+        assert!(
+            bystander.try_wait().unwrap().is_none(),
+            "the process that got the PID was signalled"
+        );
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+    }
 }
