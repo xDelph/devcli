@@ -96,13 +96,20 @@ impl HealthCheckEngine {
         expected_exit_code: i32,
     ) -> Result<bool> {
         let timeout = Duration::from_secs(timeout_secs);
+        // In a process group of its own, so that a timeout kills what `sh`
+        // started too (`curl`, `pg_isready`...), not only the shell: those
+        // used to linger, one more per check, for as long as they hung.
         let mut child = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .kill_on_drop(true)
             .spawn()
             .context("Failed to spawn check command")?;
+        let pgid = child.id().and_then(|pid| i32::try_from(pid).ok());
 
         match tokio::time::timeout(timeout, child.wait()).await {
             Ok(Ok(status)) => {
@@ -124,6 +131,9 @@ impl HealthCheckEngine {
                 Ok(false)
             }
             Err(_) => {
+                if let Some(pgid) = pgid.filter(|g| *g > 1) {
+                    crate::engine::send_signal(-pgid, libc::SIGKILL);
+                }
                 let _ = child.kill().await;
                 tracing::warn!("Command check timed out");
                 Ok(false)
