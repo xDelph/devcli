@@ -104,7 +104,7 @@ fn test_config_mode_escape() {
     let mut view = MainView::new().unwrap();
     let state = create_test_state();
     view.active_tab = MainTab::Config;
-    view.config_mode = ConfigMode::Add;
+    view.config_mode = ConfigMode::Edit;
 
     let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
     assert!(view.handle_input(key, &state).unwrap());
@@ -116,7 +116,7 @@ fn test_form_field_navigation() {
     let mut view = MainView::new().unwrap();
     let state = create_test_state();
     view.active_tab = MainTab::Config;
-    view.config_mode = ConfigMode::Add;
+    view.config_mode = ConfigMode::Edit;
     view.config_focused_field = ConfigField::ProjectName;
 
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
@@ -135,7 +135,7 @@ fn test_form_field_editing() {
     let mut view = MainView::new().unwrap();
     let state = create_test_state();
     view.active_tab = MainTab::Config;
-    view.config_mode = ConfigMode::Add;
+    view.config_mode = ConfigMode::Edit;
     view.config_focused_field = ConfigField::ProjectName;
 
     for ch in ['t', 'e', 's', 't'] {
@@ -151,7 +151,7 @@ fn test_form_field_backspace() {
     let mut view = MainView::new().unwrap();
     let state = create_test_state();
     view.active_tab = MainTab::Config;
-    view.config_mode = ConfigMode::Add;
+    view.config_mode = ConfigMode::Edit;
     view.config_focused_field = ConfigField::ProjectName;
     view.config_form
         .project_name

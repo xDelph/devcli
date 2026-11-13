@@ -40,7 +40,7 @@ impl MainView {
                 ConfigMode::View => {
                     "↑↓/jk: Navigate  Enter: Execute  a: Add Cmd  e: Edit Cmd  f: Env Files  E: Edit App  s: Set Default  D: Deps  d: Delete  q: Quit".to_string()
                 }
-                ConfigMode::Add | ConfigMode::Edit => {
+                ConfigMode::Edit => {
                     "Tab/↑↓: Navigate Fields  Type: Edit  Enter: Save  Esc: Cancel".to_string()
                 }
                 ConfigMode::AddCommand | ConfigMode::EditCommand => {

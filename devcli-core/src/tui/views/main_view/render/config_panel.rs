@@ -21,7 +21,7 @@ impl MainView {
     ) {
         match self.config_mode {
             ConfigMode::View => self.render_config_view(frame, area, state, theme),
-            ConfigMode::Add | ConfigMode::Edit => self.render_config_form(frame, area, theme),
+            ConfigMode::Edit => self.render_config_form(frame, area, theme),
             ConfigMode::AddCommand | ConfigMode::EditCommand => {
                 self.render_command_edit_form(frame, area, theme)
             }
@@ -360,7 +360,6 @@ impl MainView {
         let content = self.build_config_form_content(theme);
 
         let title = match self.config_mode {
-            ConfigMode::Add => "Add New App",
             ConfigMode::Edit => "Edit App",
             _ => "Config",
         };

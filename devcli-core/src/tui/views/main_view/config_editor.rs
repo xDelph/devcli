@@ -3,43 +3,52 @@
 
 use super::MainView;
 use crate::config::loader::{load_config, save_config};
-use crate::config::models::{App, Commands, Defaults, Project};
-use crate::tui::state::{AppState, AppStateData};
-use anyhow::Result;
-use std::collections::HashMap;
+use crate::config::models::{App, Config, Environment, Project};
+use crate::tui::state::{AppKey, AppState, AppStateData};
+use anyhow::{anyhow, bail, Result};
 
 impl MainView {
-    /// Loads an app into the config form for editing
-    pub(crate) fn load_app_into_form(&mut self, project: &str, app_name: &str, app: &AppStateData) {
-        let project = configured_project(project);
+    /// Loads an app into the config form for editing.
+    ///
+    /// Everything comes from the config, not from the TUI row: a worktree
+    /// row (`proj@slug`) shows its worktree's path, which used to be loaded
+    /// here and then saved over the configured path.
+    pub(crate) fn load_app_into_form(&mut self, project: &str, app_name: &str) -> Result<()> {
         use crate::tui::widgets::TextEditor;
-        self.config_form.project_name = TextEditor::with_content(project.to_string());
-        self.config_form.app_name = TextEditor::with_content(app_name.to_string());
-        self.config_form.app_type = TextEditor::with_content(app.app_type.clone());
-        self.config_form.path = TextEditor::with_content(app.path.clone().unwrap_or_default());
 
-        // Load commands if available
-        if let Some(local) = app.commands.get("local") {
-            if let Some(start_cmd) = local.first() {
-                self.config_form.local_start_cmd =
-                    TextEditor::with_content(start_cmd.command.clone());
-            } else {
-                self.config_form.local_start_cmd = TextEditor::default();
-            }
-        } else {
-            self.config_form.local_start_cmd = TextEditor::default();
-        }
+        let project = configured_project(project).to_string();
+        let config = load_config()?;
+        let app = config
+            .projects
+            .get(&project)
+            .and_then(|p| p.apps.get(app_name))
+            .ok_or_else(|| anyhow!("{project}/{app_name} is not in the config"))?;
 
-        if let Some(docker) = app.commands.get("docker") {
-            if let Some(start_cmd) = docker.first() {
-                self.config_form.docker_start_cmd =
-                    TextEditor::with_content(start_cmd.command.clone());
-            } else {
-                self.config_form.docker_start_cmd = TextEditor::default();
-            }
-        } else {
-            self.config_form.docker_start_cmd = TextEditor::default();
-        }
+        let local = editable_command(app, Environment::Local);
+        let docker = editable_command(app, Environment::Docker);
+        self.config_form = super::ConfigForm {
+            project_name: TextEditor::with_content(project.clone()),
+            app_name: TextEditor::with_content(app_name.to_string()),
+            app_type: TextEditor::with_content(app.app_type.clone()),
+            path: TextEditor::with_content(app.path.clone()),
+            local_start_cmd: TextEditor::with_content(
+                local
+                    .as_ref()
+                    .map(|(_, cmd)| cmd.clone())
+                    .unwrap_or_default(),
+            ),
+            docker_start_cmd: TextEditor::with_content(
+                docker
+                    .as_ref()
+                    .map(|(_, cmd)| cmd.clone())
+                    .unwrap_or_default(),
+            ),
+            local_cmd_name: local.map(|(name, _)| name),
+            docker_cmd_name: docker.map(|(name, _)| name),
+            editing: Some(AppKey::new(project, app_name)),
+            ..Default::default()
+        };
+        Ok(())
     }
 
     /// Loads a specific command into the form for editing
@@ -78,45 +87,91 @@ impl MainView {
         use crate::tui::widgets::TextEditor;
 
         self.config_form.edit_command_env = env.to_string();
+        self.config_form.edit_command_original = Some(name.to_string());
         self.config_form.edit_command_name = TextEditor::with_content(name.to_string());
         self.config_form.edit_command_value = TextEditor::with_content(cmd.to_string());
         self.config_focused_field = ConfigField::EditCommandName;
         self.config_mode = ConfigMode::EditCommand;
     }
 
-    /// Saves the config form
-    pub(crate) fn save_config_form(&mut self) -> Result<()> {
+    /// Saves the "Edit app" form and returns the app's (new) identity.
+    ///
+    /// The app is updated in place: only the fields of the form change. It
+    /// used to be replaced by an app built from the six fields, which dropped
+    /// its dependencies, env files, health check, restart policy, port,
+    /// stages, every other command (the first local one, alphabetically,
+    /// came back renamed `start`) and unknown keys. A new project or app name
+    /// moves the entry (the old one used to stay, duplicated).
+    pub(crate) fn save_config_form(&mut self) -> Result<AppKey> {
         use super::ConfigMode;
 
-        // Validate required fields
-        // Validate required fields
-        if self.config_form.project_name.content().is_empty()
-            || self.config_form.app_name.content().is_empty()
-            || self.config_form.app_type.content().is_empty()
-            || self.config_form.path.content().is_empty()
-        {
-            return Ok(()); // Silently ignore invalid forms
+        let form = &self.config_form;
+        let field = |editor: &crate::tui::widgets::TextEditor| editor.content().trim().to_string();
+        let (project, app_name, app_type, path) = (
+            field(&form.project_name),
+            field(&form.app_name),
+            field(&form.app_type),
+            field(&form.path),
+        );
+        for (value, label) in [
+            (&project, "Project name"),
+            (&app_name, "App name"),
+            (&app_type, "App type"),
+            (&path, "Path"),
+        ] {
+            if value.is_empty() {
+                bail!("{label} is required");
+            }
         }
+        let original = form
+            .editing
+            .clone()
+            .ok_or_else(|| anyhow!("No app is being edited"))?;
+        let target = AppKey::new(project, app_name);
 
         let mut config = load_config()?;
-        let app = self.create_app_from_form();
-
-        let project = config
+        let mut app = config
             .projects
-            .entry(self.config_form.project_name.content().to_string())
-            .or_insert_with(|| Project {
-                extra: Default::default(),
-                apps: Default::default(),
-                alternative_name: None,
-            });
+            .get(&original.project)
+            .and_then(|p| p.apps.get(&original.app))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "{}/{} is no longer in the config",
+                    original.project,
+                    original.app
+                )
+            })?;
 
-        project
-            .apps
-            .insert(self.config_form.app_name.content().to_string(), app);
+        app.app_type = app_type;
+        app.path = path;
+        set_form_command(
+            &mut app,
+            Environment::Local,
+            form.local_cmd_name.as_deref(),
+            form.local_start_cmd.content().trim(),
+        );
+        set_form_command(
+            &mut app,
+            Environment::Docker,
+            form.docker_cmd_name.as_deref(),
+            form.docker_start_cmd.content().trim(),
+        );
+
+        if target == original {
+            if let Some(slot) = config
+                .projects
+                .get_mut(&original.project)
+                .and_then(|p| p.apps.get_mut(&original.app))
+            {
+                *slot = app;
+            }
+        } else {
+            move_app(&mut config, &original, &target, app)?;
+        }
         save_config(&config)?;
         self.config_mode = ConfigMode::View;
-
-        Ok(())
+        Ok(target)
     }
 
     /// Reloads the state from the config file
@@ -135,121 +190,113 @@ impl MainView {
         let project = configured_project(project);
         use super::ConfigMode;
 
-        let mut config = load_config()?;
-
-        if let Some(proj) = config.projects.get_mut(project)
-            && let Some(app) = proj.apps.get_mut(app_name)
-        {
-            let command_name = self.config_form.edit_command_name.content().to_string();
-            let command_value = self.config_form.edit_command_value.content().to_string();
-
-            if let Some(env) = crate::config::models::Environment::from_string(
-                self.config_form.edit_command_env.as_str(),
-            ) {
-                let commands = app.commands.entry(env);
-                let is_first = commands.is_empty();
-                commands.insert(command_name.clone(), command_value);
-                if is_first {
-                    *app.defaults.slot_mut(env) = Some(command_name);
-                }
-            }
-
-            save_config(&config)?;
+        let command_name = self
+            .config_form
+            .edit_command_name
+            .content()
+            .trim()
+            .to_string();
+        let command_value = self
+            .config_form
+            .edit_command_value
+            .content()
+            .trim()
+            .to_string();
+        if command_name.is_empty() {
+            bail!("Command name is required");
         }
+        if command_value.is_empty() {
+            bail!("Command is required");
+        }
+        let env = Environment::from_string(self.config_form.edit_command_env.as_str())
+            .ok_or_else(|| anyhow!("Unknown environment {}", self.config_form.edit_command_env))?;
+
+        let mut config = load_config()?;
+        let app = config
+            .projects
+            .get_mut(project)
+            .and_then(|p| p.apps.get_mut(app_name))
+            .ok_or_else(|| anyhow!("{project}/{app_name} is not in the config"))?;
+        let commands = app.commands.entry(env);
+        if commands.contains_key(&command_name) {
+            bail!(
+                "{} already has a {} command '{command_name}' (e edits it)",
+                app_name,
+                env.as_str()
+            );
+        }
+        let is_first = commands.is_empty();
+        commands.insert(command_name.clone(), command_value);
+        if is_first {
+            *app.defaults.slot_mut(env) = Some(command_name);
+        }
+        save_config(&config)?;
 
         self.config_mode = ConfigMode::View;
         Ok(())
     }
 
-    /// Saves a command edit
+    /// Saves a command edit.
+    ///
+    /// A new name renames the command (and the environment's default when it
+    /// was this command); it used to add a copy under the new name and leave
+    /// the old one, still the default.
     pub(crate) fn save_command_edit(&mut self, project: &str, app_name: &str) -> Result<()> {
         let project = configured_project(project);
         use super::ConfigMode;
 
-        let mut config = load_config()?;
+        let new_name = self
+            .config_form
+            .edit_command_name
+            .content()
+            .trim()
+            .to_string();
+        let value = self
+            .config_form
+            .edit_command_value
+            .content()
+            .trim()
+            .to_string();
+        if new_name.is_empty() {
+            bail!("Command name is required");
+        }
+        if value.is_empty() {
+            bail!("Command is required");
+        }
+        let env = Environment::from_string(self.config_form.edit_command_env.as_str())
+            .ok_or_else(|| anyhow!("Unknown environment {}", self.config_form.edit_command_env))?;
+        let old_name = self
+            .config_form
+            .edit_command_original
+            .clone()
+            .unwrap_or_else(|| new_name.clone());
 
-        if let Some(proj) = config.projects.get_mut(project)
-            && let Some(app) = proj.apps.get_mut(app_name)
-        {
-            if let Some(commands) = crate::config::models::Environment::from_string(
-                self.config_form.edit_command_env.as_str(),
-            )
-            .and_then(|env| app.commands.slot_mut(env).as_mut())
-            {
-                commands.insert(
-                    self.config_form.edit_command_name.content().to_string(),
-                    self.config_form.edit_command_value.content().to_string(),
+        let mut config = load_config()?;
+        let app = config
+            .projects
+            .get_mut(project)
+            .and_then(|p| p.apps.get_mut(app_name))
+            .ok_or_else(|| anyhow!("{project}/{app_name} is not in the config"))?;
+        let commands = app.commands.entry(env);
+        if new_name != old_name {
+            if commands.contains_key(&new_name) {
+                bail!(
+                    "{} already has a {} command '{new_name}'",
+                    app_name,
+                    env.as_str()
                 );
             }
-
-            save_config(&config)?;
+            commands.remove(&old_name);
+            let default = app.defaults.slot_mut(env);
+            if default.as_deref() == Some(old_name.as_str()) {
+                *default = Some(new_name.clone());
+            }
         }
+        app.commands.entry(env).insert(new_name, value);
+        save_config(&config)?;
 
         self.config_mode = ConfigMode::View;
         Ok(())
-    }
-
-    /// Creates an App from the form data
-    fn create_app_from_form(&self) -> App {
-        let mut local_cmds = HashMap::new();
-        if !self.config_form.local_start_cmd.content().is_empty() {
-            local_cmds.insert(
-                "start".to_string(),
-                self.config_form.local_start_cmd.content().to_string(),
-            );
-        }
-
-        let mut docker_cmds = HashMap::new();
-        if !self.config_form.docker_start_cmd.content().is_empty() {
-            docker_cmds.insert(
-                "start".to_string(),
-                self.config_form.docker_start_cmd.content().to_string(),
-            );
-        }
-
-        App {
-            extra: Default::default(),
-            app_type: self.config_form.app_type.content().to_string(),
-            path: self.config_form.path.content().to_string(),
-            commands: Commands {
-                local: if local_cmds.is_empty() {
-                    None
-                } else {
-                    Some(local_cmds)
-                },
-                docker: if docker_cmds.is_empty() {
-                    None
-                } else {
-                    Some(docker_cmds)
-                },
-                orbstack: None,
-                k8s: None,
-                ..Default::default()
-            },
-            dependencies: Vec::new(),
-            defaults: Defaults {
-                local: if !self.config_form.local_start_cmd.content().is_empty() {
-                    Some("start".to_string())
-                } else {
-                    None
-                },
-                docker: if !self.config_form.docker_start_cmd.content().is_empty() {
-                    Some("start".to_string())
-                } else {
-                    None
-                },
-                orbstack: None,
-                k8s: None,
-                ..Default::default()
-            },
-            dockerfile_path: None,
-            env_files: None, // No env files configured in TUI editor (will be added in future task)
-            default_stages: None, // No default stages configured in TUI editor
-            alternative_name: None,
-            health_check: None,
-            restart_policy: None,
-            port: None,
-        }
     }
 
     /// Deletes an app from the config
@@ -269,55 +316,41 @@ impl MainView {
         Ok(())
     }
 
-    /// Sets the selected command as default for its environment
-    pub(crate) fn set_command_as_default(&self, project: &str, app_name: &str) -> Result<()> {
+    /// Makes command `command_name` the default of environment `env`.
+    ///
+    /// The caller names the command as the panel shows it (see
+    /// [`Self::get_selected_config_command`]); this used to walk the local,
+    /// docker and k8s commands only, so with orbstack or docker-compose
+    /// commands listed the index pointed at another command, in another
+    /// environment.
+    pub(crate) fn set_command_as_default(
+        &self,
+        project: &str,
+        app_name: &str,
+        env: &str,
+        command_name: &str,
+    ) -> Result<()> {
         let project = configured_project(project);
+        let env =
+            Environment::from_string(env).ok_or_else(|| anyhow!("Unknown environment {env}"))?;
         let mut config = load_config()?;
-
-        if let Some(proj) = config.projects.get_mut(project)
-            && let Some(app) = proj.apps.get_mut(app_name)
+        let app = config
+            .projects
+            .get_mut(project)
+            .and_then(|p| p.apps.get_mut(app_name))
+            .ok_or_else(|| anyhow!("{project}/{app_name} is not in the config"))?;
+        if !app
+            .commands
+            .get(env.as_str())
+            .is_some_and(|commands| commands.contains_key(command_name))
         {
-            let mut global_idx = 0;
-
-            // Check local commands
-            if let Some(local) = &app.commands.local {
-                let mut sorted: Vec<_> = local.keys().cloned().collect();
-                sorted.sort();
-                if self.selected_config_command_idx < global_idx + sorted.len() {
-                    let idx = self.selected_config_command_idx - global_idx;
-                    app.defaults.local = Some(sorted[idx].clone());
-                    save_config(&config)?;
-                    return Ok(());
-                }
-                global_idx += sorted.len();
-            }
-
-            // Check docker commands
-            if let Some(docker) = &app.commands.docker {
-                let mut sorted: Vec<_> = docker.keys().cloned().collect();
-                sorted.sort();
-                if self.selected_config_command_idx < global_idx + sorted.len() {
-                    let idx = self.selected_config_command_idx - global_idx;
-                    app.defaults.docker = Some(sorted[idx].clone());
-                    save_config(&config)?;
-                    return Ok(());
-                }
-                global_idx += sorted.len();
-            }
-
-            // Check k8s commands
-            if let Some(k8s) = &app.commands.k8s {
-                let mut sorted: Vec<_> = k8s.keys().cloned().collect();
-                sorted.sort();
-                if self.selected_config_command_idx < global_idx + sorted.len() {
-                    let idx = self.selected_config_command_idx - global_idx;
-                    app.defaults.k8s = Some(sorted[idx].clone());
-                    save_config(&config)?;
-                    return Ok(());
-                }
-            }
+            bail!(
+                "{app_name} has no {} command '{command_name}'",
+                env.as_str()
+            );
         }
-
+        *app.defaults.slot_mut(env) = Some(command_name.to_string());
+        save_config(&config)?;
         Ok(())
     }
 
@@ -541,4 +574,96 @@ fn configured_project(project: &str) -> &str {
     } else {
         crate::worktrees::split(project).0
     }
+}
+
+/// The command of `env` the "Edit app" form edits: the environment's
+/// default, else its first command by name. `(name, command)`.
+fn editable_command(app: &App, env: Environment) -> Option<(String, String)> {
+    let commands = app.commands.get(env.as_str())?;
+    app.defaults
+        .get(env.as_str())
+        .and_then(|name| commands.get_key_value(name))
+        .or_else(|| commands.iter().min_by_key(|(name, _)| name.as_str()))
+        .map(|(name, cmd)| (name.clone(), cmd.clone()))
+}
+
+/// Apply the form's command of `env` to `app`: command `name` (or a new
+/// `start` one) gets `value`; an emptied field removes the command.
+fn set_form_command(app: &mut App, env: Environment, name: Option<&str>, value: &str) {
+    if value.is_empty() {
+        let Some(name) = name else { return };
+        let slot = app.commands.slot_mut(env);
+        if let Some(commands) = slot.as_mut() {
+            commands.remove(name);
+            if commands.is_empty() {
+                *slot = None;
+            }
+        }
+        let default = app.defaults.slot_mut(env);
+        if default.as_deref() == Some(name) {
+            *default = None;
+        }
+        return;
+    }
+    let name = name.unwrap_or("start");
+    app.commands
+        .entry(env)
+        .insert(name.to_string(), value.to_string());
+    let default = app.defaults.slot_mut(env);
+    if default.is_none() {
+        *default = Some(name.to_string());
+    }
+}
+
+/// Move app `from` to `to` (another name and/or project), as `app`.
+///
+/// Refuses when `to` exists. In the same project the app keeps its place; a
+/// project left empty is removed (as deleting its last app does).
+/// Dependencies on the app follow it.
+fn move_app(config: &mut Config, from: &AppKey, to: &AppKey, app: App) -> Result<()> {
+    if config
+        .projects
+        .get(&to.project)
+        .is_some_and(|p| p.apps.contains_key(&to.app))
+    {
+        bail!("{}/{} already exists", to.project, to.app);
+    }
+    let source = config
+        .projects
+        .get_mut(&from.project)
+        .ok_or_else(|| anyhow!("Project {} is no longer in the config", from.project))?;
+    let index = source
+        .apps
+        .get_index_of(&from.app)
+        .ok_or_else(|| anyhow!("{}/{} is no longer in the config", from.project, from.app))?;
+    source.apps.shift_remove(&from.app);
+    if from.project == to.project {
+        source.apps.shift_insert(index, to.app.clone(), app);
+    } else {
+        if source.apps.is_empty() {
+            config.projects.shift_remove(&from.project);
+        }
+        config
+            .projects
+            .entry(to.project.clone())
+            .or_insert_with(|| Project {
+                extra: Default::default(),
+                apps: Default::default(),
+                alternative_name: None,
+            })
+            .apps
+            .insert(to.app.clone(), app);
+    }
+
+    for project in config.projects.values_mut() {
+        for other in project.apps.values_mut() {
+            for dep in &mut other.dependencies {
+                if dep.project == from.project && dep.app == from.app {
+                    dep.project = to.project.clone();
+                    dep.app = to.app.clone();
+                }
+            }
+        }
+    }
+    Ok(())
 }
