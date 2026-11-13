@@ -185,7 +185,11 @@ pub fn directory_basename(path: &Path) -> Option<String> {
         })
 }
 
-/// Workspace member directory names when `path` is a Cargo workspace root.
+/// Workspace member directories, relative to `path` (`crates/api`), when
+/// `path` is a Cargo workspace root.
+///
+/// Full relative paths, not the last segment: member `crates/api` reduced
+/// to `api` made auto-add skip an unrelated top-level `api/` app.
 pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::HashSet<String>> {
     let content = fs::read_to_string(path.join("Cargo.toml")).ok()?;
     let members = app_detector::utils::workspace::cargo_workspace_members(&content)?;
@@ -198,12 +202,9 @@ pub fn cargo_workspace_member_dirs(path: &Path) -> Option<std::collections::Hash
         expanded
             .into_iter()
             .map(|member| {
-                member
-                    .path
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(&member.path)
-                    .to_string()
+                let rel = member.path.replace('\\', "/");
+                let rel = rel.trim_start_matches("./").trim_end_matches('/');
+                rel.to_string()
             })
             .collect(),
     )
@@ -490,6 +491,59 @@ mod tests {
         assert!(docker.contains_key("run:test"));
         assert!(docker.contains_key("run"));
         assert_eq!(detected.suggested_docker_default.as_deref(), Some("run"));
+    }
+
+    fn write_crate(dir: &Path, name: &str) {
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
+        )
+        .unwrap();
+        fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    }
+
+    #[test]
+    fn cargo_members_are_root_relative_paths() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\", \"./tool/\"]\n",
+        )
+        .unwrap();
+        write_crate(&dir.path().join("crates/api"), "api");
+        write_crate(&dir.path().join("tool"), "tool");
+
+        let members = cargo_workspace_member_dirs(dir.path()).unwrap();
+        let mut members: Vec<_> = members.into_iter().collect();
+        members.sort();
+        assert_eq!(members, vec!["crates/api".to_string(), "tool".to_string()]);
+    }
+
+    #[test]
+    fn a_nested_cargo_member_does_not_hide_a_top_level_app_of_the_same_name() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\", \"apps/cli\"]\n",
+        )
+        .unwrap();
+        write_crate(&dir.path().join("crates/api"), "api");
+        write_crate(&dir.path().join("apps/cli"), "cli");
+        // An unrelated Node app in a top-level `api/`, and one in apps/.
+        fs::create_dir(dir.path().join("api")).unwrap();
+        write_package_json(&dir.path().join("api"), "api-web", &[("start", "node .")]);
+        fs::create_dir_all(dir.path().join("apps/web")).unwrap();
+        write_package_json(&dir.path().join("apps/web"), "web", &[("start", "node .")]);
+
+        let apps = crate::commands::auto_add::discover_all_apps(dir.path()).unwrap();
+        let paths: Vec<String> = apps.iter().map(|app| app.path.clone()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("/api")), "{paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("/apps/web")), "{paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.ends_with("/apps/cli")),
+            "workspace members are part of the workspace app: {paths:?}"
+        );
     }
 
     #[test]
