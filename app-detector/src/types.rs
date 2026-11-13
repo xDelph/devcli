@@ -347,7 +347,7 @@ pub struct KubernetesEnvInfo {
 pub struct NxEnvInfo {
     /// Discovered target names, sorted (union of targetDefaults + project.json targets)
     pub targets: Vec<String>,
-    /// Commands: target name → `nx run-many --target=<name>`
+    /// Commands: target name → `<workspace nx> run-many --target=<name>`
     pub commands: HashMap<String, String>,
     /// Suggested default command key
     pub suggested_default: Option<String>,

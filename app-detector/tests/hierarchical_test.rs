@@ -140,11 +140,11 @@ fn test_workspace_web_has_multi_stage_docker_commands() {
                 "Should detect 'production' stage"
             );
             assert!(
-                info.commands.contains_key("builder"),
+                info.commands.contains_key("build:builder"),
                 "Should have stage-specific builder command"
             );
             assert!(
-                info.commands.contains_key("production"),
+                info.commands.contains_key("build:production"),
                 "Should have stage-specific production command"
             );
         }

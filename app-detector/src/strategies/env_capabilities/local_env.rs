@@ -1,6 +1,7 @@
 //! Local environment capability detection strategy
 //! Extracts local commands based on detected app type
 
+use crate::utils::pyproject;
 use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::HashMap;
 
@@ -171,25 +172,79 @@ fn extract_python_workspace_commands(
     }
 }
 
+/// Commands for a single Python package, only for files that exist: a
+/// pyproject-only project got `pip install -r requirements.txt` and
+/// `python main.py` with neither file there.
 fn extract_python_package_commands(ctx: &DetectionContext, commands: &mut HashMap<String, String>) {
     let pm = python_package_manager(ctx);
+    let pyproject = ctx.read_file("pyproject.toml").unwrap_or_default();
+    let run = python_run_prefix(&pm);
 
-    if ctx.file_exists("main.py") {
-        commands.insert("start".to_string(), python_run_main_command(&pm));
-    } else if ctx.file_exists("src/main.py") {
-        commands.insert(
-            "start".to_string(),
-            python_run_module_command(&pm, "src.main"),
-        );
-    } else {
-        commands.insert("start".to_string(), python_run_main_command(&pm));
+    if let Some(start) = python_start_command(ctx, &pyproject, run) {
+        commands.insert("start".to_string(), start);
     }
 
     if ctx.file_exists("tests") || ctx.file_exists("test") {
         commands.insert("test".to_string(), python_test_command(&pm));
     }
 
-    commands.insert("install".to_string(), python_install_command(&pm));
+    if let Some(install) = python_package_install_command(ctx, &pm) {
+        commands.insert("install".to_string(), install);
+    }
+}
+
+/// `main.py`, `src/main.py`, a console script from pyproject.toml, or the
+/// package's `__main__` module, in that order; nothing when none exists.
+fn python_start_command(ctx: &DetectionContext, pyproject: &str, run: &str) -> Option<String> {
+    if ctx.file_exists("main.py") {
+        return Some(format!("{run}python main.py"));
+    }
+    if ctx.file_exists("src/main.py") {
+        return Some(format!("{run}python -m src.main"));
+    }
+
+    let package = pyproject::project_name(pyproject);
+    let scripts = pyproject::script_names(pyproject);
+    if let Some(script) = package
+        .as_ref()
+        .and_then(|name| scripts.iter().find(|s| *s == name))
+        .or_else(|| scripts.first())
+    {
+        return Some(format!("{run}{script}"));
+    }
+
+    let module = package?.replace(['-', '.'], "_").to_lowercase();
+    [
+        format!("{module}/__main__.py"),
+        format!("src/{module}/__main__.py"),
+    ]
+    .iter()
+    .any(|path| ctx.file_exists(path))
+    .then(|| format!("{run}python -m {module}"))
+}
+
+/// What a tool prefixes commands with to run them in the project's env.
+fn python_run_prefix(pm: &str) -> &'static str {
+    match pm {
+        "uv" => "uv run ",
+        "poetry" => "poetry run ",
+        "pipenv" => "pipenv run ",
+        "pdm" => "pdm run ",
+        "hatch" => "hatch run ",
+        _ => "",
+    }
+}
+
+fn python_package_install_command(ctx: &DetectionContext, pm: &str) -> Option<String> {
+    match pm {
+        "uv" | "poetry" | "pipenv" | "pdm" => Some(python_install_command(pm)),
+        "hatch" => Some("hatch env create".to_string()),
+        _ if ctx.file_exists("requirements.txt") => Some(python_install_command(pm)),
+        _ if ctx.file_exists("pyproject.toml") || ctx.file_exists("setup.py") => {
+            Some("pip install -e .".to_string())
+        }
+        _ => None,
+    }
 }
 
 fn python_package_manager(ctx: &DetectionContext) -> String {
@@ -220,35 +275,13 @@ fn python_install_command(pm: &str) -> String {
         "uv" => "uv sync".to_string(),
         "poetry" => "poetry install".to_string(),
         "pipenv" => "pipenv install".to_string(),
+        "pdm" => "pdm install".to_string(),
         _ => "pip install -r requirements.txt".to_string(),
     }
 }
 
-fn python_run_main_command(pm: &str) -> String {
-    match pm {
-        "uv" => "uv run python main.py".to_string(),
-        "poetry" => "poetry run python main.py".to_string(),
-        "pipenv" => "pipenv run python main.py".to_string(),
-        _ => "python main.py".to_string(),
-    }
-}
-
-fn python_run_module_command(pm: &str, module: &str) -> String {
-    match pm {
-        "uv" => format!("uv run python -m {module}"),
-        "poetry" => format!("poetry run python -m {module}"),
-        "pipenv" => format!("pipenv run python -m {module}"),
-        _ => format!("python -m {module}"),
-    }
-}
-
 fn python_test_command(pm: &str) -> String {
-    match pm {
-        "uv" => "uv run pytest".to_string(),
-        "poetry" => "poetry run pytest".to_string(),
-        "pipenv" => "pipenv run pytest".to_string(),
-        _ => "pytest".to_string(),
-    }
+    format!("{}pytest", python_run_prefix(pm))
 }
 
 fn python_workspace_test_command(pm: &str) -> String {
@@ -575,6 +608,89 @@ mod tests {
             }
             _ => panic!("Expected LocalEnv data"),
         }
+    }
+
+    fn python_commands(dir: &std::path::Path) -> HashMap<String, String> {
+        let ctx = DetectionContext::new(dir).unwrap();
+        ctx.store_result(crate::strategies::PythonStrategy.detect(&ctx).unwrap());
+        match LocalEnvStrategy.detect(&ctx).unwrap().data {
+            DetectionData::LocalEnv(info) => info.commands,
+            _ => panic!("Expected LocalEnv data"),
+        }
+    }
+
+    #[test]
+    fn pyproject_only_projects_get_commands_for_files_that_exist() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\n\n[build-system]\nbuild-backend = \"setuptools.build_meta\"\n",
+        )
+        .unwrap();
+        fs::create_dir(temp_dir.path().join("lib")).unwrap();
+        fs::write(temp_dir.path().join("lib/util.py"), "").unwrap();
+
+        let commands = python_commands(temp_dir.path());
+        assert_eq!(
+            commands.get("install").map(String::as_str),
+            Some("pip install -e .")
+        );
+        assert!(
+            !commands.contains_key("start"),
+            "no main.py, script or __main__: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn hatch_projects_start_their_console_script() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            r#"[project]
+name = "svc"
+
+[project.scripts]
+svc-admin = "svc.admin:main"
+svc = "svc.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"#,
+        )
+        .unwrap();
+
+        let commands = python_commands(temp_dir.path());
+        assert_eq!(
+            commands.get("start").map(String::as_str),
+            Some("hatch run svc")
+        );
+        assert_eq!(
+            commands.get("install").map(String::as_str),
+            Some("hatch env create")
+        );
+    }
+
+    #[test]
+    fn pdm_projects_run_their_main_module() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            "[project]\nname = \"my-svc\"\n\n[tool.pdm]\ndistribution = true\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp_dir.path().join("src/my_svc")).unwrap();
+        fs::write(temp_dir.path().join("src/my_svc/__main__.py"), "").unwrap();
+
+        let commands = python_commands(temp_dir.path());
+        assert_eq!(
+            commands.get("start").map(String::as_str),
+            Some("pdm run python -m my_svc")
+        );
+        assert_eq!(
+            commands.get("install").map(String::as_str),
+            Some("pdm install")
+        );
     }
 
     #[test]

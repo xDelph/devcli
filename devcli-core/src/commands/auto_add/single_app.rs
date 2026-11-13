@@ -314,6 +314,7 @@ pub fn discover_all_apps(
                     continue;
                 }
 
+                // Members are root-relative paths; a top-level dir's is its name.
                 if workspace_members
                     .as_ref()
                     .is_some_and(|members| members.contains(dir_name_str.as_ref()))
@@ -374,7 +375,15 @@ fn discover_apps_in_container(
                 continue;
             }
 
-            if workspace_members.is_some_and(|members| members.contains(dir_name_str.as_ref())) {
+            // Containers are top-level, so this is the root-relative path.
+            let rel = format!(
+                "{}/{dir_name_str}",
+                container_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            );
+            if workspace_members.is_some_and(|members| members.contains(&rel)) {
                 continue;
             }
 
