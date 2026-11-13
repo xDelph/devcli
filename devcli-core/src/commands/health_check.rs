@@ -54,7 +54,7 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
 
     let store = state_store()?;
     store.cleanup_dead()?;
-    let mut process = find_process(
+    let process = find_process(
         &store,
         &resolved.project,
         &resolved.app_name,
@@ -69,7 +69,10 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     })?;
 
     if !store.is_running(&process) {
-        store.delete(&process.id)?;
+        // pm-daemon restarts it shortly: deleting the entry would cancel that.
+        if !store.awaiting_restart(&process) {
+            store.forget(&process.id, process.pid)?;
+        }
         anyhow::bail!(
             "App {}/{} is not currently running",
             resolved.project,
@@ -103,12 +106,30 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     let start = std::time::Instant::now();
     let check_result = engine.check(&pm_check).await;
     let duration = start.elapsed();
+    let checked_at = Utc::now();
 
-    process.runtime.last_health_check = Some(Utc::now());
+    // Record the result on the entry as it is now, not on the copy read
+    // before the check: a `stop` or a restart may have happened meanwhile,
+    // and writing that copy back would undo it. Returns the failure count.
+    let record = |healthy: bool| -> Result<u32> {
+        let updated = store.update_if_current(&process.id, process.pid, |current| {
+            current.runtime.last_health_check = Some(checked_at);
+            if healthy {
+                current.runtime.health_failures = 0;
+            } else {
+                current.runtime.health_failures += 1;
+            }
+        })?;
+        Ok(match updated {
+            Some(current) => current.runtime.health_failures,
+            None if healthy => 0,
+            None => process.runtime.health_failures + 1,
+        })
+    };
+
     match check_result {
         Ok(true) => {
-            process.runtime.health_failures = 0;
-            store.save(&process)?;
+            record(true)?;
 
             tracing::info!(
                 project = %resolved.project,
@@ -135,14 +156,13 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
             Ok(())
         }
         Ok(false) => {
-            process.runtime.health_failures += 1;
-            store.save(&process)?;
+            let failures = record(false)?;
 
             tracing::warn!(
                 project = %resolved.project,
                 app = %resolved.app_name,
                 duration_secs = %duration.as_secs_f64(),
-                failures = process.runtime.health_failures,
+                failures,
                 result = "failed",
                 "Health check failed"
             );
@@ -154,24 +174,21 @@ pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
                     "pid": process.pid,
                     "healthy": false,
                     "duration_seconds": duration.as_secs_f64(),
-                    "failures": process.runtime.health_failures,
+                    "failures": failures,
                 }))?;
             } else {
                 println!("❌ Health check FAILED ({:.2}s)", duration.as_secs_f64());
                 println!();
                 println!("Status: Unhealthy");
-                println!("Consecutive failures: {}", process.runtime.health_failures);
-                if let Some(last_check) = process.runtime.last_health_check {
-                    println!("Last check: {}", last_check.format("%Y-%m-%d %H:%M:%S"));
-                }
+                println!("Consecutive failures: {}", failures);
+                println!("Last check: {}", checked_at.format("%Y-%m-%d %H:%M:%S"));
             }
             // Exit code 2 = unhealthy (distinct from 1 = error).
             crate::output::set_exit_code(2);
             Ok(())
         }
         Err(e) => {
-            process.runtime.health_failures += 1;
-            store.save(&process)?;
+            record(false)?;
 
             tracing::error!(
                 project = %resolved.project,
