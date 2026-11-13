@@ -228,26 +228,20 @@ impl MainView {
                                 .fg(theme.secondary)
                                 .add_modifier(Modifier::BOLD),
                         )));
-                        lines.push(Line::from(vec![
-                            Span::styled("  a", theme.style_text_primary()),
-                            Span::styled(" - Add new command", theme.style_text()),
-                        ]));
-                        lines.push(Line::from(vec![
-                            Span::styled("  e", theme.style_text_primary()),
-                            Span::styled(" - Edit selected command", theme.style_text()),
-                        ]));
-                        lines.push(Line::from(vec![
-                            Span::styled("  f", theme.style_text_primary()),
-                            Span::styled(" - Edit environment files", theme.style_text()),
-                        ]));
-                        lines.push(Line::from(vec![
-                            Span::styled("  E", theme.style_text_primary()),
-                            Span::styled(" - Edit this app", theme.style_text()),
-                        ]));
-                        lines.push(Line::from(vec![
-                            Span::styled("  d", theme.style_text_primary()),
-                            Span::styled(" - Delete this app", theme.style_text()),
-                        ]));
+                        for (key, action) in [
+                            ("  a", " - Add a command"),
+                            ("  e", " - Edit the selected command"),
+                            ("  s", " - Make the selected command the default"),
+                            ("  d", " - Delete the selected command (app list: the app)"),
+                            ("  E", " - Edit this app"),
+                            ("  D", " - Edit dependencies"),
+                            ("  f", " - Edit environment files"),
+                        ] {
+                            lines.push(Line::from(vec![
+                                Span::styled(key, theme.style_text_primary()),
+                                Span::styled(action, theme.style_text()),
+                            ]));
+                        }
                     }
                 }
                 Err(e) => {
@@ -271,11 +265,6 @@ impl MainView {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Select an app from the left panel to view its configuration.",
-                theme.style_text_dim(),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Or press 'a' to add a new app.",
                 theme.style_text_dim(),
             )));
         }
