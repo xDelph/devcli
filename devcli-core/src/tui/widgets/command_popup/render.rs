@@ -643,8 +643,11 @@ impl CommandPopup {
 
                 remaining = &remaining[end + 1..];
             } else {
-                // No closing bracket found, add the rest as-is
-                spans.push(Span::styled(remaining.to_string(), original_style));
+                // No closing bracket: the rest, from the `[` on, is plain
+                // text. It is added once, below - the text before the `[` is
+                // already in `spans` (pushing all of `remaining` here, then
+                // again below, repeated it).
+                remaining = &remaining[start..];
                 break;
             }
         }
@@ -655,5 +658,27 @@ impl CommandPopup {
         }
 
         spans
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unclosed_bracket_does_not_repeat_text() {
+        // CommandPopup::new reads the config; keep it off ~/.devcli.
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let mut popup = CommandPopup::new(
+            "start".to_string(),
+            "npm start".to_string(),
+            "api".to_string(),
+            "p".to_string(),
+            "local".to_string(),
+        );
+        popup.all_app_names = vec!["api".to_string()];
+        let spans = popup.parse_and_colorize_app_names("[api] see [x", Style::default());
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "[api] see [x");
     }
 }
