@@ -1,10 +1,10 @@
 name: Release Please
 
 on:
-  # Release Please must never open a release PR from a red build. This repository
-  # is private and has no branch protection (GitHub Pro feature), so we cannot
-  # require a status check the usual way: instead we wait for the CI workflow to
-  # finish and only run when it succeeded.
+  # Release Please must never open a release PR from a red build. `develop` has
+  # no branch protection requiring CI to pass, so a status check cannot gate
+  # it: instead we wait for the CI workflow to finish and only run when it
+  # succeeded.
   workflow_run:
     workflows: ["CI"]
     branches: [develop]
@@ -35,23 +35,10 @@ jobs:
           # release-please-config.json with release-type "simple" and bumps
           # Cargo.toml [workspace.package].version directly. The "rust" release
           # type would instead expand the workspace and demand a per-crate tag.
-
-          # Changelog sections
-          changelog-types: |
-            [
-              {"type":"feat","section":"Features","hidden":false},
-              {"type":"fix","section":"Bug Fixes","hidden":false},
-              {"type":"perf","section":"Performance","hidden":false},
-              {"type":"deps","section":"Dependencies","hidden":false},
-              {"type":"revert","section":"Reverts","hidden":false},
-              {"type":"docs","section":"Documentation","hidden":false},
-              {"type":"style","section":"Styles","hidden":true},
-              {"type":"chore","section":"Miscellaneous","hidden":true},
-              {"type":"refactor","section":"Code Refactoring","hidden":false},
-              {"type":"test","section":"Tests","hidden":true},
-              {"type":"build","section":"Build System","hidden":true},
-              {"type":"ci","section":"CI/CD","hidden":true}
-            ]
+          #
+          # Changelog sections are `changelog-sections` in that file too:
+          # release-please-action v4 has no `changelog-types` input (it was
+          # silently ignored, so docs and refactor commits never appeared).
 
       # release-please bumps [workspace.package].version in Cargo.toml but has no
       # updater for Cargo.lock under the "simple" release type, so the lockfile
