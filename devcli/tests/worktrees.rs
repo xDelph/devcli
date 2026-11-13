@@ -239,6 +239,21 @@ fn dependencies_start_in_the_same_worktree() {
     );
 }
 
+/// api listens on its env file's PORT (it wins over the declared port):
+/// web must be told that one, shifted, not the declared one.
+#[test]
+fn a_dependency_is_reached_on_its_env_files_port() {
+    let sb = Sandbox::new();
+    std::fs::write(sb.repo().join("api/.env"), "API_KEY=from-main\nPORT=4000\n").unwrap();
+    let agent = sb.add_worktree("agent-1");
+
+    sb.json(&agent.join("web"), &["start", "web"]);
+    let api = sb.first_log_line(&agent, "api");
+    assert!(api.contains("port=4100"), "{api}");
+    let web = sb.first_log_line(&agent, "web");
+    assert!(web.ends_with("api=4100"), "{web}");
+}
+
 #[test]
 fn every_instance_can_be_named_from_anywhere() {
     let sb = Sandbox::new();
