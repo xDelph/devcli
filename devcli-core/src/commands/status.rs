@@ -172,11 +172,11 @@ async fn status_json(
         && let Some(app_name) = &args.app_name
     {
         let config = load_config()?;
-        let resolved = crate::worktrees::resolve(
+        let resolved = crate::worktrees::resolve_readonly(
             &config,
             app_name,
             args.project.as_deref(),
-            crate::worktrees::Mode::FromCwd,
+            crate::worktrees::Mode::FromCwdStrict,
         )?;
         let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
@@ -251,8 +251,12 @@ async fn show_with_dependencies(
     store: &process_manager::StateStore,
 ) -> Result<()> {
     let config = load_config()?;
-    let resolved =
-        crate::worktrees::resolve(&config, &app_name, project, crate::worktrees::Mode::FromCwd)?;
+    let resolved = crate::worktrees::resolve_readonly(
+        &config,
+        &app_name,
+        project,
+        crate::worktrees::Mode::FromCwdStrict,
+    )?;
     let dependencies = resolve_dependency_chain(&config, &resolved)?;
 
     println!(

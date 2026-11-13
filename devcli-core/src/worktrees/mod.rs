@@ -9,7 +9,10 @@ pub mod registry;
 pub mod runtime;
 mod selection;
 
-pub use instance::{pinned, resolve, resolve_all, split, Instance, Mode, Selector, PORT_STRIDE};
+pub use instance::{
+    pinned, resolve, resolve_all, resolve_readonly, slug_instance_name, split, Instance, Mode,
+    Selector, PORT_STRIDE,
+};
 pub use selection::{base_project, Selection};
 
 /// Process metadata keys describing the worktree an instance runs from.
@@ -93,11 +96,25 @@ pub fn registration_for(path: &std::path::Path) -> Registration {
         .filter(|w| w.is_usable() && w.root != main.root)
         .collect();
     let worktree = registry::Registry::open()
-        .peek(&here.common_dir, &usable)
+        .peek(&here.common_dir, &usable, &mut registry::running_from())
         .ok()
-        .and_then(|slots| slots.into_iter().find(|s| s.root == here.root))
+        .and_then(|slots| slots.live.into_iter().find(|s| s.root == here.root))
         .map(|s| s.slug)
-        .unwrap_or_else(|| here.root.display().to_string());
+        .unwrap_or_else(|| {
+            // The registry cannot be read: the name it would most likely
+            // give, not a path (`APP@/abs/path` names nothing).
+            let raw = worktrees
+                .iter()
+                .find(|w| w.root == here.root)
+                .and_then(|w| w.admin_name.clone())
+                .or_else(|| {
+                    here.root
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                })
+                .unwrap_or_default();
+            registry::sanitize_slug(&raw)
+        });
     let relative = path
         .strip_prefix(&here.root)
         .unwrap_or(std::path::Path::new(""));

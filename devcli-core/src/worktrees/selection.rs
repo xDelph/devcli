@@ -47,7 +47,7 @@ pub fn base_project(metadata: &HashMap<String, String>) -> Option<&str> {
 impl Selection {
     pub fn of(config: &Config, app: Option<&str>, project: Option<&str>) -> Result<Self> {
         if let Some(app) = app {
-            return match resolve_all_readonly(config, app, project, Mode::FromCwd) {
+            return match resolve_all_readonly(config, app, project, Mode::FromCwdStrict) {
                 Ok(instances) => Ok(Selection::Instances(
                     instances
                         .into_iter()

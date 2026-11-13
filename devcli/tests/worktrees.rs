@@ -393,3 +393,98 @@ fn a_moved_worktree_is_refused_not_mistaken_for_the_main_checkout() {
     );
     assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
 }
+
+impl Sandbox {
+    /// `devcli --json ARGS` run from `cwd`, which must fail (exit code 1);
+    /// its error message.
+    fn error(&self, cwd: &Path, args: &[&str]) -> String {
+        let mut full = vec!["--json"];
+        full.extend_from_slice(args);
+        let out = self.command(cwd, &full).output().expect("run devcli");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "devcli {full:?} did not fail: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let err: Value = serde_json::from_slice(&out.stderr).unwrap_or_else(|e| {
+            panic!("{e}: {}", String::from_utf8_lossy(&out.stderr));
+        });
+        err["error"].as_str().unwrap().to_string()
+    }
+}
+
+/// A worktree whose branch has no api: commands acting on `api` from there
+/// used to act on the main checkout's api. Only `start` falls back to it.
+#[test]
+fn an_app_missing_from_the_worktrees_branch_is_not_the_main_checkouts() {
+    let sb = Sandbox::new();
+    let main = sb.repo();
+    sb.json(&main, &["start", "api"]);
+    let agent = sb.add_worktree("agent-1");
+    std::fs::remove_dir_all(agent.join("api")).unwrap();
+
+    for args in [
+        &["stop", "api"][..],
+        &["restart", "api"][..],
+        &["logs", "api"][..],
+        &["status", "api"][..],
+        &["status", "api", "--deps"][..],
+        &["health-check", "api"][..],
+    ] {
+        let message = sb.error(&agent, args);
+        assert!(
+            message.contains("api@ for the configured checkout"),
+            "{args:?}: {message}"
+        );
+    }
+    assert_eq!(sb.processes(), vec![("shop.api.local".into(), None)]);
+
+    // Named, it is reachable from there.
+    sb.json(&agent, &["status", "api@"]);
+}
+
+/// A worktree moved with `mv` while its api runs: git lists it at its old
+/// path as prunable, and the api still runs, on the port of its slot.
+#[test]
+fn an_instance_of_a_moved_worktree_can_still_be_named() {
+    let sb = Sandbox::new();
+    let elsewhere = sb.root();
+    let agent = sb.add_worktree("agent-1");
+    sb.json(&agent.join("api"), &["start", "api"]);
+    std::fs::rename(&agent, sb.root().join("moved")).unwrap();
+
+    let status = sb.json(&elsewhere, &["status", "api@agent-1"]);
+    assert_eq!(status["processes"].as_array().unwrap().len(), 1, "{status}");
+    assert_eq!(
+        sb.first_log_line(&elsewhere, "api@agent-1"),
+        "wt=agent-1 index=1 port=3100 key=from-main api="
+    );
+
+    // Its port is not handed to the next worktree.
+    let next = sb.add_worktree("agent-2");
+    sb.json(&next.join("api"), &["start", "api"]);
+    assert_eq!(
+        sb.first_log_line(&next, "api"),
+        "wt=agent-2 index=2 port=3200 key=from-main api="
+    );
+    let listing = sb.json(&elsewhere, &["worktrees"]);
+    let moved = listing["repositories"][0]["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["stale"] == Value::Bool(true))
+        .cloned()
+        .expect("the moved worktree is listed");
+    assert_eq!(moved["slug"], "agent-1");
+    assert_eq!(moved["index"], 1);
+
+    sb.json(&elsewhere, &["stop", "api@agent-1"]);
+    assert_eq!(
+        sb.processes(),
+        vec![("shop@agent-2.api.local".into(), Some("agent-2".into()))]
+    );
+    // Its logs outlive it.
+    let logs = sb.json(&elsewhere, &["logs", "api@agent-1"]);
+    assert_eq!(logs["project"], "shop@agent-1");
+}

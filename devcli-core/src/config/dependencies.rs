@@ -56,7 +56,7 @@ fn in_same_worktree(
         return dep;
     }
     let project = format!("{}@{}", dep.project, instance.slug);
-    match crate::worktrees::resolve(
+    match crate::worktrees::resolve_readonly(
         config,
         &dep.app_name,
         Some(&project),

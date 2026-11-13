@@ -117,6 +117,27 @@ fn discover_checkout(path: &Path) -> Option<Checkout> {
     })
 }
 
+/// The working tree of the superproject when the checkout at `root` is a
+/// git submodule.
+pub fn superproject(root: &Path) -> Option<PathBuf> {
+    let out = git(root, &["rev-parse", "--show-superproject-working-tree"])?;
+    let path = out.trim();
+    (!path.is_empty()).then(|| canonical(Path::new(path)))
+}
+
+/// The admin directory name of the linked worktree at `root`, read from its
+/// `.git` file (`gitdir: <common_dir>/worktrees/<name>`). Still right after
+/// the worktree was moved with `mv`, when git lists it at its old path.
+pub fn admin_name_of(root: &Path) -> Option<String> {
+    let dot_git = std::fs::read_to_string(root.join(".git")).ok()?;
+    let gitdir = dot_git.trim().strip_prefix("gitdir:")?.trim();
+    let gitdir = Path::new(gitdir);
+    if gitdir.parent()?.file_name()? != "worktrees" {
+        return None;
+    }
+    Some(gitdir.file_name()?.to_string_lossy().into_owned())
+}
+
 /// The `origin` remote of the checkout at `root`, to recognise another clone
 /// of the same repository.
 pub fn origin_url(root: &Path) -> Option<String> {

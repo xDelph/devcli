@@ -37,7 +37,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         &config,
         &args.app_name,
         args.project.as_deref(),
-        crate::worktrees::Mode::FromCwd,
+        crate::worktrees::Mode::FromCwdStrict,
     )?;
     let project_name = resolved_app.project.clone();
     let actual_app_name = resolved_app.app_name.clone();
