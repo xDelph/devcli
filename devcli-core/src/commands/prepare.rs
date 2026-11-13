@@ -102,18 +102,12 @@ pub fn prepare_command(
         _ => command.to_string(),
     };
 
+    let mut container_env_file = None;
     match environment {
         "docker" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "default".to_string());
-            apply_container_env_file(
-                &mut final_command,
-                working_dir,
-                process_dir,
-                resolved_app,
-                stage,
-                "docker",
-                show_output,
-            )?;
+            container_env_file =
+                prepare_container_env_file(working_dir, resolved_app, stage, "docker")?;
 
             if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
                 final_command =
@@ -122,15 +116,8 @@ pub fn prepare_command(
         }
         "orbstack" => {
             env_vars.insert("DOCKER_CONTEXT".to_string(), "orbstack".to_string());
-            apply_container_env_file(
-                &mut final_command,
-                working_dir,
-                process_dir,
-                resolved_app,
-                stage,
-                "orbstack",
-                show_output,
-            )?;
+            container_env_file =
+                prepare_container_env_file(working_dir, resolved_app, stage, "orbstack")?;
 
             if let Some(ref dockerfile_path) = resolved_app.app.dockerfile_path {
                 final_command =
@@ -138,15 +125,8 @@ pub fn prepare_command(
             }
         }
         "docker-compose" => {
-            apply_container_env_file(
-                &mut final_command,
-                working_dir,
-                process_dir,
-                resolved_app,
-                stage,
-                "docker-compose",
-                show_output,
-            )?;
+            container_env_file =
+                prepare_container_env_file(working_dir, resolved_app, stage, "docker-compose")?;
         }
         "local" | "k8s" | "ci" => {
             if let Some(loaded) = crate::env_flow_support::load_process_runtime(
@@ -178,12 +158,33 @@ pub fn prepare_command(
         }
     }
 
+    // A container gets its env files through `--env-file`, not `env_vars`:
+    // `apply` must still see their PORT, which the app listens on, to shift
+    // it in a worktree (and the docker CLI's PORT is then the app's).
+    if let Some(file) = &container_env_file
+        && let Some(port) = file.port.clone()
+    {
+        env_vars.entry("PORT".to_string()).or_insert(port);
+    }
+
     // Last, so it sees the env files' PORT and wins over them.
     let worktree = crate::worktrees::runtime::apply(resolved_app, environment, &mut env_vars)?;
     if show_output && !crate::output::json_enabled() {
         for note in &worktree.notes {
             println!("  {note}");
         }
+    }
+
+    if let Some(file) = container_env_file {
+        inject_container_env_file(
+            &mut final_command,
+            file,
+            process_dir,
+            resolved_app,
+            environment,
+            worktree.shift,
+            show_output,
+        )?;
     }
 
     tracing::debug!(
@@ -199,49 +200,114 @@ pub fn prepare_command(
     })
 }
 
-fn apply_container_env_file(
-    final_command: &mut String,
+/// The env file a container gets, and the `PORT` it sets.
+struct ContainerEnv {
+    file: crate::env_flow_support::ContainerEnvFile,
+    port: Option<String>,
+}
+
+fn prepare_container_env_file(
     working_dir: &Path,
-    process_dir: &Path,
     resolved_app: &ResolvedApp,
     stage: Option<&str>,
     environment: &str,
-    show_output: bool,
-) -> Result<()> {
+) -> Result<Option<ContainerEnv>> {
     if !uses_container_env_file(environment) {
-        return Ok(());
+        return Ok(None);
     }
-
-    if let Some(prepared) = crate::env_flow_support::prepare_container_env_file(
+    let Some(file) = crate::env_flow_support::prepare_container_env_file(
         working_dir,
         resolved_app.app.env_files.as_ref(),
         stage,
         environment,
         resolved_app.app.dockerfile_path.as_deref(),
-        &format!("{}_{}", resolved_app.project, resolved_app.app_name),
-    )? {
-        let env_file_path = prepared
-            .path
-            .strip_prefix(process_dir)
-            .ok()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| prepared.path.to_string_lossy().to_string());
+        &container_scratch_name(resolved_app),
+    )?
+    else {
+        return Ok(None);
+    };
+    // The same files, parsed: only PORT is kept from them.
+    let port = crate::env_flow_support::load_process_runtime(
+        working_dir,
+        resolved_app.app.env_files.as_ref(),
+        stage,
+        environment,
+        resolved_app.app.dockerfile_path.as_deref(),
+    )?
+    .and_then(|loaded| loaded.vars.get("PORT").cloned());
+    Ok(Some(ContainerEnv { file, port }))
+}
 
-        tracing::debug!(
-            env_file = %env_file_path,
-            environment = %environment,
-            "Using env file"
-        );
+fn container_scratch_name(resolved_app: &ResolvedApp) -> String {
+    format!("{}_{}", resolved_app.project, resolved_app.app_name)
+}
 
-        *final_command =
-            crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
+/// Hand the env file to the container (`--env-file`), with `PORT` shifted
+/// when the instance runs from a worktree: the copies of an app would
+/// otherwise all listen on the env file's port inside their containers.
+fn inject_container_env_file(
+    final_command: &mut String,
+    container: ContainerEnv,
+    process_dir: &Path,
+    resolved_app: &ResolvedApp,
+    environment: &str,
+    shift: Option<crate::worktrees::runtime::PortShift>,
+    show_output: bool,
+) -> Result<()> {
+    let file = container.file;
+    let path = match shift {
+        // The file is written again with the shifted PORT, in the devcli
+        // directory (a pinned file is left alone).
+        Some(shift) => with_port(&file.path, shift.to, resolved_app, environment)?,
+        None => file.path,
+    };
+    let env_file_path = path
+        .strip_prefix(process_dir)
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string_lossy().to_string());
 
-        if show_output && !crate::output::json_enabled() {
-            println!("  Using env file: {}", prepared.summary);
-        }
+    tracing::debug!(
+        env_file = %env_file_path,
+        environment = %environment,
+        "Using env file"
+    );
+
+    *final_command = crate::utils::command::inject_docker_env_file(final_command, &env_file_path);
+
+    if show_output && !crate::output::json_enabled() {
+        println!("  Using env file: {}", file.summary);
     }
 
     Ok(())
+}
+
+/// A private copy of the env file at `source` with `PORT=port`.
+fn with_port(
+    source: &Path,
+    port: u16,
+    resolved_app: &ResolvedApp,
+    environment: &str,
+) -> Result<std::path::PathBuf> {
+    let contents = std::fs::read_to_string(source)?;
+    let mut out: String = contents
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            let line = line.strip_prefix("export ").unwrap_or(line);
+            line.split_once('=')
+                .is_none_or(|(key, _)| key.trim() != "PORT")
+        })
+        .flat_map(|line| [line, "\n"])
+        .collect();
+    out.push_str(&format!("PORT={port}\n"));
+    let dir = crate::config::loader::config_home().join("env-files");
+    let path = dir.join(format!(
+        "{}_{environment}.env",
+        container_scratch_name(resolved_app)
+    ));
+    crate::env_flow_support::write_private(&dir, &path, &out)?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -587,5 +653,115 @@ mod tests {
             "{}",
             docker.final_command
         );
+    }
+
+    /// A container reads its PORT from the env file it gets, never from
+    /// `env_vars`: that file's PORT used to reach it unshifted, so every
+    /// worktree's container listened on the same port.
+    #[test]
+    fn a_worktree_container_gets_the_shifted_port() {
+        let config_dir = crate::test_utils::TempConfigDir::new();
+        let dir = TempDir::new().unwrap();
+        let app_dir = dir.path().join("wt/feat/api");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(
+            app_dir.join(".env"),
+            "PORT=8080\nexport PORT=8080\nSECRET=s3cret\n",
+        )
+        .unwrap();
+        fs::write(app_dir.join("pinned.env"), "PORT=8080\nA=1\n").unwrap();
+
+        let app = AppBuilder::new("nodejs", app_dir.to_str().unwrap())
+            .with_docker_command("run", "docker run --rm api")
+            .build();
+        let mut resolved = ResolvedApp {
+            project: "proj@feat".to_string(),
+            app_name: "api".to_string(),
+            app,
+            worktree: Some(crate::worktrees::Instance {
+                slug: "feat".into(),
+                index: 1,
+                base_project: "proj".into(),
+                root: dir.path().join("wt/feat"),
+                base_root: dir.path().join("repo"),
+                base_path: dir.path().join("repo/api"),
+                common_dir: dir.path().join("repo/.git"),
+                branch: Some("feat".into()),
+            }),
+        };
+        let prefs = PreferencesBuilder::new().build();
+        let prepare = |resolved: &ResolvedApp, environment: &str| {
+            prepare_command(
+                "docker run --rm api",
+                environment,
+                resolved,
+                None,
+                &app_dir,
+                &prefs,
+                false,
+            )
+            .unwrap()
+        };
+        let env_file = config_dir.path().join("env-files/proj@feat_api_docker.env");
+
+        let docker = prepare(&resolved, "docker");
+        assert!(
+            docker
+                .final_command
+                .contains(&format!("--env-file {}", env_file.display())),
+            "{}",
+            docker.final_command
+        );
+        let contents = fs::read_to_string(&env_file).unwrap();
+        assert!(contents.contains("PORT=8180\n"), "{contents}");
+        assert!(!contents.contains("8080"), "{contents}");
+        assert!(contents.contains("SECRET=s3cret"), "the other values stay");
+        assert!(
+            !docker.final_command.contains("s3cret"),
+            "{}",
+            docker.final_command
+        );
+        assert_eq!(docker.env_vars["PORT"], "8180");
+        let check = crate::worktrees::runtime::health_check(
+            process_manager::HealthCheck::Tcp {
+                host: "localhost".into(),
+                port: 8080,
+                timeout_secs: 1,
+            },
+            &docker.worktree,
+            &docker.env_vars,
+        );
+        assert!(
+            matches!(check, process_manager::HealthCheck::Tcp { port: 8180, .. }),
+            "{check:?}"
+        );
+
+        // Compose interpolates `${PORT}` from the environment devcli sets.
+        let compose = prepare(&resolved, "docker-compose");
+        assert_eq!(compose.env_vars["PORT"], "8180");
+
+        // A pinned file is copied, never rewritten.
+        resolved.app.env_files = Some(HashMap::from([(
+            "base".to_string(),
+            HashMap::from([("docker".to_string(), "pinned.env".to_string())]),
+        )]));
+        let pinned = prepare(&resolved, "docker");
+        assert!(pinned.final_command.contains(env_file.to_str().unwrap()));
+        assert_eq!(fs::read_to_string(&env_file).unwrap(), "A=1\nPORT=8180\n");
+        assert_eq!(
+            fs::read_to_string(app_dir.join("pinned.env")).unwrap(),
+            "PORT=8080\nA=1\n"
+        );
+
+        // The configured checkout keeps its env file's port.
+        resolved.worktree = None;
+        resolved.project = "proj".into();
+        let main = prepare(&resolved, "docker");
+        assert!(
+            main.final_command.contains("pinned.env"),
+            "{}",
+            main.final_command
+        );
+        assert_eq!(main.env_vars["PORT"], "8080");
     }
 }
