@@ -497,7 +497,8 @@ Display process, system and performance metrics. Fetched from the metrics API
 when `devcli monitor --daemon` is running (`DEVCLI_METRICS_ADDR`, default
 `127.0.0.1:9090`), computed from the state store otherwise (pm-daemon, the
 monitor `start` spawns, serves no API; the monitor and performance counters
-are then 0).
+are then 0). Anything else on that address - another program, a server that
+does not answer within 2 seconds - is ignored the same way.
 
 **Usage**:
 ```bash

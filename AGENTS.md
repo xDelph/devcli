@@ -271,8 +271,10 @@ devcli --json metrics
 
 Returns the metrics document (process, system, performance). Works without a
 running metrics server: process and system metrics are then computed from the
-state (the performance counters stay at zero). Only `devcli monitor --daemon`
-serves the metrics API; pm-daemon, which `start` spawns, does not.
+state (the performance counters stay at zero), also when something else
+listens on the metrics address or nothing answers within 2 seconds. Only
+`devcli monitor --daemon` serves the metrics API; pm-daemon, which `start`
+spawns, does not.
 
 ### `auto-add` (non-interactive)
 
