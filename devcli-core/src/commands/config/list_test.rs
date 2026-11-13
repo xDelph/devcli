@@ -33,6 +33,21 @@ mod list_tests {
     }
 
     #[test]
+    fn an_unknown_project_filter_is_an_error() {
+        use crate::commands::config::list::ensure_project_exists;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        assert!(ensure_project_exists(&config, None).is_ok());
+        assert!(ensure_project_exists(&config, Some("project1")).is_ok());
+        let err = ensure_project_exists(&config, Some("project2"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Project 'project2' not found"), "{err}");
+        assert!(err.contains("Did you mean 'project1'?"), "{err}");
+    }
+
+    #[test]
     fn test_config_list_structure() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
