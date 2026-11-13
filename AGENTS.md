@@ -296,6 +296,28 @@ and env files the detection does not produce (detected ones are refreshed). `--t
 { "project": "proj", "app": "api", "type": "nodejs", "path": "/abs/apps/api" }
 ```
 
+### `install-agents` / `uninstall-agents`
+
+```bash
+devcli --json install-agents [--local PATH]
+devcli --json install-agents --global [--agent claude --agent codex ...]
+devcli --json uninstall-agents [--global] [--local PATH] [--agent ...]
+```
+
+```json
+{ "targets": [
+    { "agent": "claude", "path": "/Users/me/.claude/CLAUDE.md",
+      "action": "updated", "backup": "/Users/me/.devcli/backups/agents/..." } ],
+  "reference": "/Users/me/.devcli/AGENTS.md" }
+```
+
+`action` is one of `installed`, `updated`, `unchanged`, `removed`, `absent`.
+`agent` names the agent a file is for, `null` for a project's `AGENTS.md`
+and for the reference file; `backup` is the saved previous version (`null`
+when there was none to save).
+`reference` is the full rules file the global blocks point at, `null`
+without `--global`.
+
 ## Git worktrees
 
 An app is configured once, with the path of one checkout; devcli runs it

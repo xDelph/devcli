@@ -39,6 +39,8 @@ Complete reference for all devcli CLI commands.
   - [pref reset](#pref-reset) - Reset preferences
 - [Utilities](#utilities)
   - [auto-add](#auto-add) - Auto-detect and add app
+  - [install-agents](#install-agents) - Teach AI coding agents to use devcli
+  - [uninstall-agents](#uninstall-agents) - Remove devcli's agent rules
 
 ---
 
@@ -742,8 +744,8 @@ Environment Files:
   local: .env
 ```
 
-The port, health check and restart policy are printed after the path when
-configured. `--json` gives the full resolved app, including `env_files` and
+The port, health check and restart policy are printed after the defaults
+line when configured. `--json` gives the full resolved app, including `env_files` and
 `default_stages` (see [AGENTS.md](../AGENTS.md)).
 
 ---
@@ -1063,6 +1065,78 @@ devcli --json auto-add --path ./apps/api --yes --project awesome-project --name 
 - Rust (`Cargo.toml`, including workspaces)
 - Python (`setup.py`, `pyproject.toml`, including uv workspaces)
 - Redis (`redis.conf`) and Traefik (`traefik.yml`/`traefik.toml`) configs
+
+---
+
+### `install-agents`
+
+Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, pi, OpenCode,
+Devin, ...) to use devcli.
+
+**Usage**:
+```bash
+devcli install-agents [--local <PATH>]
+devcli install-agents --global [--agent <AGENT>]...
+```
+
+**Options**:
+- `--local <PATH>` - Install into the project at `<PATH>` (default: the
+  current directory)
+- `--global` - Install into the user-level files of your agents instead of a
+  project (conflicts with `--local`)
+- `--agent <AGENT>` - With `--global` only: just this agent (repeatable;
+  default: every agent found): `claude`, `codex`, `gemini`, `cursor`, `pi`,
+  `opencode`, `devin`
+
+By default devcli's rules (the content of [AGENTS.md](../AGENTS.md)) are
+written into the project's `AGENTS.md`, inside a fenced block devcli
+maintains, and imported from the project's `CLAUDE.md` (when there is one) and
+`GEMINI.md` (when there is one or Gemini CLI is installed).
+
+With `--global`, a short block is written into the user-level rules of every
+agent found (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.gemini/GEMINI.md`, `~/.cursor/rules/devcli.mdc`, `~/.pi/agent/AGENTS.md`,
+`~/.config/opencode/AGENTS.md`, `~/.config/devin/AGENTS.md`), pointing at the
+full rules written to `~/.devcli/AGENTS.md`.
+
+Files are written through symlinks, and the previous version of every file
+changed is saved under `~/.devcli/backups/agents` (the last five are kept). Re-run after
+upgrading devcli to refresh the rules.
+
+**Examples**:
+```bash
+devcli install-agents                     # this project
+devcli install-agents --local ~/code/shop # another project
+devcli install-agents --global            # every agent found
+devcli install-agents --global --agent claude --agent codex
+```
+
+**Output**:
+```text
+installed  project    /Users/me/code/shop/AGENTS.md
+updated    claude     /Users/me/.claude/CLAUDE.md
+```
+
+With `--json`: `{ "targets": [...], "reference": ... }` (see
+[AGENTS.md](../AGENTS.md#install-agents--uninstall-agents)).
+
+---
+
+### `uninstall-agents`
+
+Remove the rules `install-agents` wrote: devcli's block from each file (a
+file devcli owns as a whole, such as the Cursor rule, is deleted), and the
+imports it added.
+
+**Usage**:
+```bash
+devcli uninstall-agents [--local <PATH>]
+devcli uninstall-agents --global [--agent <AGENT>]...
+```
+
+**Options**: the same as `install-agents` (`--local <PATH>`, `--global`,
+`--agent <AGENT>`). `~/.devcli/AGENTS.md` is removed once no agent's rules
+point at it any more.
 
 ---
 
