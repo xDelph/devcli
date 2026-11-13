@@ -368,9 +368,9 @@ impl TuiApp {
             error_message: None,
             status_message: None,
             command_execution_requested: None,
-            stop_requested: false,
-            restart_requested: false,
-            env_selection_requested: false,
+            stop_requested: None,
+            restart_requested: None,
+            env_selection_requested: None,
             status_updated: false,
         }));
 
@@ -577,12 +577,12 @@ impl TuiApp {
                 state.status_updated = false; // Clear the flag
             }
 
-            // Get the current app status if popup is open
-            let app_status = if self.popup_manager.is_active() {
-                state.selected_app().map(|app| app.status.display_label())
-            } else {
-                None
-            };
+            // The status of the app the open popup is about - not of the
+            // selected app, which can be another one by now.
+            let app_status = self.popup_manager.active_popup.as_ref().and_then(|popup| {
+                let key = crate::tui::state::AppKey::new(&popup.project, &popup.app_name);
+                state.find_app(&key).map(|app| app.status.display_label())
+            });
 
             (updated, app_status)
         };
@@ -640,12 +640,15 @@ impl TuiApp {
         state_store: &Arc<process_manager::StateStore>,
     ) {
         // Which apps to look at - a brief lock. If the UI holds it, skip.
-        let keys: Vec<(String, String)> = match state.try_lock() {
-            Ok(state) => state
-                .projects
-                .iter()
-                .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
-                .collect(),
+        let (keys, listed): (Vec<(String, String)>, Vec<String>) = match state.try_lock() {
+            Ok(state) => (
+                state
+                    .projects
+                    .iter()
+                    .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
+                    .collect(),
+                state.projects.iter().map(|p| p.name.clone()).collect(),
+            ),
             Err(_) => return,
         };
 
@@ -658,7 +661,7 @@ impl TuiApp {
         let Ok((tracked, snapshots)) = tokio::task::spawn_blocking(move || {
             let processes = store.list().unwrap_or_default();
             // Worktree instances, which the config does not list.
-            let tracked: Vec<crate::tui::state::TrackedInstance> = processes
+            let mut tracked: Vec<crate::tui::state::TrackedInstance> = processes
                 .iter()
                 .filter_map(|p| {
                     let slug = p.metadata.get(crate::worktrees::meta::WORKTREE)?;
@@ -668,9 +671,24 @@ impl TuiApp {
                         slug: slug.clone(),
                         app: p.metadata.get("app_config_name")?.clone(),
                         path: p.task.working_dir.to_string_lossy().into_owned(),
+                        repo_apps: None,
                     })
                 })
                 .collect();
+            // Which apps a new worktree row lists (asks git: done here, off
+            // the lock, and only for rows not listed yet).
+            if tracked.iter().any(|t| !listed.contains(&t.project))
+                && let Ok(config) = crate::config::loader::load_config_cached()
+            {
+                for t in tracked.iter_mut().filter(|t| !listed.contains(&t.project)) {
+                    t.repo_apps = Some(crate::tui::state::TrackedInstance::apps_in_repository(
+                        &config,
+                        &t.base_project,
+                        &t.app,
+                        &t.path,
+                    ));
+                }
+            }
             let mut keys = keys;
             keys.extend(tracked.iter().map(|t| (t.project.clone(), t.app.clone())));
             let snapshots = keys

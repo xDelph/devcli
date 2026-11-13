@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::process_manager_support::{find_process, state_store};
 use crate::tui::app::{CommandRequest, CommandResult, CommandType};
-use crate::tui::state::AppState;
+use crate::tui::state::{AppKey, AppState};
 use crate::tui::theme::Theme;
 use crate::tui::views::MainView;
 use crate::tui::widgets::command_popup::PopupState;
@@ -98,269 +98,152 @@ impl PopupManager {
         Ok(())
     }
 
+    /// The app `key` designates and its status label, if it is still listed.
+    fn app_status(state: &AppState, key: &AppKey) -> Option<String> {
+        state.find_app(key).map(|app| app.status.display_label())
+    }
+
     fn check_command_execution_request(
         &mut self,
         state: &Arc<Mutex<AppState>>,
         main_view: &MainView,
     ) -> Result<bool> {
-        let request = {
-            let state = state
-                .lock()
-                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.command_execution_requested
+        let mut state = state
+            .lock()
+            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
+        let Some((key, command_idx)) = state.command_execution_requested.take() else {
+            return Ok(false);
         };
+        // The app the request was made for, not whatever is selected now.
+        let Some(app) = state.find_app(&key) else {
+            return Ok(false);
+        };
+        let Some((environment, cmd_info)) = main_view.get_command_by_index(app, command_idx) else {
+            return Ok(false);
+        };
+        let command_name = cmd_info.name.clone();
+        let environment = environment.to_string();
+        let status = app.status.display_label();
+        drop(state);
 
-        if let Some(command_idx) = request {
-            let (app_name, project_name, command_name, environment) = {
-                let mut state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-
-                if let Some(app) = state.selected_app() {
-                    if let Some((env, cmd_info)) = main_view.get_command_by_index(app, command_idx)
-                    {
-                        (
-                            app.name.clone(),
-                            app.project.clone(),
-                            cmd_info.name.clone(),
-                            env.to_string(),
-                        )
-                    } else {
-                        // Invalid command index
-                        state.clear_command_execution_request();
-                        return Ok(false);
-                    }
-                } else {
-                    // No app selected
-                    state.clear_command_execution_request();
-                    return Ok(false);
-                }
-            };
-
-            let mut popup = CommandPopup::new(
-                "run".to_string(),
-                format!("Running: {} ({})", command_name, environment),
-                app_name.clone(),
-                project_name,
-                format!("{}:{}", environment, command_name),
-            );
-
-            // Set initial status
-            {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app()
-                    && app.name == app_name
-                {
-                    popup.update_status(app.status.display_label());
-                }
-            }
-
-            self.active_popup = Some(popup);
-
-            let mut state = state
-                .lock()
-                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.clear_command_execution_request();
-            return Ok(true);
-        }
-        Ok(false)
+        let mut popup = CommandPopup::new(
+            "run".to_string(),
+            format!("Running: {} ({})", command_name, environment),
+            key.app,
+            key.project,
+            format!("{}:{}", environment, command_name),
+        );
+        popup.update_status(status);
+        self.active_popup = Some(popup);
+        Ok(true)
     }
 
     fn check_stop_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
-        let stop_requested = {
-            let state = state
-                .lock()
-                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.stop_requested
-        };
-
-        if stop_requested {
-            let (app_name, project_name) = {
-                let mut state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    (app.name.clone(), app.project.clone())
-                } else {
-                    state.clear_stop_requested();
-                    return Ok(false);
-                }
-            };
-
-            let mut popup = CommandPopup::new(
-                "stop".to_string(),
-                "Stopping process...".to_string(),
-                app_name.clone(),
-                project_name.clone(),
-                "".to_string(),
-            );
-
-            {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app()
-                    && app.name == app_name
-                {
-                    popup.update_status(app.status.display_label());
-                }
-            }
-
-            self.active_popup = Some(popup);
-
-            // Immediately execute stop
-            let request = CommandRequest {
-                id: 0,
-                app_name,
-                project: project_name,
-                environment: String::new(),
-                command_type: CommandType::Stop,
-            };
-
-            self.dispatch(request)?;
-
+        let (key, status) = {
             let mut state = state
                 .lock()
                 .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.clear_stop_requested();
-            return Ok(true);
-        }
-        Ok(false)
+            let Some(key) = state.stop_requested.take() else {
+                return Ok(false);
+            };
+            let Some(status) = Self::app_status(&state, &key) else {
+                return Ok(false);
+            };
+            (key, status)
+        };
+
+        let mut popup = CommandPopup::new(
+            "stop".to_string(),
+            "Stopping process...".to_string(),
+            key.app.clone(),
+            key.project.clone(),
+            "".to_string(),
+        );
+        popup.update_status(status);
+        self.active_popup = Some(popup);
+
+        // Immediately execute stop
+        self.dispatch(CommandRequest {
+            id: 0,
+            app_name: key.app,
+            project: key.project,
+            environment: String::new(),
+            command_type: CommandType::Stop,
+        })?;
+        Ok(true)
     }
 
     fn check_restart_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
-        let restart_requested = {
-            let state = state
-                .lock()
-                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.restart_requested
-        };
-
-        if restart_requested {
-            let (app_name, project_name, environment) = {
-                let mut state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    let env = if let Ok(store) = state_store() {
-                        if let Ok(Some(process)) =
-                            find_process(&store, &app.project, &app.name, None)
-                        {
-                            process
-                                .metadata
-                                .get("environment")
-                                .cloned()
-                                .unwrap_or_else(|| "local".to_string())
-                        } else {
-                            "local".to_string()
-                        }
-                    } else {
-                        "local".to_string()
-                    };
-                    (app.name.clone(), app.project.clone(), env)
-                } else {
-                    state.clear_restart_requested();
-                    return Ok(false);
-                }
-            };
-
-            let mut popup = CommandPopup::new(
-                "restart".to_string(),
-                "Restarting process...".to_string(),
-                app_name.clone(),
-                project_name.clone(),
-                environment.clone(),
-            );
-
-            {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app()
-                    && app.name == app_name
-                {
-                    popup.update_status(app.status.display_label());
-                }
-            }
-
-            self.active_popup = Some(popup);
-
-            // Immediately execute restart
-            let request = CommandRequest {
-                id: 0,
-                app_name,
-                project: project_name,
-                environment,
-                command_type: CommandType::Restart,
-            };
-
-            self.dispatch(request)?;
-
+        let (key, status) = {
             let mut state = state
                 .lock()
                 .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.clear_restart_requested();
-            return Ok(true);
-        }
-        Ok(false)
+            let Some(key) = state.restart_requested.take() else {
+                return Ok(false);
+            };
+            let Some(status) = Self::app_status(&state, &key) else {
+                return Ok(false);
+            };
+            (key, status)
+        };
+
+        // The environment it runs in, read from the process store with the
+        // UI lock released (reading the store used to happen under it).
+        let environment = state_store()
+            .ok()
+            .and_then(|store| find_process(&store, &key.project, &key.app, None).ok())
+            .flatten()
+            .and_then(|process| process.metadata.get("environment").cloned())
+            .unwrap_or_else(|| "local".to_string());
+
+        let mut popup = CommandPopup::new(
+            "restart".to_string(),
+            "Restarting process...".to_string(),
+            key.app.clone(),
+            key.project.clone(),
+            environment.clone(),
+        );
+        popup.update_status(status);
+        self.active_popup = Some(popup);
+
+        // Immediately execute restart
+        self.dispatch(CommandRequest {
+            id: 0,
+            app_name: key.app,
+            project: key.project,
+            environment,
+            command_type: CommandType::Restart,
+        })?;
+        Ok(true)
     }
 
     fn check_env_selection_request(&mut self, state: &Arc<Mutex<AppState>>) -> Result<bool> {
-        let env_selection_requested = {
-            let state = state
-                .lock()
-                .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.env_selection_requested
-        };
-
-        if env_selection_requested {
-            let (app_name, project_name, default_env) = {
-                let mut state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app() {
-                    let preferences = crate::config::load_preferences().unwrap_or_default();
-                    (
-                        app.name.clone(),
-                        app.project.clone(),
-                        preferences.default_env,
-                    )
-                } else {
-                    state.clear_env_selection_requested();
-                    return Ok(false);
-                }
-            };
-
-            let mut popup = CommandPopup::new_with_env_selection(
-                "start".to_string(),
-                "Start application".to_string(),
-                app_name.clone(),
-                project_name,
-                default_env,
-            );
-
-            {
-                let state = state
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-                if let Some(app) = state.selected_app()
-                    && app.name == app_name
-                {
-                    popup.update_status(app.status.display_label());
-                }
-            }
-
-            self.active_popup = Some(popup);
-
+        let (key, status) = {
             let mut state = state
                 .lock()
                 .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
-            state.clear_env_selection_requested();
-            return Ok(true);
-        }
-        Ok(false)
+            let Some(key) = state.env_selection_requested.take() else {
+                return Ok(false);
+            };
+            let Some(status) = Self::app_status(&state, &key) else {
+                return Ok(false);
+            };
+            (key, status)
+        };
+
+        let default_env = crate::config::load_preferences()
+            .unwrap_or_default()
+            .default_env;
+        let mut popup = CommandPopup::new_with_env_selection(
+            "start".to_string(),
+            "Start application".to_string(),
+            key.app,
+            key.project,
+            default_env,
+        );
+        popup.update_status(status);
+        self.active_popup = Some(popup);
+        Ok(true)
     }
 
     fn check_command_results(

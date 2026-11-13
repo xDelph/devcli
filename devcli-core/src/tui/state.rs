@@ -29,15 +29,21 @@ pub struct AppState {
     pub error_message: Option<String>,
     /// Optional status message to display to the user
     pub status_message: Option<String>,
-    /// Command execution request (command_idx) - set when user wants to execute a command
-    /// The app will process this and show the command popup
-    pub command_execution_requested: Option<usize>,
-    /// Stop command request - set when user wants to stop an app
-    pub stop_requested: bool,
-    /// Restart command request - set when user wants to restart an app
-    pub restart_requested: bool,
-    /// Environment selection request - set when user wants to start with environment choice
-    pub env_selection_requested: bool,
+    /// Command execution request: the app it was made for and the command's
+    /// index in that app's command list. The app processes it and shows the
+    /// command popup.
+    ///
+    /// Every request names its app: they are handled on the next tick, and
+    /// the selection can move in between (a worktree row vanishing, a config
+    /// refresh), which used to send the action to whatever app was selected
+    /// by then.
+    pub command_execution_requested: Option<(AppKey, usize)>,
+    /// Stop request for an app
+    pub stop_requested: Option<AppKey>,
+    /// Restart request for an app
+    pub restart_requested: Option<AppKey>,
+    /// Start request (with environment choice) for an app
+    pub env_selection_requested: Option<AppKey>,
     /// Flag to indicate status was updated (for triggering UI redraw)
     pub status_updated: bool,
 }
@@ -75,10 +81,13 @@ impl AppState {
     /// Now only the app list is rebuilt; runtime data of apps that still exist
     /// is carried over (new apps get theirs at the next status poll), and the
     /// selection follows the selected app by name.
+    ///
+    /// Worktree rows (`proj@slug`) are not in the config: they are kept, with
+    /// their project's new app list. They used to disappear until the next
+    /// status poll, and the selection fell on another app meanwhile.
     pub fn refresh_from_config(&mut self, config: &Config) -> Result<()> {
         let fresh = Self::build(config, |_, _| Ok(RuntimeSnapshot::stopped()))?;
-        let selected_project = self.selected_project().map(|p| p.name.clone());
-        let selected_app = self.selected_app().map(|a| a.name.clone());
+        let selected = self.selected_key();
 
         let mut projects = fresh.projects;
         for project in &mut projects {
@@ -88,40 +97,93 @@ impl AppState {
             project.expanded = old_project.expanded;
             for app in &mut project.apps {
                 if let Some(old) = old_project.apps.iter().find(|a| a.name == app.name) {
-                    app.status = old.status.clone();
-                    app.active_stage = old.active_stage.clone();
-                    app.restart_count = old.restart_count;
-                    app.last_exit_code = old.last_exit_code;
-                    app.health_status = old.health_status.clone();
+                    app.carry_runtime_from(old);
                 }
             }
         }
+
+        // The worktree rows, after their (still configured) project.
+        for old in self.projects.iter().filter(|p| p.worktree.is_some()) {
+            let Some(base_idx) = projects
+                .iter()
+                .position(|p| p.worktree.is_none() && Some(p.name.as_str()) == old.base_project())
+            else {
+                continue;
+            };
+            let listed: Vec<&str> = old.apps.iter().map(|a| a.name.as_str()).collect();
+            let mut row = worktree_row(
+                &projects[base_idx],
+                &old.name,
+                old.worktree.as_deref().unwrap_or_default(),
+                |name| listed.contains(&name),
+            );
+            row.expanded = old.expanded;
+            for app in &mut row.apps {
+                if let Some(previous) = old.apps.iter().find(|a| a.name == app.name) {
+                    app.carry_runtime_from(previous);
+                    app.path = previous.path.clone();
+                }
+            }
+            insert_worktree_row(&mut projects, base_idx, row);
+        }
+
         self.projects = projects;
-        self.restore_selection(selected_project, selected_app);
+        self.restore_selection(selected);
         Ok(())
     }
 
-    /// Select `project`/`app` again by name after the project list changed,
-    /// or the nearest valid position.
-    fn restore_selection(
-        &mut self,
-        selected_project: Option<String>,
-        selected_app: Option<String>,
-    ) {
-        let project_idx = selected_project
-            .and_then(|name| self.projects.iter().position(|p| p.name == name))
-            .unwrap_or(self.selected_project_idx)
-            .min(self.projects.len().saturating_sub(1));
-        let app_idx = self
-            .projects
-            .get(project_idx)
-            .map(|p| {
-                selected_app
-                    .and_then(|name| p.apps.iter().position(|a| a.name == name))
-                    .unwrap_or(self.selected_app_idx)
-                    .min(p.apps.len().saturating_sub(1))
-            })
-            .unwrap_or(0);
+    /// Select `selected` again after the project list changed.
+    ///
+    /// When it is gone, the selection stays close and predictable: the app at
+    /// the same place in its project, or - its project gone too - the same
+    /// app of the configured project (for a worktree row), else the project
+    /// now at that place. It used to fall back to the old raw indices, which
+    /// then designated some other app.
+    fn restore_selection(&mut self, selected: Option<AppKey>) {
+        if let Some(key) = &selected
+            && self.select_app(key)
+        {
+            return;
+        }
+        let old_project_idx = self.selected_project_idx;
+        let old_app_idx = self.selected_app_idx;
+        let project_idx = selected.as_ref().and_then(|key| {
+            self.projects
+                .iter()
+                .position(|p| p.name == key.project)
+                .or_else(|| {
+                    // A worktree row that vanished: its configured project.
+                    let base = crate::worktrees::split(&key.project).0;
+                    (base != key.project)
+                        .then(|| {
+                            self.projects
+                                .iter()
+                                .position(|p| p.worktree.is_none() && p.name == base)
+                        })
+                        .flatten()
+                })
+        });
+        let (project_idx, app_idx) = match (project_idx, &selected) {
+            (Some(idx), Some(key)) => {
+                let apps = &self.projects[idx].apps;
+                let app_idx = apps
+                    .iter()
+                    .position(|a| a.name == key.app)
+                    .unwrap_or_else(|| {
+                        if self.projects[idx].name == key.project {
+                            // Same project: the app's neighbour.
+                            old_app_idx.min(apps.len().saturating_sub(1))
+                        } else {
+                            0
+                        }
+                    });
+                (idx, app_idx)
+            }
+            _ => (
+                old_project_idx.min(self.projects.len().saturating_sub(1)),
+                0,
+            ),
+        };
         self.selected_project_idx = project_idx;
         self.selected_app_idx = app_idx;
         self.status_updated = true;
@@ -131,13 +193,13 @@ impl AppState {
     /// projects of their own, right after their configured project, while
     /// any of their processes is tracked. Returns whether the list changed.
     ///
-    /// They carry the configured project's apps, so any of them can be
-    /// started in that worktree from here; actions name the instance
-    /// exactly (`proj@slug`).
+    /// They carry the configured project's apps that live in the worktree's
+    /// repository (see [`TrackedInstance::repo_apps`]), so any of them can be
+    /// started in that worktree from here; actions name the instance exactly
+    /// (`proj@slug`).
     pub fn sync_worktree_projects(&mut self, tracked: &[TrackedInstance]) -> bool {
         let before: Vec<String> = self.projects.iter().map(|p| p.name.clone()).collect();
-        let selected_project = self.selected_project().map(|p| p.name.clone());
-        let selected_app = self.selected_app().map(|a| a.name.clone());
+        let selected = self.selected_key();
 
         self.projects
             .retain(|p| p.worktree.is_none() || tracked.iter().any(|t| t.project == p.name));
@@ -156,48 +218,22 @@ impl AppState {
             else {
                 continue;
             };
-            let base = &self.projects[base_idx];
-            let apps = base
-                .apps
-                .iter()
-                .cloned()
-                .map(|mut app| {
-                    let stopped = RuntimeSnapshot::stopped();
-                    app.project = t.project.clone();
-                    app.status = stopped.status;
-                    app.active_stage = None;
-                    app.restart_count = 0;
-                    app.last_exit_code = None;
-                    app.health_status = stopped.health_status;
-                    // Known once it has run in this worktree.
-                    app.path = (app.name == t.app).then(|| t.path.clone());
-                    app
-                })
-                .collect();
-            let project = ProjectState {
-                name: t.project.clone(),
-                alternative_name: base
-                    .alternative_name
-                    .as_ref()
-                    .map(|a| format!("{a}@{}", t.slug)),
-                apps,
-                expanded: true,
-                worktree: Some(t.slug.clone()),
-            };
-            let mut at = base_idx + 1;
-            while self
-                .projects
-                .get(at)
-                .is_some_and(|p| p.worktree.is_some() && p.name < project.name)
-            {
-                at += 1;
+            let mut row = worktree_row(&self.projects[base_idx], &t.project, &t.slug, |name| {
+                name == t.app
+                    || t.repo_apps
+                        .as_ref()
+                        .is_none_or(|apps| apps.iter().any(|a| a == name))
+            });
+            if let Some(app) = row.apps.iter_mut().find(|a| a.name == t.app) {
+                // Known once it has run in this worktree.
+                app.path = Some(t.path.clone());
             }
-            self.projects.insert(at, project);
+            insert_worktree_row(&mut self.projects, base_idx, row);
         }
 
         let changed = self.projects.iter().map(|p| &p.name).ne(before.iter());
         if changed {
-            self.restore_selection(selected_project, selected_app);
+            self.restore_selection(selected);
         }
         changed
     }
@@ -279,9 +315,9 @@ impl AppState {
             error_message: None,
             status_message: None,
             command_execution_requested: None,
-            stop_requested: false,
-            restart_requested: false,
-            env_selection_requested: false,
+            stop_requested: None,
+            restart_requested: None,
+            env_selection_requested: None,
             status_updated: false,
         })
     }
@@ -374,10 +410,48 @@ impl AppState {
         }
     }
 
-    /// Sets a command execution request
-    /// This signals that the user wants to execute a command at the given index
+    /// The identity of the selected app, if any.
+    pub fn selected_key(&self) -> Option<AppKey> {
+        self.selected_app().map(AppKey::of)
+    }
+
+    /// The app `key` designates, wherever it is listed.
+    pub fn find_app(&self, key: &AppKey) -> Option<&AppStateData> {
+        self.projects
+            .iter()
+            .find(|p| p.name == key.project)
+            .and_then(|p| p.apps.iter().find(|a| a.name == key.app))
+    }
+
+    /// Select the app `key` designates. Returns whether it is listed.
+    ///
+    /// Its project is expanded when the app is not its first row.
+    pub fn select_app(&mut self, key: &AppKey) -> bool {
+        let Some((project_idx, app_idx)) = self.locate(key) else {
+            return false;
+        };
+        self.selected_project_idx = project_idx;
+        self.selected_app_idx = app_idx;
+        if app_idx > 0 {
+            self.projects[project_idx].expanded = true;
+        }
+        self.status_updated = true;
+        true
+    }
+
+    /// `(project index, app index)` of the app `key` designates.
+    fn locate(&self, key: &AppKey) -> Option<(usize, usize)> {
+        let project_idx = self.projects.iter().position(|p| p.name == key.project)?;
+        let app_idx = self.projects[project_idx]
+            .apps
+            .iter()
+            .position(|a| a.name == key.app)?;
+        Some((project_idx, app_idx))
+    }
+
+    /// Asks to run command `command_idx` of the selected app.
     pub fn set_command_execution_requested(&mut self, command_idx: usize) {
-        self.command_execution_requested = Some(command_idx);
+        self.command_execution_requested = self.selected_key().map(|key| (key, command_idx));
     }
 
     /// Clears the command execution request
@@ -386,34 +460,55 @@ impl AppState {
         self.command_execution_requested = None;
     }
 
-    /// Sets a stop request
+    /// Asks to stop the selected app.
     pub fn set_stop_requested(&mut self) {
-        self.stop_requested = true;
+        self.stop_requested = self.selected_key();
     }
 
     /// Clears the stop request
     pub fn clear_stop_requested(&mut self) {
-        self.stop_requested = false;
+        self.stop_requested = None;
     }
 
-    /// Sets a restart request
+    /// Asks to restart the selected app.
     pub fn set_restart_requested(&mut self) {
-        self.restart_requested = true;
+        self.restart_requested = self.selected_key();
     }
 
     /// Clears the restart request
     pub fn clear_restart_requested(&mut self) {
-        self.restart_requested = false;
+        self.restart_requested = None;
     }
 
-    /// Sets environment selection request
+    /// Asks to start the selected app (the popup offers the environment).
     pub fn set_env_selection_requested(&mut self) {
-        self.env_selection_requested = true;
+        self.env_selection_requested = self.selected_key();
     }
 
     /// Clears environment selection request
     pub fn clear_env_selection_requested(&mut self) {
-        self.env_selection_requested = false;
+        self.env_selection_requested = None;
+    }
+}
+
+/// Which app a row is: its project as listed (`proj`, or `proj@slug` for a
+/// worktree instance) and its name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AppKey {
+    pub project: String,
+    pub app: String,
+}
+
+impl AppKey {
+    pub fn new(project: impl Into<String>, app: impl Into<String>) -> Self {
+        Self {
+            project: project.into(),
+            app: app.into(),
+        }
+    }
+
+    pub fn of(app: &AppStateData) -> Self {
+        Self::new(app.project.clone(), app.name.clone())
     }
 }
 
@@ -531,6 +626,60 @@ pub struct ProjectState {
     pub worktree: Option<String>,
 }
 
+impl ProjectState {
+    /// The configured project of a worktree row (`proj` for `proj@slug`).
+    pub fn base_project(&self) -> Option<&str> {
+        let slug = self.worktree.as_deref()?;
+        self.name.strip_suffix(slug)?.strip_suffix('@')
+    }
+}
+
+/// The row of worktree instance `name` (`proj@slug`) of configured project
+/// `base`, listing the apps of `base` that `keep` accepts, all stopped.
+fn worktree_row(
+    base: &ProjectState,
+    name: &str,
+    slug: &str,
+    keep: impl Fn(&str) -> bool,
+) -> ProjectState {
+    let apps = base
+        .apps
+        .iter()
+        .filter(|app| keep(&app.name))
+        .cloned()
+        .map(|mut app| {
+            app.project = name.to_string();
+            app.carry_runtime_from_snapshot(RuntimeSnapshot::stopped());
+            // Known once it has run in this worktree.
+            app.path = None;
+            app
+        })
+        .collect();
+    ProjectState {
+        name: name.to_string(),
+        alternative_name: base
+            .alternative_name
+            .as_ref()
+            .map(|a| format!("{a}@{slug}")),
+        apps,
+        expanded: true,
+        worktree: Some(slug.to_string()),
+    }
+}
+
+/// Insert worktree `row` after its configured project at `base_idx`, among
+/// that project's other worktree rows in name order.
+fn insert_worktree_row(projects: &mut Vec<ProjectState>, base_idx: usize, row: ProjectState) {
+    let mut at = base_idx + 1;
+    while projects
+        .get(at)
+        .is_some_and(|p| p.worktree.is_some() && p.name < row.name)
+    {
+        at += 1;
+    }
+    projects.insert(at, row);
+}
+
 /// A git worktree instance of an app that devcli tracks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackedInstance {
@@ -542,6 +691,43 @@ pub struct TrackedInstance {
     pub app: String,
     /// Where it runs.
     pub path: String,
+    /// The apps of `base_project` that live in the same git repository as
+    /// this instance, which its row lists: an app of another repository has
+    /// nothing to do with this worktree (its slug means nothing there).
+    /// `None` when not worked out (the row already exists): every app.
+    pub repo_apps: Option<Vec<String>>,
+}
+
+impl TrackedInstance {
+    /// The apps of configured project `base_project` living in the git
+    /// repository of `path` (always including `app`, which runs there).
+    ///
+    /// Runs git: call it without holding the state lock.
+    pub fn apps_in_repository(
+        config: &Config,
+        base_project: &str,
+        app: &str,
+        path: &str,
+    ) -> Vec<String> {
+        use crate::worktrees::git::checkout_of;
+
+        let here = checkout_of(std::path::Path::new(path)).map(|c| c.common_dir);
+        let Some(project) = config.projects.get(base_project) else {
+            return vec![app.to_string()];
+        };
+        project
+            .apps
+            .iter()
+            .filter(|(name, config)| {
+                *name == app
+                    || here.as_ref().is_some_and(|here| {
+                        checkout_of(&crate::utils::path::expand_path(&config.path))
+                            .is_some_and(|c| &c.common_dir == here)
+                    })
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
 }
 
 /// Represents an individual application's state
@@ -581,6 +767,25 @@ pub struct AppStateData {
     pub last_exit_code: Option<i32>,
     /// Current health status of the application
     pub health_status: HealthStatus,
+}
+
+impl AppStateData {
+    /// Take the runtime data (status, restarts, health...) of `old`.
+    fn carry_runtime_from(&mut self, old: &AppStateData) {
+        self.status = old.status.clone();
+        self.active_stage = old.active_stage.clone();
+        self.restart_count = old.restart_count;
+        self.last_exit_code = old.last_exit_code;
+        self.health_status = old.health_status.clone();
+    }
+
+    fn carry_runtime_from_snapshot(&mut self, snapshot: RuntimeSnapshot) {
+        self.status = snapshot.status;
+        self.active_stage = snapshot.active_stage;
+        self.restart_count = snapshot.restart_count;
+        self.last_exit_code = snapshot.last_exit_code;
+        self.health_status = snapshot.health_status;
+    }
 }
 
 /// Information about a command
@@ -854,6 +1059,7 @@ mod selection_tests {
             slug: slug.to_string(),
             app: app.to_string(),
             path: format!("/w/{slug}"),
+            repo_apps: None,
         }
     }
 
@@ -897,5 +1103,124 @@ mod selection_tests {
         let names: Vec<_> = state.projects.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["a", "b"]);
         assert_eq!(at(&state), ("b".to_string(), 1));
+    }
+
+    fn key(project: &str, app: &str) -> AppKey {
+        AppKey::new(project, app)
+    }
+
+    /// The selected worktree row vanishes (its process stopped): the
+    /// selection goes to the same app of the configured project, not to
+    /// whatever app now sits at the old position.
+    #[test]
+    fn a_vanished_worktree_row_selects_its_configured_app() {
+        let (mut state, _dir) = state();
+        state.sync_worktree_projects(&[tracked("a", "feat", "a2")]);
+        assert!(state.select_app(&key("a@feat", "a2")));
+
+        assert!(state.sync_worktree_projects(&[]));
+        assert_eq!(state.selected_key(), Some(key("a", "a2")));
+    }
+
+    /// An app removed from the config: its project's neighbour is selected.
+    #[test]
+    fn a_removed_app_selects_its_neighbour_in_the_same_project() {
+        let (mut state, _dir) = state();
+        assert!(state.select_app(&key("b", "b2")));
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b1", app())
+            .build();
+        state.refresh_from_config(&config).unwrap();
+        assert_eq!(state.selected_key(), Some(key("b", "b1")));
+    }
+
+    /// A config save no longer drops the worktree rows until the next poll
+    /// (the selection on one jumped to another app meanwhile).
+    #[test]
+    fn config_refresh_keeps_worktree_rows_and_their_selection() {
+        let (mut state, _dir) = state();
+        state.sync_worktree_projects(&[tracked("a", "feat", "a2")]);
+        assert!(state.select_app(&key("a@feat", "a2")));
+        let row = state
+            .projects
+            .iter_mut()
+            .find(|p| p.name == "a@feat")
+            .unwrap();
+        row.apps[1].restart_count = 3;
+
+        let app = || AppBuilder::new("nodejs", "/tmp").build();
+        let config = ConfigBuilder::new()
+            .with_app("a", "a1", app())
+            .with_app("a", "a2", app())
+            .with_app("b", "b1", app())
+            .with_app("b", "b2", app())
+            .build();
+        state.refresh_from_config(&config).unwrap();
+
+        let names: Vec<_> = state.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "a@feat", "b"]);
+        let selected = state.selected_app().unwrap();
+        assert_eq!(AppKey::of(selected), key("a@feat", "a2"));
+        assert_eq!(selected.restart_count, 3);
+        assert_eq!(selected.path.as_deref(), Some("/w/feat"));
+        // Still the same row for the poller: nothing changes.
+        assert!(!state.sync_worktree_projects(&[tracked("a", "feat", "a2")]));
+    }
+
+    /// A worktree row lists the apps of its repository only.
+    #[test]
+    fn worktree_rows_list_the_apps_of_their_repository() {
+        let (mut state, _dir) = state();
+        let mut instance = tracked("a", "feat", "a2");
+        instance.repo_apps = Some(vec!["a2".to_string()]);
+        state.sync_worktree_projects(&[instance]);
+        let row = state.projects.iter().find(|p| p.name == "a@feat").unwrap();
+        let apps: Vec<_> = row.apps.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(apps, vec!["a2"]);
+    }
+
+    #[test]
+    fn apps_in_repository_compares_common_dirs() {
+        use crate::worktrees::git::tests::{init_repo, run_git};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = init_repo(&dir.path().join("one"));
+        let other = init_repo(&dir.path().join("two"));
+        let feat = dir.path().join("feat");
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                feat.to_str().unwrap(),
+                "-b",
+                "feat",
+            ],
+        );
+        let at = |path: &std::path::Path| AppBuilder::new("nodejs", path.to_str().unwrap()).build();
+        let config = ConfigBuilder::new()
+            .with_app("p", "api", at(&repo))
+            .with_app("p", "web", at(&repo.join("apps/api")))
+            .with_app("p", "db", at(&other))
+            .with_app("p", "tmp", at(dir.path()))
+            .build();
+        let mut apps =
+            TrackedInstance::apps_in_repository(&config, "p", "api", feat.to_str().unwrap());
+        apps.sort();
+        assert_eq!(apps, vec!["api", "web"]);
+    }
+
+    /// A pending action is for the app it was asked for.
+    #[test]
+    fn requests_name_the_app_they_were_made_for() {
+        let (mut state, _dir) = state();
+        assert!(state.select_app(&key("a", "a1")));
+        state.set_stop_requested();
+        assert!(state.select_app(&key("b", "b1")));
+        assert_eq!(state.stop_requested, Some(key("a", "a1")));
     }
 }
