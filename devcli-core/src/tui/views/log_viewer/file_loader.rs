@@ -1,6 +1,4 @@
-use anyhow::Result;
 use ratatui::text::Span;
-use std::path::Path;
 use syntect::{highlighting::Theme, parsing::SyntaxSet};
 
 use super::json_formatter::JsonFormatter;
@@ -22,14 +20,6 @@ pub struct LogLine {
 pub struct FileLoader;
 
 impl FileLoader {
-    /// Loads the log file and processes it for display
-    pub fn load(path: &Path, syntax_set: &SyntaxSet, theme: &Theme) -> Result<Vec<LogLine>> {
-        // Bytes, decoded lossily: apps write whatever bytes they like, and one
-        // invalid UTF-8 sequence used to make the whole log fail to open.
-        let content_str = String::from_utf8_lossy(&std::fs::read(path)?).into_owned();
-        Ok(Self::parse_lines(&content_str, 1, syntax_set, theme))
-    }
-
     /// Parse `text` into display lines numbered from `first_line_number`.
     pub fn parse_lines(
         text: &str,
