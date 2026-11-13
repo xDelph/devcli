@@ -70,7 +70,7 @@ devcli start <app-names>... [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (overrides preference)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
 - `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `preprod` or `prod` (overrides the app's `default_stages` and the `default-stage` preference)
 - `--detached` - Leave the apps running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
@@ -191,7 +191,7 @@ devcli restart <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (defaults to the one it runs in)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci` (defaults to the one it runs in)
 - `--skip-deps` - Skip restarting dependencies
 - `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
@@ -235,7 +235,7 @@ devcli run <app-name> <command-variant> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`
 - `--skip-deps` - Skip dependencies
 
 **Examples**:
@@ -349,7 +349,7 @@ devcli logs <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`)
 - `-n, --lines <N>` - Number of trailing lines to show (default `200`)
 - `-f, --follow` - Follow the file and stream new lines (blocks)
 
@@ -460,7 +460,7 @@ devcli health-check <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`
 
 **Examples**:
 ```bash
@@ -822,7 +822,7 @@ devcli config list-commands [app-name] [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`)
 
 ---
 
@@ -945,7 +945,8 @@ devcli pref set <key> <value>
 
 **Available Keys**:
 - `default-env` - Default environment (`local`, `docker`, `orbstack`,
-  `docker-compose`, `k8s`, `ci`; default `local`)
+  `docker-compose`, `k8s`, `ci`; default `local`). The aliases `compose` and
+  `kubernetes` are accepted and saved as `docker-compose` and `k8s`.
 - `detached-mode` - `start`/`restart`/`run` return right away instead of
   staying attached (`true`, `false`; default `false`)
 - `auto-start-deps` - Auto-start dependencies (`true`, `false`; default `true`)

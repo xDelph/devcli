@@ -373,7 +373,7 @@ Define separate commands for different environments:
 - `docker`: Commands for Docker containers
 - `orbstack`: Docker commands run with the OrbStack context
 - `docker-compose` (alias `compose` on the command line): Docker Compose commands
-- `k8s`: Kubernetes commands
+- `k8s` (alias `kubernetes` on the command line): Kubernetes commands
 - `ci`: CI pipeline commands
 
 Set your preferred environment once, or override per command.

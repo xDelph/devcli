@@ -127,6 +127,38 @@ impl Environment {
             .collect::<Vec<_>>()
             .join(", ")
     }
+
+    /// Parse an environment name typed by a user (`--env`, `pref set
+    /// default-env`, `env add --context`): aliases (`compose`, `kubernetes`)
+    /// and any letter case are accepted; anything else is an error naming the
+    /// valid values, with a suggestion when the name is close to one.
+    ///
+    /// Callers keep [`Environment::as_str`] of the result, never the raw value:
+    /// an alias kept as typed reached code matching the canonical name only
+    /// (`compose` started without `--env-file`, under `…compose…` ids).
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        let name = value.trim().to_ascii_lowercase();
+        if let Some(env) = Self::from_string(&name) {
+            return Ok(env);
+        }
+        let mut names: Vec<&str> = Self::all().iter().map(|e| e.as_str()).collect();
+        names.extend(["compose", "kubernetes"]);
+        let hint = config_manager::utils::find_closest_match(&name, &names, 3)
+            .map(|n| format!(" Did you mean '{n}'?"))
+            .unwrap_or_default();
+        Err(format!(
+            "Unknown environment '{value}'. Must be one of: {} (aliases: compose, kubernetes).{hint}",
+            Self::all_names()
+        ))
+    }
+
+    /// The canonical name of `value` if it names an environment (aliases
+    /// included), else `value` unchanged.
+    pub fn canonical_name(value: &str) -> String {
+        Self::parse(value)
+            .map(|env| env.as_str().to_string())
+            .unwrap_or_else(|_| value.to_string())
+    }
 }
 
 // Top-level config structure

@@ -99,12 +99,19 @@ fn contract_app_paths(config: &mut Config) {
 }
 
 /// Load preferences.json via JsonLoader, or return defaults if missing.
+///
+/// `default_env` comes back under its canonical name: a file written by an
+/// older devcli can hold an alias (`"compose"`), which the commands would
+/// otherwise use as is.
 pub fn load_preferences(path: impl AsRef<Path>) -> Result<Preferences> {
     let loader = preferences_loader(path.as_ref());
     if !ConfigLoader::<Preferences>::exists(&loader) {
         return Ok(Preferences::default());
     }
-    ConfigLoader::<Preferences>::load(&loader).map_err(|err| anyhow::anyhow!("{err}"))
+    let mut prefs =
+        ConfigLoader::<Preferences>::load(&loader).map_err(|err| anyhow::anyhow!("{err}"))?;
+    prefs.default_env = crate::config::Environment::canonical_name(&prefs.default_env);
+    Ok(prefs)
 }
 
 /// Save preferences.json via JsonLoader.
@@ -702,6 +709,20 @@ mod tests {
         let loaded = manager.load().unwrap();
         assert!(loaded.projects.contains_key("infra"));
         assert_eq!(loaded.projects["infra"].apps["redis"].path, "/tmp/redis");
+    }
+
+    #[test]
+    fn preferences_with_an_environment_alias_load_canonical() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("preferences.json");
+        fs::write(&path, r#"{ "default_env": "compose" }"#).unwrap();
+        assert_eq!(
+            load_preferences(&path).unwrap().default_env,
+            "docker-compose"
+        );
+
+        fs::write(&path, r#"{ "default_env": "kubernetes" }"#).unwrap();
+        assert_eq!(load_preferences(&path).unwrap().default_env, "k8s");
     }
 
     #[test]

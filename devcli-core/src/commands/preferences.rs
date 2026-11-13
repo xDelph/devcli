@@ -18,21 +18,15 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
     // This prevents setting invalid preference keys
     match key.as_str() {
         "default-env" => {
-            // Validate that the value is a valid environment
+            // Stored under its canonical name: `compose` kept as typed was
+            // used as is by every later `start`.
             use crate::config::models::Environment;
-            if Environment::from_string(value.as_str()).is_none() {
-                anyhow::bail!(
-                    "Invalid value '{}' for default-env. Must be one of: {}.",
-                    value,
-                    Environment::all_names()
-                );
-            }
+            let env = Environment::parse(&value)
+                .map_err(|e| anyhow::anyhow!("Invalid value for default-env: {e}"))?;
+            let value = env.as_str().to_string();
 
-            // Value is valid - update the preference
             prefs.default_env = value.clone();
-            // Save the updated preferences to file
             save_preferences(&prefs)?;
-            // Confirm to the user
             println!("✓ Set default-env to '{}'", value);
         }
 
@@ -159,4 +153,25 @@ pub async fn pref_reset() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TempConfigDir;
+
+    #[tokio::test]
+    async fn default_env_is_stored_under_its_canonical_name() {
+        let _dir = TempConfigDir::new();
+        pref_set("default-env".into(), "compose".into())
+            .await
+            .unwrap();
+        assert_eq!(load_preferences().unwrap().default_env, "docker-compose");
+
+        let err = pref_set("default-env".into(), "dokcer".into())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Did you mean 'docker'?"), "{err}");
+    }
 }

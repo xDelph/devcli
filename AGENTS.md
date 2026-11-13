@@ -64,7 +64,10 @@ every command taking one, with a "did you mean" suggestion when a configured
 name is close.
 
 `--env` takes `local`, `docker`, `orbstack`, `docker-compose` (alias
-`compose`), `k8s` or `ci`. `--stage` takes `dev`, `qa`, `preprod` or `prod`.
+`compose`), `k8s` (alias `kubernetes`) or `ci`; an alias is replaced by the
+canonical name before anything runs (process ids, log files and JSON answers
+always carry the canonical name), and any other value is a usage error.
+`--stage` takes `dev`, `qa`, `preprod` or `prod`.
 
 ## Commands and JSON output
 

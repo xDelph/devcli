@@ -134,7 +134,13 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
         // Parse the name instead of matching a prefix: `proj_api_` is also a
         // prefix of app `api_worker`'s logs.
         match environment_from_log_name(&path, project, app) {
-            Some(env) if environment.is_none_or(|wanted| wanted == env) => {}
+            // Compared by canonical name: logs written by an older devcli
+            // started with `--env compose` are named `…_compose_…`.
+            Some(env)
+                if environment.is_none_or(|wanted| {
+                    crate::config::Environment::canonical_name(wanted)
+                        == crate::config::Environment::canonical_name(&env)
+                }) => {}
             _ => continue,
         }
         let modified = entry
