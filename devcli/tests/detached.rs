@@ -731,3 +731,37 @@ fn restart_with_env_leaves_the_other_environments_alone() {
     assert!(pid_alive(local));
     assert!(pid_in("orbstack").is_some_and(|pid| pid != orbstack));
 }
+
+/// The apps asked for start once their dependencies are ready, also when
+/// those form the last (here the only) wave of dependencies.
+#[test]
+fn apps_wait_for_their_last_wave_of_dependencies() {
+    let sb = Sandbox::new();
+    let ready = sb.path().join("ticker-ready");
+    let seen = sb.path().join("web-saw");
+    sb.edit_config(|config| {
+        let apps = &mut config["projects"]["smoke"]["apps"];
+        apps["ticker"]["commands"]["local"]["start"] = serde_json::json!(format!(
+            "sh -c 'sleep 2; touch {}; {TICKER}'",
+            ready.display()
+        ));
+        apps["ticker"]["health_check"] = serde_json::json!({
+            "type": "command",
+            "command": format!("test -f {}", ready.display()),
+            "timeout_secs": 1
+        });
+        apps["web"]["commands"]["local"]["start"] = serde_json::json!(format!(
+            "sh -c 'if [ -f {ready} ]; then echo ready; else echo early; fi > {seen}; {TICKER}'",
+            ready = ready.display(),
+            seen = seen.display()
+        ));
+    });
+
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || seen.exists()));
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap().trim(),
+        "ready",
+        "web started before its dependency was ready"
+    );
+}
