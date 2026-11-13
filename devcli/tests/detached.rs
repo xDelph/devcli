@@ -609,3 +609,86 @@ fn a_closed_pipe_is_not_a_panic() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
+
+impl Sandbox {
+    fn edit_config(&self, edit: impl FnOnce(&mut Value)) {
+        let path = self.path().join("config.json");
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        edit(&mut config);
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    }
+
+    /// Hold pm-daemon's singleton lock, as a running daemon does: a dead
+    /// entry with a restart policy then counts as about to be restarted,
+    /// while no daemon actually restarts anything.
+    fn pretend_daemon_runs(&self) -> std::fs::File {
+        use std::os::unix::io::AsRawFd;
+        let dir = self.path().join("processes");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(".daemon.lock"))
+            .unwrap();
+        // SAFETY: flock(2) on a descriptor we own.
+        let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(rc, 0, "a pm-daemon already holds the lock");
+        lock
+    }
+
+    /// `(app, environment, pid, running)` of every tracked process.
+    fn tracked(&self) -> Vec<(String, String, u32, bool)> {
+        let out = self.devcli(&["--json", "status"]);
+        let status = single_json(&out.stdout, &["--json", "status"]);
+        status["processes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| {
+                (
+                    p["app"].as_str().unwrap_or_default().to_string(),
+                    p["environment"].as_str().unwrap_or_default().to_string(),
+                    p["pid"].as_u64().unwrap_or_default() as u32,
+                    p["running"] == Value::Bool(true),
+                )
+            })
+            .collect()
+    }
+}
+
+fn kill_group(pid: u32) {
+    // SAFETY: kill(2) has no memory-safety preconditions. Apps run in a
+    // session (and process group) of their own.
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+}
+
+/// `stop` reaches a crashed app that pm-daemon is about to restart: it used
+/// to report it "not running" and the daemon brought it back.
+#[test]
+fn stop_reaches_a_crashed_app_awaiting_restart() {
+    let sb = Sandbox::new();
+    sb.edit_config(|config| {
+        config["projects"]["smoke"]["apps"]["ticker"]["restart_policy"] =
+            serde_json::json!({ "enabled": true, "initial_backoff_secs": 60 });
+    });
+    let _daemon = sb.pretend_daemon_runs();
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 1));
+    let pid = sb.running()[0].1;
+
+    kill_group(pid);
+    assert!(wait_for(Duration::from_secs(10), || !pid_alive(pid)));
+    assert_eq!(
+        sb.tracked().len(),
+        1,
+        "the crash awaiting restart is tracked"
+    );
+
+    let stopped = sb.json(&["stop", "ticker", "--project", "smoke"]);
+    assert_eq!(stopped["stopped"], 1, "stop: {stopped}");
+    assert_eq!(sb.tracked(), vec![], "the entry was left to pm-daemon");
+}
