@@ -765,3 +765,43 @@ fn apps_wait_for_their_last_wave_of_dependencies() {
         "web started before its dependency was ready"
     );
 }
+
+/// `run` tracks its process from the start, and Ctrl+C during its first
+/// seconds leaves the process running and tracked instead of killing devcli
+/// with the process left behind untracked.
+#[test]
+fn run_tracks_its_process_from_the_start() {
+    let sb = Sandbox::new();
+    let out = std::fs::File::create(sb.path().join("run.out")).unwrap();
+    let mut run = sb
+        .command(&["run", "ticker", "start", "--project", "smoke"])
+        .stdin(Stdio::null())
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
+        .spawn()
+        .expect("spawn run");
+    let output = || std::fs::read_to_string(sb.path().join("run.out")).unwrap_or_default();
+    // The app ticks every 0.1s: once it has, it must already be tracked (it
+    // used to be recorded 2s after the spawn).
+    assert!(
+        wait_for(Duration::from_secs(10), || sb.log_lines() >= 1),
+        "the app never ran: {}",
+        output()
+    );
+    assert!(
+        wait_for(Duration::from_millis(500), || sb.running().len() == 1),
+        "running but not tracked: {}",
+        output()
+    );
+
+    send_signal(&run, "-INT");
+    let status = wait_exit(&mut run, Duration::from_secs(10));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "run did not exit cleanly on Ctrl+C ({status:?}): {}",
+        output()
+    );
+    let running = sb.running();
+    assert_eq!(running.len(), 1, "the process left: {running:?}");
+    assert!(pid_alive(running[0].1));
+}
