@@ -97,10 +97,8 @@ impl LogViewerView {
             panels.push(SingleLogView::new(path, app_name, app_color)?);
         }
 
-        if panels.is_empty() {
-            // Should ideally not happen or handle empty state, but for now let's assume at least one path
-        }
-
+        // No panel: it opens on the log selector, and shows how to open one
+        // once that is closed.
         Ok(Self {
             panels,
             active_panel_idx: 0,
@@ -323,7 +321,12 @@ impl LogViewerView {
             return panel.handle_input(key);
         }
 
-        Ok(LogInputResult::Ignored)
+        // No panel: the keys of the hint shown then.
+        match key.code {
+            KeyCode::Char('n') => Ok(LogInputResult::RequestAddPanel),
+            KeyCode::Char('L') => Ok(LogInputResult::RequestSelectLog),
+            _ => Ok(LogInputResult::Ignored),
+        }
     }
 
     /// Add a new panel
@@ -496,5 +499,20 @@ mod tests {
             matches!(result, LogInputResult::Error(ref m) if m.contains("gone.log")),
             "{result:?}"
         );
+    }
+
+    /// With no panel (the selector closed), the hint's keys work.
+    #[test]
+    fn the_empty_viewer_opens_a_log_with_n_or_l() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut viewer = LogViewerView::new(vec![]).unwrap();
+        let press = |viewer: &mut LogViewerView, c| {
+            viewer
+                .handle_input(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .unwrap()
+        };
+        assert_eq!(press(&mut viewer, 'n'), LogInputResult::RequestAddPanel);
+        assert_eq!(press(&mut viewer, 'L'), LogInputResult::RequestSelectLog);
     }
 }

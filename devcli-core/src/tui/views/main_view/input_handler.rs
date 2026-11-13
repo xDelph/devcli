@@ -4,7 +4,7 @@
 use super::{ConfigField, ConfigForm, ConfigMode, MainTab, MainView, PanelFocus};
 use crate::tui::input::keybindings::KeyBindings;
 use crate::tui::input::{EditModeHandler, NavigationHandler};
-use crate::tui::state::AppState;
+use crate::tui::state::{AppKey, AppState};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -27,8 +27,7 @@ impl MainView {
         let in_edit_mode = self.active_tab == MainTab::Config
             && matches!(
                 self.config_mode,
-                ConfigMode::Add
-                    | ConfigMode::Edit
+                ConfigMode::Edit
                     | ConfigMode::AddCommand
                     | ConfigMode::EditCommand
                     | ConfigMode::AddEnvFile
@@ -272,25 +271,28 @@ impl NavigationHandler for MainView {
                     Ok(false)
                 }
             }
-            // Quick log view shortcut
+            // Quick log view shortcut: the running app's latest log, else
+            // the log viewer on its log selector.
             KeyCode::Char('l') => {
-                if let Some(app) = state.selected_app() {
-                    // Only open logs if app is running
-                    if app.status.is_running()
-                        && let Ok(log_files) =
-                            self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        && let Some(log_file) = log_files.first()
-                    {
-                        let prev = state.current_view.clone();
-                        state.view_history.push(prev);
-                        state.current_view = crate::tui::state::ViewType::LogViewer {
-                            log_paths: vec![log_file.path.clone()],
-                            active_index: 0,
-                        };
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
+                let Some(app) = state.selected_app() else {
+                    return Ok(false);
+                };
+                let latest = app
+                    .status
+                    .is_running()
+                    .then(|| {
+                        self.log_manager
+                            .list_logs_for_app(&app.project, &app.name)
+                            .ok()
+                    })
+                    .flatten()
+                    .and_then(|logs| logs.first().map(|log| log.path.clone()));
+                let prev = state.current_view.clone();
+                state.view_history.push(prev);
+                state.current_view = crate::tui::state::ViewType::LogViewer {
+                    log_paths: latest.into_iter().collect(),
+                };
+                Ok(true)
             }
             _ => Ok(false),
         }
@@ -456,10 +458,11 @@ impl NavigationHandler for MainView {
                     // Ensure we have a current project and app selected
                     if let (Some(curr_proj), Some(curr_app)) = (curr_proj, curr_app) {
                         // Lock will be released when function returns
+                        let (curr_proj, curr_app) = (curr_proj.to_string(), curr_app.to_string());
                         if let Err(e) =
-                            self.add_dependency(curr_proj, curr_app, &proj_name, &app_name)
+                            self.add_dependency(&curr_proj, &curr_app, &proj_name, &app_name)
                         {
-                            eprintln!("Error adding dependency: {}", e);
+                            Self::report(state, "Cannot add the dependency", e);
                         } else {
                             // Reset state and return to dependencies list
                             self.popup_scroll_manager.reset();
@@ -467,7 +470,7 @@ impl NavigationHandler for MainView {
 
                             // Reload state to reflect changes in UI
                             if let Err(e) = self.reload_state_from_config(state) {
-                                eprintln!("Error reloading state: {}", e);
+                                Self::report(state, "Cannot reload the config", e);
                             }
                         }
                     }
@@ -476,45 +479,12 @@ impl NavigationHandler for MainView {
             return Ok(true);
         }
 
+        // The forms (edit app/command, env file) never get here: their keys,
+        // Enter included, go to `handle_edit_mode_input`.
         if self.focus == PanelFocus::DetailPanel {
             match self.active_tab {
                 MainTab::Config => {
-                    if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
-                        if let Err(e) = self.save_config_form() {
-                            eprintln!("Error saving config: {}", e);
-                        }
-                        return Ok(true);
-                    } else if self.config_mode == ConfigMode::AddCommand {
-                        if let Some(app) = state.selected_app() {
-                            let project = app.project.clone();
-                            let app_name = app.name.clone();
-                            if let Err(e) = self.save_new_command(&project, &app_name) {
-                                eprintln!("Error saving command: {}", e);
-                            }
-                        }
-                        return Ok(true);
-                    } else if self.config_mode == ConfigMode::EditCommand {
-                        if let Some(app) = state.selected_app() {
-                            let project = app.project.clone();
-                            let app_name = app.name.clone();
-                            if let Err(e) = self.save_command_edit(&project, &app_name) {
-                                eprintln!("Error saving command: {}", e);
-                            }
-                        }
-                        return Ok(true);
-                    } else if self.config_mode == ConfigMode::AddEnvFile
-                        || self.config_mode == ConfigMode::EditEnvFile
-                    {
-                        if let Some(app) = state.selected_app() {
-                            let app_name = app.name.clone();
-                            if let Err(e) = self.save_env_file(&app_name) {
-                                eprintln!("Error saving env file: {}", e);
-                            }
-                        }
-                        return Ok(true);
-                    } else if self.config_mode == ConfigMode::View
-                        && self.focus == PanelFocus::DetailPanel
-                    {
+                    if self.config_mode == ConfigMode::View {
                         state.set_command_execution_requested(self.selected_config_command_idx);
                         return Ok(true);
                     }
@@ -531,7 +501,6 @@ impl NavigationHandler for MainView {
                             state.view_history.push(prev);
                             state.current_view = crate::tui::state::ViewType::LogViewer {
                                 log_paths: vec![log.path.clone()],
-                                active_index: 0,
                             };
                             return Ok(true);
                         }
@@ -572,7 +541,7 @@ impl NavigationHandler for MainView {
             let project = app.project.clone();
             let app_name = app.name.clone();
             if let Err(e) = self.load_command_into_form(&project, &app_name) {
-                eprintln!("Error loading command: {}", e);
+                Self::report(state, "Cannot edit the command", e);
             }
         }
         Ok(true)
@@ -582,9 +551,14 @@ impl NavigationHandler for MainView {
         if self.config_mode == ConfigMode::View
             && let Some(app) = state.selected_app()
         {
-            self.load_app_into_form(&app.project, &app.name, app);
-            self.config_mode = ConfigMode::Edit;
-            self.config_focused_field = ConfigField::ProjectName;
+            let (project, app_name) = (app.project.clone(), app.name.clone());
+            match self.load_app_into_form(&project, &app_name) {
+                Ok(()) => {
+                    self.config_mode = ConfigMode::Edit;
+                    self.config_focused_field = ConfigField::ProjectName;
+                }
+                Err(e) => Self::report(state, "Cannot edit the app", e),
+            }
         }
         Ok(true)
     }
@@ -609,11 +583,12 @@ impl NavigationHandler for MainView {
         if self.config_mode == ConfigMode::View
             && self.focus == PanelFocus::DetailPanel
             && let Some(app) = state.selected_app()
+            && let Some((env, command)) = self.get_selected_config_command(app)
         {
-            let project = app.project.clone();
-            let app_name = app.name.clone();
-            if let Err(e) = self.set_command_as_default(&project, &app_name) {
-                eprintln!("Error setting default command: {}", e);
+            let (project, app_name) = (app.project.clone(), app.name.clone());
+            let (env, command) = (env.to_string(), command.name.clone());
+            if let Err(e) = self.set_command_as_default(&project, &app_name, &env, &command) {
+                Self::report(state, "Cannot set the default command", e);
             }
         }
         Ok(true)
@@ -633,12 +608,15 @@ impl NavigationHandler for MainView {
                             cmd_info.name,
                             env.to_uppercase()
                         );
+                        self.delete_command_target = Some((env.to_string(), cmd_info.name.clone()));
+                        self.delete_target = Some(AppKey::of(app));
                         self.delete_confirm_type = DeleteType::Command;
                         self.config_mode = ConfigMode::ConfirmDelete;
                     }
                 } else {
                     // Delete the app
                     self.delete_confirm_message = format!("Delete app '{}'?", app.name);
+                    self.delete_target = Some(AppKey::of(app));
                     self.delete_confirm_type = DeleteType::App;
                     self.config_mode = ConfigMode::ConfirmDelete;
                 }
@@ -650,6 +628,7 @@ impl NavigationHandler for MainView {
                 .get(self.popup_scroll_manager.selected_dependency_idx)
         {
             self.delete_confirm_message = format!("Remove dependency '{}'?", dep_name);
+            self.delete_target = Some(AppKey::of(app));
             self.delete_confirm_type = DeleteType::Dependency;
             self.config_mode = ConfigMode::ConfirmDelete;
         }

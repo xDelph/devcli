@@ -14,20 +14,11 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
-    // If help overlay is visible, handle it first
-    // Any key except '?' closes the help overlay
+    // If help overlay is visible, handle it first: the scrolling keys
+    // scroll it, any other key closes it.
     if app.help_overlay.is_visible() {
-        match key.code {
-            KeyCode::Char('?') => {
-                app.help_overlay.toggle();
-            }
-            KeyCode::Esc | KeyCode::Enter => {
-                app.help_overlay.hide();
-            }
-            _ => {
-                // Any other key also closes help
-                app.help_overlay.hide();
-            }
+        if !scroll_help(app, key) {
+            app.help_overlay.hide();
         }
         return Ok(());
     }
@@ -37,8 +28,10 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
         return app.handle_popup_input(key);
     }
 
-    // If there's an error message, any key dismisses it
-    // This allows users to acknowledge and clear error messages
+    // If there's an error message, the next key dismisses it - and still
+    // does what it does (it is not swallowed: after "Path is required" the
+    // next character typed goes into the form). Errors the key itself causes
+    // are set after this, so they show.
     {
         let mut state = app
             .state
@@ -87,5 +80,47 @@ pub fn handle_key_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
         _ => {}
     }
 
+    Ok(())
+}
+
+/// Scroll the help overlay for a scrolling key. Returns whether it was one.
+fn scroll_help(app: &mut TuiApp, key: KeyEvent) -> bool {
+    let help = &mut app.help_overlay;
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => help.scroll_up(1),
+        KeyCode::Down | KeyCode::Char('j') => help.scroll_down(1),
+        KeyCode::PageUp => help.scroll_up(10),
+        KeyCode::PageDown => help.scroll_down(10),
+        KeyCode::Home | KeyCode::Char('g') => help.scroll_up(u16::MAX),
+        KeyCode::End | KeyCode::Char('G') => help.scroll_down(u16::MAX),
+        _ => return false,
+    }
+    true
+}
+
+/// A mouse-wheel step, as the Up/Down key it maps to.
+///
+/// It scrolls whatever is shown - the help overlay, a popup, the view - and
+/// nothing else: as a plain key press it used to close the help overlay and
+/// dismiss the error bar.
+pub fn handle_scroll_event(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+    if app.help_overlay.is_visible() {
+        scroll_help(app, key);
+        return Ok(());
+    }
+    if app.popup_manager.is_active() {
+        return app.handle_popup_input(key);
+    }
+    let current_view = {
+        let state = app
+            .state
+            .lock()
+            .map_err(|e| anyhow::anyhow!("State mutex poisoned: {}", e))?;
+        state.current_view.clone()
+    };
+    match current_view {
+        ViewType::Main => app.handle_main_view_input(key)?,
+        ViewType::LogViewer { .. } => app.handle_log_viewer_input(key)?,
+    };
     Ok(())
 }

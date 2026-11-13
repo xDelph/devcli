@@ -77,13 +77,13 @@ impl EditModeHandler for MainView {
                 Ok(true)
             }
             KeyCode::Up => {
-                if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+                if self.config_mode == ConfigMode::Edit {
                     self.move_form_field_up();
                 }
                 Ok(true)
             }
             KeyCode::Down => {
-                if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+                if self.config_mode == ConfigMode::Edit {
                     self.move_form_field_down();
                 }
                 Ok(true)
@@ -118,13 +118,18 @@ impl EditModeHandler for MainView {
 
     fn handle_edit_mode_enter(&mut self, state: &mut MutexGuard<AppState>) -> Result<bool> {
         match self.config_mode {
-            ConfigMode::Add | ConfigMode::Edit => {
-                if let Err(e) = self.save_config_form() {
-                    eprintln!("Error saving config: {}", e);
-                } else {
-                    // Reload state after saving
-                    if let Err(e) = self.reload_state_from_config(state) {
-                        eprintln!("Error reloading state: {}", e);
+            ConfigMode::Edit => {
+                // Errors (an incomplete form included) keep the form open,
+                // with the reason in the error bar.
+                match self.save_config_form() {
+                    Err(e) => MainView::report(state, "Cannot save the app", e),
+                    Ok(saved) => {
+                        let renamed = self.config_form.editing.as_ref() != Some(&saved);
+                        if let Err(e) = self.reload_state_from_config(state) {
+                            MainView::report(state, "Cannot reload the config", e);
+                        } else if renamed {
+                            state.select_app(&saved);
+                        }
                     }
                 }
                 Ok(true)
@@ -135,12 +140,12 @@ impl EditModeHandler for MainView {
                     let app_name = app.name.clone();
 
                     if let Err(e) = self.save_new_command(&project, &app_name) {
-                        eprintln!("Error saving command: {}", e);
+                        MainView::report(state, "Cannot add the command", e);
                         return Ok(true);
                     }
 
                     if let Err(e) = self.reload_state_from_config(state) {
-                        eprintln!("Error reloading state: {}", e);
+                        MainView::report(state, "Cannot reload the config", e);
                     }
                 }
                 Ok(true)
@@ -151,12 +156,12 @@ impl EditModeHandler for MainView {
                     let app_name = app.name.clone();
 
                     if let Err(e) = self.save_command_edit(&project, &app_name) {
-                        eprintln!("Error saving command: {}", e);
+                        MainView::report(state, "Cannot save the command", e);
                         return Ok(true);
                     }
 
                     if let Err(e) = self.reload_state_from_config(state) {
-                        eprintln!("Error reloading state: {}", e);
+                        MainView::report(state, "Cannot reload the config", e);
                     }
                 }
                 Ok(true)
@@ -166,12 +171,12 @@ impl EditModeHandler for MainView {
                     let app_name = app.name.clone();
 
                     if let Err(e) = self.save_env_file(&app_name) {
-                        eprintln!("Error saving env file: {}", e);
+                        MainView::report(state, "Cannot save the env file", e);
                         return Ok(true);
                     }
 
                     if let Err(e) = self.reload_state_from_config(state) {
-                        eprintln!("Error reloading state: {}", e);
+                        MainView::report(state, "Cannot reload the config", e);
                     }
                 }
                 Ok(true)
@@ -203,7 +208,7 @@ impl EditModeHandler for MainView {
                 ConfigField::EnvFilePath => ConfigField::EnvFileStage,
                 _ => ConfigField::EnvFileStage,
             };
-        } else if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+        } else if self.config_mode == ConfigMode::Edit {
             self.config_focused_field = match self.config_focused_field {
                 ConfigField::ProjectName => ConfigField::AppName,
                 ConfigField::AppName => ConfigField::AppType,
@@ -217,7 +222,7 @@ impl EditModeHandler for MainView {
     }
 
     fn move_form_field_up(&mut self) {
-        if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+        if self.config_mode == ConfigMode::Edit {
             self.config_focused_field = match self.config_focused_field {
                 ConfigField::ProjectName => ConfigField::DockerStartCmd,
                 ConfigField::AppName => ConfigField::ProjectName,
@@ -231,7 +236,7 @@ impl EditModeHandler for MainView {
     }
 
     fn move_form_field_down(&mut self) {
-        if matches!(self.config_mode, ConfigMode::Add | ConfigMode::Edit) {
+        if self.config_mode == ConfigMode::Edit {
             self.config_focused_field = match self.config_focused_field {
                 ConfigField::ProjectName => ConfigField::AppName,
                 ConfigField::AppName => ConfigField::AppType,
@@ -346,8 +351,28 @@ impl EditModeHandler for MainView {
         use crate::commands::env::remove_env_file;
         use crate::tui::views::main_view::DeleteType;
 
+        let previous_mode = match self.delete_confirm_type {
+            DeleteType::App | DeleteType::Command => ConfigMode::View,
+            DeleteType::Dependency => ConfigMode::EditDependencies,
+            DeleteType::EnvFile => ConfigMode::EditEnvFiles,
+        };
         match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y')
+                if self.delete_target.is_some() && self.delete_target != state.selected_key() =>
+            {
+                // The selection moved since the question was asked: the
+                // selected app is not the one the user agreed to delete from.
+                MainView::report(
+                    state,
+                    "Nothing deleted",
+                    "the selected app changed; ask again",
+                );
+                self.delete_target = None;
+                self.config_mode = previous_mode;
+                Ok(true)
+            }
             KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.delete_target = None;
                 // User confirmed deletion - perform the delete action
                 let previous_mode = match self.delete_confirm_type {
                     DeleteType::App => {
@@ -355,40 +380,39 @@ impl EditModeHandler for MainView {
                             let project = app.project.clone();
                             let app_name = app.name.clone();
                             if let Err(e) = self.delete_app(&project, &app_name) {
-                                eprintln!("Error deleting app: {}", e);
+                                MainView::report(state, "Cannot delete the app", e);
                             } else {
                                 // Reload state after deletion
                                 if let Err(e) = self.reload_state_from_config(state) {
-                                    eprintln!("Error reloading state: {}", e);
+                                    MainView::report(state, "Cannot reload the config", e);
                                 }
                             }
                         }
                         ConfigMode::View
                     }
                     DeleteType::Command => {
-                        if let Some(app) = state.selected_app() {
+                        if let Some(app) = state.selected_app()
+                            && let Some((env, cmd_name)) = self.delete_command_target.take()
+                        {
                             let project = app.project.clone();
                             let app_name = app.name.clone();
-                            if let Some((env, cmd_info)) = self.get_selected_config_command(app) {
-                                let cmd_name = cmd_info.name.clone();
-                                if let Err(e) =
-                                    self.delete_command(&project, &app_name, env, &cmd_name)
+                            if let Err(e) =
+                                self.delete_command(&project, &app_name, &env, &cmd_name)
+                            {
+                                MainView::report(state, "Cannot delete the command", e);
+                            } else {
+                                // Adjust selection if needed
+                                let total_commands =
+                                    crate::tui::views::MainView::count_total_commands(app);
+                                if self.selected_config_command_idx
+                                    >= total_commands.saturating_sub(1)
                                 {
-                                    eprintln!("Error deleting command: {}", e);
-                                } else {
-                                    // Adjust selection if needed
-                                    let total_commands =
-                                        crate::tui::views::MainView::count_total_commands(app);
-                                    if self.selected_config_command_idx
-                                        >= total_commands.saturating_sub(1)
-                                    {
-                                        self.selected_config_command_idx =
-                                            total_commands.saturating_sub(2);
-                                    }
-                                    // Reload state after deletion
-                                    if let Err(e) = self.reload_state_from_config(state) {
-                                        eprintln!("Error reloading state: {}", e);
-                                    }
+                                    self.selected_config_command_idx =
+                                        total_commands.saturating_sub(2);
+                                }
+                                // Reload state after deletion
+                                if let Err(e) = self.reload_state_from_config(state) {
+                                    MainView::report(state, "Cannot reload the config", e);
                                 }
                             }
                         }
@@ -403,11 +427,11 @@ impl EditModeHandler for MainView {
                                 &app_name,
                                 self.popup_scroll_manager.selected_dependency_idx,
                             ) {
-                                eprintln!("Error removing dependency: {}", e);
+                                MainView::report(state, "Cannot remove the dependency", e);
                             } else {
                                 // Reload state after deletion
                                 if let Err(e) = self.reload_state_from_config(state) {
-                                    eprintln!("Error reloading state: {}", e);
+                                    MainView::report(state, "Cannot reload the config", e);
                                 }
                             }
                         }
@@ -450,7 +474,7 @@ impl EditModeHandler for MainView {
                                     }
                                     // Reload state after deletion
                                     if let Err(e) = self.reload_state_from_config(state) {
-                                        eprintln!("Error reloading state: {}", e);
+                                        MainView::report(state, "Cannot reload the config", e);
                                     }
                                 }
                             }
@@ -463,16 +487,14 @@ impl EditModeHandler for MainView {
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 // User cancelled - return to previous mode
-                let previous_mode = match self.delete_confirm_type {
-                    DeleteType::App => ConfigMode::View,
-                    DeleteType::Command => ConfigMode::View,
-                    DeleteType::Dependency => ConfigMode::EditDependencies,
-                    DeleteType::EnvFile => ConfigMode::EditEnvFiles,
-                };
+                self.delete_target = None;
+                self.delete_command_target = None;
                 self.config_mode = previous_mode;
                 Ok(true)
             }
-            _ => Ok(false),
+            // A modal question: every other key is consumed (`q` used to
+            // quit and `?` to open the help under it).
+            _ => Ok(true),
         }
     }
 }

@@ -565,22 +565,38 @@ devcli ui
 ```
 
 **Features**:
-- Status, Commands and Logs tabs
+- Status and Config tabs, next to the list of projects and apps (git
+  worktree instances included)
 - Start, stop and restart apps, run their commands
-- Real-time log streaming, with search
+- Edit an app's commands, dependencies and env files
+- Log viewer: real-time streaming, up to 4 logs side by side, search, JSON
+  lines pretty-printed
 - ANSI color support
 
 **Keyboard Shortcuts** (press `?` in the TUI for the full list):
-- `↑/↓` or `k/j` - Move selection
-- `Tab` - Switch panel focus
-- `1` / `2` / `3` - Status, Commands, Logs tab
-- `Enter` - Start (Status tab), run (Commands tab), open log viewer (Logs tab)
-- `s` / `r` - Stop / restart the selected app
+- `q` or `Ctrl+C` - Quit (`q` is text while typing in a form or a search)
+- `?` - Help overlay (scroll it with `↑/↓`, `PgUp/PgDn`)
+- `Esc` - Close a popup / go back
+- `1` / `2` - Status tab / Config tab; `Tab` - next tab
+- `←` / `→` - Focus the app list / the detail panel
+- `↑/↓` or `k/j` - Move in the focused panel (`Shift+↑/↓`: by 10)
 - `Space` - Expand/collapse a project
-- In the log viewer: `PgUp/PgDn`, `Home/End`, `g/G`, `/` search, `n/N` next/previous match
-- `?` - Help overlay
-- `Esc` - Back / close
-- `q` or `Ctrl+C` - Quit
+- `l` - Open the running app's latest log, else pick a log
+- Status tab: `s` start (choose the environment) / stop, `r` restart,
+  `Enter` open the selected log
+- Config tab (detail panel): `Enter` run the selected command, `a` add a
+  command, `e` edit it, `s` make it the default, `d` delete it; `E` edit
+  the app, `D` its dependencies, `f` its env files; `d` in the app list
+  deletes the app
+- Forms: `Tab` next field, `Enter` save, `Esc` cancel; `y`/`n` to confirm a
+  deletion
+- Command popup: `←/→` environment, `Enter` confirm / close, `↑/↓` scroll,
+  `Esc` close
+- Log viewer: `↑/↓`, `PgUp/PgDn`, `g/G` (`Home/End`); `/` search (type,
+  `Enter` keeps it, `Esc` cancels), then `n`/`N` next/previous match and
+  `Esc` clears it; `n` (no search) adds a panel, `L` shows another log in
+  the panel, `Tab` next panel, `w` closes it, `J` JSON panel, `Esc` back
+- The mouse wheel scrolls
 
 ---
 
