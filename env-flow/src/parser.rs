@@ -90,15 +90,19 @@ pub fn parse(content: &str, path: &Path, strict: bool) -> Result<ParsedFile> {
                         // No closing quote anywhere: do not swallow the rest of
                         // the file, read this line as a plain value.
                         malformed(line_number, format!("unterminated {quote} quote"))?;
-                        let value = strip_inline_comment(&rest[1..]).trim_end().to_string();
-                        (value, quote == '"')
+                        let value = strip_inline_comment(&rest[1..]).trim_end();
+                        if quote == '"' {
+                            (escape_unquoted(value), true)
+                        } else {
+                            (value.to_string(), false)
+                        }
                     }
                 }
             }
             _ => {
                 // Unquoted: strip inline comment (only ` #` counts as a marker)
                 let value = strip_inline_comment(rest);
-                (value.trim_end().to_string(), true)
+                (escape_unquoted(value.trim_end()), true)
             }
         };
 
@@ -162,7 +166,31 @@ fn closing_quote(body: &str, quote: char) -> Option<usize> {
     None
 }
 
+/// Write the text of an unquoted value in the interpolator's source form,
+/// where a backslash only ever starts `\\` (a backslash) or `\$` (a dollar).
+///
+/// Unquoted values have no escapes but `\$`: every other backslash is
+/// literal, so it is doubled here and comes out of the interpolator as typed.
+fn escape_unquoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() != Some(&'$') {
+            out.push_str("\\\\");
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Process `\n`, `\t`, `\r`, `\\`, `\"` escape sequences inside double-quoted strings.
+///
+/// The result is the interpolator's source form: `\\` and `\$` are kept
+/// escaped and only resolved after interpolation. Unescaping `\\` here made
+/// `"a\\${HOME}"` reach the interpolator as `a\${HOME}`, which it read as an
+/// escaped dollar: the literal `a${HOME}` instead of a backslash and the
+/// expanded value.
 fn process_double_quote_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -172,7 +200,7 @@ fn process_double_quote_escapes(s: &str) -> String {
                 Some('n') => out.push('\n'),
                 Some('t') => out.push('\t'),
                 Some('r') => out.push('\r'),
-                Some('\\') => out.push('\\'),
+                Some('\\') => out.push_str("\\\\"),
                 Some('"') => out.push('"'),
                 // Keep `\$` escaped: the interpolator turns it into a literal `$`.
                 // Unescaping here made `"\${X}"` expand like `"${X}"`.
