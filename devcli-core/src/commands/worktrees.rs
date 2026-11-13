@@ -5,7 +5,7 @@ use crate::config::load_config;
 use crate::process_manager_support::state_store;
 use crate::utils::path::expand_path;
 use crate::worktrees::git::{self, Checkout};
-use crate::worktrees::registry::Registry;
+use crate::worktrees::registry::{self, Registry};
 use crate::worktrees::PORT_STRIDE;
 use crate::Result;
 use serde_json::{json, Value};
@@ -79,11 +79,17 @@ pub async fn worktrees_command(args: WorktreesArgs) -> Result<()> {
             .filter(|w| w.is_usable() && w.root != home.root)
             .collect();
         // Listing does not hand out slots: those shown are what `start` gives.
-        let slots = Registry::open().peek(common_dir, &usable)?;
+        let assignment =
+            Registry::open().peek(common_dir, &usable, &mut registry::running_from())?;
+        let slots = &assignment.live;
 
         let instances = |root: &PathBuf, slug: Option<&str>| -> Vec<Value> {
             apps.iter()
-                .filter(|a| root.join(&a.relative).is_dir())
+                // A worktree that is gone only lists what still runs there.
+                .filter(|a| {
+                    root.join(&a.relative).is_dir()
+                        || slug.is_some_and(|s| running(&format!("{}@{s}", a.project), &a.app))
+                })
                 .map(|a| {
                     let (project, name) = match slug {
                         Some(s) => (format!("{}@{s}", a.project), format!("{}@{s}", a.app)),
@@ -112,7 +118,7 @@ pub async fn worktrees_command(args: WorktreesArgs) -> Result<()> {
             "locked": home_worktree.is_some_and(|w| w.locked),
             "apps": instances(&home.root, None),
         })];
-        for (worktree, slot) in usable.iter().zip(&slots) {
+        for (worktree, slot) in usable.iter().zip(slots) {
             entries.push(json!({
                 "slug": slot.slug,
                 "index": slot.index,
@@ -126,23 +132,46 @@ pub async fn worktrees_command(args: WorktreesArgs) -> Result<()> {
                 "apps": instances(&worktree.root, Some(&slot.slug)),
             }));
         }
-        // Deleted without `git worktree remove`: git still lists them until
-        // `git worktree prune`; devcli never prunes on the user's behalf.
-        for worktree in worktrees
+        // Deleted (or moved) without `git worktree remove`: git still lists
+        // them until `git worktree prune`; devcli never prunes on the user's
+        // behalf. One an app still runs from keeps its slot and its name.
+        let stale = worktrees
             .iter()
             .filter(|w| !w.bare && w.root != home.root && !w.is_usable())
-        {
+            .map(|w| {
+                (
+                    w.root.clone(),
+                    w.admin_name.clone(),
+                    w.branch.clone(),
+                    w.locked,
+                )
+            });
+        let unlisted = assignment
+            .held
+            .iter()
+            .filter(|s| !worktrees.iter().any(|w| w.root == s.root))
+            .map(|s| (s.root.clone(), None, None, false));
+        for (root, admin_name, branch, locked) in stale.chain(unlisted) {
+            let held = assignment.held.iter().find(|s| s.root == root);
+            let slug = match (held, &admin_name) {
+                (Some(slot), _) => Some(slot.slug.clone()),
+                (None, Some(name)) => Some(registry::sanitize_slug(name)),
+                (None, None) => None,
+            };
             entries.push(json!({
-                "slug": worktree.admin_name,
-                "index": Value::Null,
-                "port_offset": Value::Null,
-                "path": worktree.root,
-                "branch": worktree.branch,
+                "slug": slug,
+                "index": held.map(|s| s.index),
+                "port_offset": held.map(|s| s.index * PORT_STRIDE),
+                "path": root,
+                "branch": branch,
                 "configured": false,
                 "current": false,
                 "stale": true,
-                "locked": worktree.locked,
-                "apps": [],
+                "locked": locked,
+                "apps": match held {
+                    Some(slot) => instances(&root, Some(&slot.slug)),
+                    None => Vec::new(),
+                },
             }));
         }
 

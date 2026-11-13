@@ -306,7 +306,7 @@ fn container_env_file_contents(vars: &EnvVars, environment: &str) -> String {
 }
 
 /// Write `contents` to `path` readable by the owner only, in a 0700 `dir`.
-fn write_private(dir: &Path, path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_private(dir: &Path, path: &Path, contents: &str) -> Result<()> {
     use std::io::Write;
 
     fs::create_dir_all(dir)?;

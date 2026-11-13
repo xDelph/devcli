@@ -58,6 +58,17 @@ pub fn sanitize_slug(raw: &str) -> String {
     }
 }
 
+/// The slots of one repository: those of the worktrees apps can run from,
+/// and those kept for processes still running from a worktree that is gone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Assignment {
+    /// One per worktree of `live`, in the same order.
+    pub live: Vec<Slot>,
+    /// Worktrees moved (`mv`) or deleted while an app still runs from them:
+    /// still nameable (`api@slug`) and their index is not handed out again.
+    pub held: Vec<Slot>,
+}
+
 /// Release the slots of worktrees that are gone, then give every worktree of
 /// `live` its slot, allocating one for new worktrees.
 ///
@@ -65,12 +76,27 @@ pub fn sanitize_slug(raw: &str) -> String {
 /// directory is still a checkout: not merely because a caller did not list
 /// it, since another devcli may have listed the worktrees just before a
 /// sub-agent created a new one. A directory that is no longer a checkout, or
-/// is gone (with its repository, possibly), releases its slot.
-fn allocate(table: &mut Table, common_dir: &Path, live: &[&Worktree]) -> Vec<Slot> {
+/// is gone (with its repository, possibly), releases its slot - unless
+/// `held` says a tracked process still runs from it: a worktree moved with
+/// `mv` keeps its apps running, on the ports of its slot.
+fn allocate(
+    table: &mut Table,
+    common_dir: &Path,
+    live: &[&Worktree],
+    held: &mut dyn FnMut(&Path) -> bool,
+) -> Assignment {
     table.worktrees.retain(|slot| {
         (slot.common_dir == common_dir && live.iter().any(|w| w.root == slot.root))
             || slot.root.join(".git").exists()
+            || held(&slot.root)
     });
+    let kept: Vec<Slot> = table
+        .worktrees
+        .iter()
+        .filter(|s| s.common_dir == common_dir && !live.iter().any(|w| w.root == s.root))
+        .filter(|s| held(&s.root))
+        .cloned()
+        .collect();
 
     let mut slots = Vec::new();
     for worktree in live {
@@ -115,7 +141,40 @@ fn allocate(table: &mut Table, common_dir: &Path, live: &[&Worktree]) -> Vec<Slo
         table.worktrees.push(slot.clone());
         slots.push(slot);
     }
-    slots
+    Assignment {
+        live: slots,
+        held: kept,
+    }
+}
+
+/// Whether a tracked process still runs from the worktree at `root`: the
+/// default `held` of [`Registry::assign`]. The process state is only read
+/// when a slot would otherwise be released, and never created.
+pub fn running_from() -> impl FnMut(&Path) -> bool {
+    let mut roots: Option<Vec<PathBuf>> = None;
+    move |root: &Path| {
+        let roots = roots.get_or_insert_with(|| {
+            let dir = crate::config::loader::config_home().join("processes");
+            if !dir.is_dir() {
+                return Vec::new();
+            }
+            let Ok(store) = process_manager::StateStore::new(dir) else {
+                return Vec::new();
+            };
+            store
+                .list()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| store.is_running(p))
+                .filter_map(|p| {
+                    p.metadata
+                        .get(super::meta::WORKTREE_ROOT)
+                        .map(PathBuf::from)
+                })
+                .collect()
+        });
+        roots.iter().any(|r| r == root)
+    }
 }
 
 /// The name a worktree asks for: git's admin directory name (unique within
@@ -154,7 +213,12 @@ impl Registry {
     /// and index can be reused. Not merely when it is missing from `live`:
     /// another devcli may have listed the worktrees a moment earlier, before
     /// a sub-agent created the one it is now starting apps in.
-    pub fn assign(&self, common_dir: &Path, live: &[&Worktree]) -> Result<Vec<Slot>> {
+    pub fn assign(
+        &self,
+        common_dir: &Path,
+        live: &[&Worktree],
+        held: &mut dyn FnMut(&Path) -> bool,
+    ) -> Result<Assignment> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -167,7 +231,7 @@ impl Registry {
 
         let mut table = self.load()?;
         let before = table.worktrees.clone();
-        let slots = allocate(&mut table, common_dir, live);
+        let slots = allocate(&mut table, common_dir, live, held);
         if table.worktrees != before {
             let json = serde_json::to_vec_pretty(&table)?;
             config_manager::utils::fs::write_atomic(&self.path, &json)?;
@@ -180,9 +244,14 @@ impl Registry {
     /// or writing anything: for commands that only look (`status`,
     /// `devcli worktrees`), which must work with a read-only devcli directory
     /// and must not hand out slots just by looking.
-    pub fn peek(&self, common_dir: &Path, live: &[&Worktree]) -> Result<Vec<Slot>> {
+    pub fn peek(
+        &self,
+        common_dir: &Path,
+        live: &[&Worktree],
+        held: &mut dyn FnMut(&Path) -> bool,
+    ) -> Result<Assignment> {
         let mut table = self.load()?;
-        Ok(allocate(&mut table, common_dir, live))
+        Ok(allocate(&mut table, common_dir, live, held))
     }
 
     fn load(&self) -> Result<Table> {
@@ -233,25 +302,37 @@ mod tests {
         let a = worktree(&w.join("a"), Some("a"));
         let b = worktree(&w.join("b"), Some("b"));
 
-        let first = registry.assign(repo, &[&a, &b]).unwrap();
+        let first = registry
+            .assign(repo, &[&a, &b], &mut |_| false)
+            .unwrap()
+            .live;
         assert_eq!((first[0].slug.as_str(), first[0].index), ("a", 1));
         assert_eq!((first[1].slug.as_str(), first[1].index), ("b", 2));
 
         // A new worktree that sorts first does not shift the others.
         let z = worktree(&w.join("0"), Some("z"));
-        let second = registry.assign(repo, &[&z, &a, &b]).unwrap();
+        let second = registry
+            .assign(repo, &[&z, &a, &b], &mut |_| false)
+            .unwrap()
+            .live;
         assert_eq!(second[0].index, 3);
         assert_eq!(second[1], first[0]);
         assert_eq!(second[2], first[1]);
 
         // A caller that has not seen `z` yet does not take its slot away.
-        registry.assign(repo, &[&a, &b]).unwrap();
-        assert_eq!(registry.assign(repo, &[&z]).unwrap()[0], second[0]);
+        registry.assign(repo, &[&a, &b], &mut |_| false).unwrap();
+        assert_eq!(
+            registry.assign(repo, &[&z], &mut |_| false).unwrap().live[0],
+            second[0]
+        );
 
         // `a` is deleted: its index is released and reused.
         std::fs::remove_dir_all(&a.root).unwrap();
         let c = worktree(&w.join("c"), Some("c"));
-        let third = registry.assign(repo, &[&b, &z, &c]).unwrap();
+        let third = registry
+            .assign(repo, &[&b, &z, &c], &mut |_| false)
+            .unwrap()
+            .live;
         assert_eq!(third[0], first[1]);
         assert_eq!((third[2].slug.as_str(), third[2].index), ("c", 1));
     }
@@ -262,8 +343,14 @@ mod tests {
         let registry = Registry::new(&dir.path().join("devcli"));
         let a = worktree(&dir.path().join("one/w"), Some("w"));
         let b = worktree(&dir.path().join("two/w"), Some("w"));
-        let one = registry.assign(Path::new("/one/.git"), &[&a]).unwrap();
-        let two = registry.assign(Path::new("/two/.git"), &[&b]).unwrap();
+        let one = registry
+            .assign(Path::new("/one/.git"), &[&a], &mut |_| false)
+            .unwrap()
+            .live;
+        let two = registry
+            .assign(Path::new("/two/.git"), &[&b], &mut |_| false)
+            .unwrap()
+            .live;
         assert_eq!((one[0].index, two[0].index), (1, 1));
         assert_eq!(one[0].slug, two[0].slug);
     }
@@ -281,8 +368,9 @@ mod tests {
         let dashed = worktree(&w.join("v1-2"), Some("v1-2"));
         let linked = worktree(&w.join("y/feat"), Some("feat"));
         let slots = registry
-            .assign(repo, &[&main, &dotted, &dashed, &linked])
-            .unwrap();
+            .assign(repo, &[&main, &dotted, &dashed, &linked], &mut |_| false)
+            .unwrap()
+            .live;
         let slugs: Vec<_> = slots.iter().map(|s| s.slug.as_str()).collect();
         assert_eq!(slugs, vec!["feat", "v1-2", "v1-2-2", "feat-2"]);
     }
@@ -304,8 +392,9 @@ mod tests {
                         .collect();
                     let refs: Vec<&Worktree> = live.iter().collect();
                     Registry::new(&devcli)
-                        .assign(Path::new("/repo/.git"), &refs)
+                        .assign(Path::new("/repo/.git"), &refs, &mut |_| false)
                         .unwrap()
+                        .live
                 })
             })
             .collect();
@@ -327,10 +416,16 @@ mod tests {
         let registry = Registry::new(&devcli);
         let a = worktree(&dir.path().join("a"), Some("a"));
 
-        let peeked = registry.peek(Path::new("/repo/.git"), &[&a]).unwrap();
+        let peeked = registry
+            .peek(Path::new("/repo/.git"), &[&a], &mut |_| false)
+            .unwrap()
+            .live;
         assert!(!devcli.exists(), "peeking created the devcli directory");
         assert_eq!(
-            registry.assign(Path::new("/repo/.git"), &[&a]).unwrap(),
+            registry
+                .assign(Path::new("/repo/.git"), &[&a], &mut |_| false)
+                .unwrap()
+                .live,
             peeked
         );
     }
@@ -341,11 +436,44 @@ mod tests {
         let registry = Registry::new(&dir.path().join("devcli"));
         let repo = Path::new("/repo/.git");
         let a = worktree(&dir.path().join("a"), Some("a"));
-        assert_eq!(registry.assign(repo, &[&a]).unwrap()[0].index, 1);
+        assert_eq!(
+            registry.assign(repo, &[&a], &mut |_| false).unwrap().live[0].index,
+            1
+        );
 
         // `git worktree remove --force` kept the directory, without `.git`.
         std::fs::remove_file(a.root.join(".git")).unwrap();
         let b = worktree(&dir.path().join("b"), Some("b"));
-        assert_eq!(registry.assign(repo, &[&b]).unwrap()[0].index, 1);
+        assert_eq!(
+            registry.assign(repo, &[&b], &mut |_| false).unwrap().live[0].index,
+            1
+        );
+    }
+
+    #[test]
+    fn a_worktree_an_app_still_runs_from_keeps_its_slot() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = Registry::new(&dir.path().join("devcli"));
+        let repo = Path::new("/repo/.git");
+        let a = worktree(&dir.path().join("a"), Some("a"));
+        let slot = registry.assign(repo, &[&a], &mut |_| false).unwrap().live[0].clone();
+
+        // Moved with `mv` while its api runs: git lists the old path as
+        // prunable, so callers no longer pass it as live.
+        std::fs::rename(&a.root, dir.path().join("moved")).unwrap();
+        let running = a.root.clone();
+        let mut held = |root: &Path| root == running;
+        let b = worktree(&dir.path().join("b"), Some("b"));
+        let now = registry.assign(repo, &[&b], &mut held).unwrap();
+        assert_eq!(now.held, vec![slot.clone()], "still nameable");
+        assert_eq!(now.live[0].index, 2, "its port slot is not handed out");
+        assert_eq!(registry.peek(repo, &[&b], &mut held).unwrap(), now);
+
+        // Once nothing runs from it, the slot goes.
+        let after = registry.assign(repo, &[&b], &mut |_| false).unwrap();
+        assert!(after.held.is_empty());
+        let c = worktree(&dir.path().join("c"), Some("c"));
+        let reused = registry.assign(repo, &[&b, &c], &mut |_| false).unwrap();
+        assert_eq!(reused.live[1].index, 1);
     }
 }

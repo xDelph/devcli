@@ -65,8 +65,16 @@ pub enum Selector {
 /// How a name without suffix is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// From the command line: the current worktree wins.
+    /// From the command line, to start an app: the current worktree wins,
+    /// and an app that does not exist on its branch runs from the configured
+    /// checkout (with a note).
     FromCwd,
+    /// From the command line, to act on an instance (`stop`, `restart`,
+    /// `logs`, `status`, `health-check`): the current worktree wins, and an
+    /// app that does not exist on its branch is an error. Falling back to the
+    /// configured checkout there would make `stop api` run in a worktree stop
+    /// the main checkout's api.
+    FromCwdStrict,
     /// From devcli itself (dependencies, restarts, the TUI): a name without
     /// suffix is the configured checkout, whatever the current directory.
     Exact,
@@ -148,20 +156,21 @@ fn resolve_all_with(
     mode: Mode,
     persist: bool,
 ) -> Result<Vec<ResolvedApp>> {
-    // A name that really contains `@` in the config is taken as is.
-    let (project, project_sel) = match project {
-        Some(p) if p.contains('@') && !config.projects.contains_key(p) => {
-            let (p, s) = split(p);
-            (Some(p), s)
-        }
-        other => (other, Selector::Auto),
-    };
-    let (app, app_sel) = if app_name.contains('@') && !app_named(config, app_name, project) {
-        split(app_name)
-    } else {
-        (app_name, Selector::Auto)
-    };
-    let selector = match (combine(app_sel, project_sel)?, mode) {
+    let cwd = std::env::current_dir().ok();
+    resolve_all_at(config, app_name, project, mode, persist, cwd.as_deref())
+}
+
+/// [`resolve_all_with`] as if run from `cwd`.
+fn resolve_all_at(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+    persist: bool,
+    cwd: Option<&Path>,
+) -> Result<Vec<ResolvedApp>> {
+    let (app, project, selector) = parse(config, app_name, project)?;
+    let selector = match (selector, mode) {
         (Selector::Auto, Mode::Exact) => Selector::Base,
         (s, _) => s,
     };
@@ -169,7 +178,7 @@ fn resolve_all_with(
     let base = resolve_app(config, app, project)?;
     match selector {
         Selector::Base => Ok(vec![base]),
-        Selector::Auto => Ok(vec![current(base, persist)?]),
+        Selector::Auto => Ok(vec![current(base, persist, mode, cwd)?]),
         Selector::Slug(slug) => {
             let Some(view) = View::of(&base, persist)? else {
                 anyhow::bail!(
@@ -177,22 +186,29 @@ fn resolve_all_with(
                     base.app_name
                 );
             };
-            let Some((worktree, slot)) = view.find(&slug) else {
+            let Some((worktree, slot, gone)) = view.find(&slug) else {
                 anyhow::bail!(
                     "Project '{}' has no worktree '{slug}' (worktrees: {})",
                     base.project,
                     view.slugs()
                 );
             };
-            Ok(vec![derive(&base, &view.home, worktree, slot)?])
+            Ok(vec![derive(&base, &view.home, worktree, slot, !gone)?])
         }
         Selector::All => {
             let mut all = Vec::new();
             if let Some(view) = View::of(&base, persist)? {
                 for (worktree, slot) in &view.slots {
                     // Apps added on one branch only exist in some worktrees.
-                    if let Ok(instance) = derive(&base, &view.home, worktree, slot) {
+                    if let Ok(instance) = derive(&base, &view.home, worktree, slot, true) {
                         all.push(instance);
+                    }
+                }
+                // What still runs from a worktree that is gone can be
+                // stopped or looked at, not started.
+                if !persist {
+                    for (worktree, slot) in &view.gone {
+                        all.extend(derive(&base, &view.home, worktree, slot, false));
                     }
                 }
             }
@@ -209,26 +225,202 @@ pub fn resolve(
     project: Option<&str>,
     mode: Mode,
 ) -> Result<ResolvedApp> {
-    let mut all = resolve_all(config, app_name, project, mode)?;
+    one(
+        resolve_all(config, app_name, project, mode)?,
+        app_name,
+        project,
+    )
+}
+
+/// [`resolve`] for commands that only look (`logs`, `status`,
+/// `health-check`, dependency lookups): worktree slots are computed, never
+/// recorded.
+pub fn resolve_readonly(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+    mode: Mode,
+) -> Result<ResolvedApp> {
+    one(
+        resolve_all_readonly(config, app_name, project, mode)?,
+        app_name,
+        project,
+    )
+}
+
+/// `(project@slug, app)` when the name selects a worktree by slug (`api@feat`
+/// or `--project proj@feat`), whether or not that worktree still exists: the
+/// logs of an instance outlive the worktree it ran from.
+pub fn slug_instance_name(
+    config: &Config,
+    app_name: &str,
+    project: Option<&str>,
+) -> Option<(String, String)> {
+    let Ok((app, project, Selector::Slug(slug))) = parse(config, app_name, project) else {
+        return None;
+    };
+    let base = resolve_app(config, app, project).ok()?;
+    Some((format!("{}@{slug}", base.project), base.app_name))
+}
+
+/// The worktrees `project@slug` designates, without recording slots.
+///
+/// Each repository numbers and names its own worktrees, so in a project
+/// whose apps live in several repositories, `feat` is looked up in each
+/// app's own repository: two unrelated worktrees both called `feat` are two
+/// roots, never one app's worktree taken for another's. Also returns every
+/// slug of those repositories, for an error naming them.
+pub(crate) fn slug_roots(
+    config: &Config,
+    project: &str,
+    slug: &str,
+) -> Result<(Vec<PathBuf>, Vec<String>)> {
+    let mut roots = Vec::new();
+    let mut slugs = Vec::new();
+    let mut seen = Vec::new();
+    let Some(p) = config.projects.get(project) else {
+        return Ok((roots, slugs));
+    };
+    for name in p.apps.keys() {
+        let base = resolve_app(config, name, Some(project))?;
+        let Some(view) = View::of(&base, false)? else {
+            continue;
+        };
+        if seen.contains(&view.home.common_dir) {
+            continue;
+        }
+        seen.push(view.home.common_dir.clone());
+        if let Some((worktree, _, _)) = view.find(slug)
+            && !roots.contains(&worktree.root)
+        {
+            roots.push(worktree.root.clone());
+        }
+        for (_, s) in view.slots.iter().chain(&view.gone) {
+            if !slugs.contains(&s.slug) {
+                slugs.push(s.slug.clone());
+            }
+        }
+    }
+    Ok((roots, slugs))
+}
+
+/// The apps of `project` that live in the repository of the worktree at
+/// `root`: those a row `project@slug` for that worktree can run. The others
+/// live in other repositories, whose worktree of the same name (if any) is
+/// unrelated. Works for a worktree that is gone, while git still lists it.
+pub fn apps_of_worktree(config: &Config, project: &str, root: &Path) -> Vec<String> {
+    let Some(p) = config.projects.get(project) else {
+        return Vec::new();
+    };
+    let here = git::checkout_of(root);
+    let mut apps: Vec<String> = p
+        .apps
+        .iter()
+        .filter(|(_, app)| {
+            let Some(home) = git::checkout_of(&expand_path(&app.path)) else {
+                return false;
+            };
+            match &here {
+                Some(here) => here.common_dir == home.common_dir,
+                None => git::list(&home.common_dir)
+                    .is_ok_and(|worktrees| worktrees.iter().any(|w| w.root == root)),
+            }
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    apps.sort();
+    apps
+}
+
+/// The app name, project and selector of `app_name` and `project`, their
+/// suffixes removed. A name that really contains `@` in the config is taken
+/// as is.
+fn parse<'a>(
+    config: &Config,
+    app_name: &'a str,
+    project: Option<&'a str>,
+) -> Result<(&'a str, Option<&'a str>, Selector)> {
+    let (project, project_sel) = match project {
+        Some(p) if p.contains('@') && !config.projects.contains_key(p) => {
+            let (p, s) = split(p);
+            (Some(p), s)
+        }
+        other => (other, Selector::Auto),
+    };
+    let (app, app_sel) = if app_name.contains('@') && !app_named(config, app_name, project) {
+        split(app_name)
+    } else {
+        (app_name, Selector::Auto)
+    };
+    Ok((app, project, combine(app_sel, project_sel)?))
+}
+
+fn one(mut all: Vec<ResolvedApp>, app_name: &str, project: Option<&str>) -> Result<ResolvedApp> {
     if all.len() != 1 || app_name.ends_with("@*") || project.is_some_and(|p| p.ends_with("@*")) {
-        anyhow::bail!("'{app_name}@*' designates several instances; name one worktree instead");
+        let name = match project {
+            Some(p) => format!("{app_name} --project {p}"),
+            None => app_name.to_string(),
+        };
+        anyhow::bail!("'{name}' designates several instances; name one worktree instead");
     }
     Ok(all.remove(0))
 }
 
+/// Whether `here` is a worktree of the superproject `home` is a submodule
+/// of (or a checkout of the submodule inside such a worktree), other than
+/// the superproject checkout holding `home`.
+///
+/// The submodule is a repository of its own: its worktrees are not the
+/// superproject's, so devcli has no instance of the app there.
+fn in_superproject_worktree(here: &Checkout, home: &Checkout) -> bool {
+    let Some(home_super) = git::superproject(&home.root).and_then(|r| git::checkout_of(&r)) else {
+        return false;
+    };
+    let here_super = git::superproject(&here.root).and_then(|r| git::checkout_of(&r));
+    std::iter::once(here.clone())
+        .chain(here_super)
+        .any(|c| c.common_dir == home_super.common_dir && c.root != home_super.root)
+}
+
 /// The instance of `base` for the current directory: its worktree when the
 /// command runs inside another worktree of the same repository.
-fn current(base: ResolvedApp, persist: bool) -> Result<ResolvedApp> {
-    let Ok(cwd) = std::env::current_dir() else {
+fn current(
+    base: ResolvedApp,
+    persist: bool,
+    mode: Mode,
+    cwd: Option<&Path>,
+) -> Result<ResolvedApp> {
+    let strict = mode == Mode::FromCwdStrict;
+    let Some(cwd) = cwd else {
         return Ok(base);
     };
-    let Some(here) = git::checkout_of(&cwd) else {
+    let Some(here) = git::checkout_of(cwd) else {
         return Ok(base);
     };
     let Some(home) = git::checkout_of(&expand_path(&base.app.path)) else {
         return Ok(base);
     };
     if here.root == home.root {
+        return Ok(base);
+    }
+    if here.common_dir != home.common_dir && in_superproject_worktree(&here, &home) {
+        let what = format!(
+            "'{}' lives in the git submodule {}: a worktree of its superproject, like {}, holds \
+             no instance of it",
+            base.app_name,
+            home.root.display(),
+            here.root.display()
+        );
+        if strict {
+            anyhow::bail!(
+                "{what}. Name the instance: {app}@ for the configured checkout, {app}@SLUG for a \
+                 worktree of the submodule.",
+                app = base.app_name
+            );
+        }
+        if crate::output::human(false) {
+            eprintln!("note: {what}; using the configured checkout");
+        }
         return Ok(base);
     }
     if here.common_dir != home.common_dir {
@@ -256,19 +448,29 @@ fn current(base: ResolvedApp, persist: bool) -> Result<ResolvedApp> {
         // A worktree of this repository that git does not list at this path:
         // moved with `mv`. Falling back to the configured checkout would make
         // `stop api` run here stop the main checkout's api.
+        let slug = view
+            .moved_to(&here.root)
+            .map_or("SLUG", |slot| slot.slug.as_str());
         anyhow::bail!(
             "{} is a worktree of the repository of project '{}' that git does not list at this path \
              (moved without `git worktree move`?). Run `git worktree repair` here, or name \
-             the instance: {app}@SLUG for a worktree, {app}@ for the configured checkout.",
+             the instance: {app}@{slug} for a worktree, {app}@ for the configured checkout.",
             here.root.display(),
             base.project,
             app = base.app_name
         );
     };
-    match derive(&base, &view.home, worktree, slot) {
+    match derive(&base, &view.home, worktree, slot, true) {
         Ok(instance) => Ok(instance),
+        // The app does not exist on this worktree's branch. `stop api` and
+        // the like must not then reach the main checkout's api.
+        Err(e) if strict => anyhow::bail!(
+            "{e}, the worktree this command runs in. Name the instance: {app}@ for the \
+             configured checkout, {app}@SLUG for another worktree.",
+            app = base.app_name
+        ),
         Err(e) => {
-            // The app does not exist on this worktree's branch.
+            // `start api` runs it from the configured checkout instead.
             tracing::warn!(error = %e, "Using the configured checkout");
             if crate::output::human(false) {
                 eprintln!("note: {e}; using the configured checkout");
@@ -282,6 +484,9 @@ fn current(base: ResolvedApp, persist: bool) -> Result<ResolvedApp> {
 struct View {
     home: Checkout,
     slots: Vec<(Worktree, Slot)>,
+    /// Worktrees moved or deleted while an app still runs from them: they
+    /// can be named (to stop it, read its logs), not started in.
+    gone: Vec<(Worktree, Slot)>,
 }
 
 impl View {
@@ -295,45 +500,77 @@ impl View {
             .filter(|w| w.is_usable() && w.root != home.root)
             .collect();
         let registry = Registry::open();
-        let slots = if persist {
-            registry.assign(&home.common_dir, &others)?
+        let mut held = super::registry::running_from();
+        let assignment = if persist {
+            registry.assign(&home.common_dir, &others, &mut held)?
         } else {
-            registry.peek(&home.common_dir, &others)?
+            registry.peek(&home.common_dir, &others, &mut held)?
         };
-        let slots = others.into_iter().cloned().zip(slots).collect();
-        Ok(Some(Self { home, slots }))
+        let slots = others.into_iter().cloned().zip(assignment.live).collect();
+        let gone = assignment
+            .held
+            .into_iter()
+            .map(|slot| {
+                // Git still lists a deleted or moved worktree (prunable)
+                // until `git worktree prune`.
+                let listed = worktrees.iter().find(|w| w.root == slot.root);
+                let worktree = Worktree {
+                    root: slot.root.clone(),
+                    admin_name: listed.and_then(|w| w.admin_name.clone()),
+                    branch: listed.and_then(|w| w.branch.clone()),
+                    bare: false,
+                    prunable: true,
+                    locked: listed.is_some_and(|w| w.locked),
+                };
+                (worktree, slot)
+            })
+            .collect();
+        Ok(Some(Self { home, slots, gone }))
     }
 
-    fn find(&self, slug: &str) -> Option<(&Worktree, &Slot)> {
-        self.slots
+    /// The worktree `slug` names, and whether it is gone.
+    fn find(&self, slug: &str) -> Option<(&Worktree, &Slot, bool)> {
+        let live = self.slots.iter().map(|(w, s)| (w, s, false));
+        let gone = self.gone.iter().map(|(w, s)| (w, s, true));
+        live.chain(gone).find(|(_, s, _)| s.slug == slug)
+    }
+
+    /// The slot of a worktree moved with `mv` to `root`, while an app still
+    /// runs from it: git keeps its admin directory under the same name.
+    fn moved_to(&self, root: &Path) -> Option<&Slot> {
+        let admin = git::admin_name_of(root)?;
+        self.gone
             .iter()
-            .find(|(_, s)| s.slug == slug)
-            .map(|(w, s)| (w, s))
+            .find(|(w, _)| w.admin_name.as_deref() == Some(admin.as_str()))
+            .map(|(_, s)| s)
     }
 
     fn slugs(&self) -> String {
-        if self.slots.is_empty() {
+        if self.slots.is_empty() && self.gone.is_empty() {
             return "none".to_string();
         }
         self.slots
             .iter()
+            .chain(&self.gone)
             .map(|(_, s)| s.slug.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     }
 }
 
-/// `base`, moved into `worktree`.
+/// `base`, moved into `worktree`. `require_dir`: the app's directory must
+/// exist there (always, but for a worktree that is gone).
 fn derive(
     base: &ResolvedApp,
     home: &Checkout,
     worktree: &Worktree,
     slot: &Slot,
+    require_dir: bool,
 ) -> Result<ResolvedApp> {
     let base_path = git::canonical(&expand_path(&base.app.path));
     let relative = base_path.strip_prefix(&home.root).unwrap_or(Path::new(""));
     let path = worktree.root.join(relative);
-    if !path.is_dir() {
+    if require_dir && !path.is_dir() {
         anyhow::bail!(
             "'{}' is not in worktree '{}' ({} does not exist)",
             base.app_name,
@@ -497,6 +734,129 @@ mod tests {
         // `@*` simply skips it.
         let all = resolve_all(&f.config, "api@*", None, Mode::Exact).unwrap();
         assert!(all.iter().all(|a| a.project != "proj@feat"));
+    }
+
+    /// `stop api` run in a worktree whose branch has no api used to stop the
+    /// main checkout's api; only `start api` falls back to it.
+    #[test]
+    fn an_app_missing_from_the_current_worktree_is_an_error_except_to_start_it() {
+        let f = fixture();
+        let here = Some(f.feat.as_path());
+        let found =
+            resolve_all_at(&f.config, "api", None, Mode::FromCwdStrict, false, here).unwrap();
+        assert_eq!(found[0].project, "proj@feat");
+
+        std::fs::remove_dir_all(f.feat.join("apps")).unwrap();
+        let err =
+            resolve_all_at(&f.config, "api", None, Mode::FromCwdStrict, false, here).unwrap_err();
+        let err = err.to_string();
+        assert!(err.contains("not in worktree 'feat'"), "{err}");
+        assert!(err.contains("api@ for the configured checkout"), "{err}");
+
+        let started = resolve_all_at(&f.config, "api", None, Mode::FromCwd, false, here).unwrap();
+        assert_eq!(started[0].project, "proj");
+        assert!(started[0].worktree.is_none());
+    }
+
+    #[test]
+    fn several_instances_are_named_as_given() {
+        let f = fixture();
+        let err = resolve(&f.config, "api@*", None, Mode::FromCwd).unwrap_err();
+        assert!(err.to_string().starts_with("'api@*' designates"), "{err}");
+        let err = resolve(&f.config, "api", Some("proj@*"), Mode::FromCwd).unwrap_err();
+        assert!(
+            err.to_string().starts_with("'api --project proj@*'"),
+            "{err}"
+        );
+    }
+
+    /// An app inside a submodule belongs to the submodule's repository: a
+    /// worktree of the superproject has no instance of it.
+    #[test]
+    fn a_superproject_worktree_is_not_a_worktree_of_its_submodules() {
+        let _env = crate::test_utils::TempConfigDir::new();
+        let dir = tempfile::TempDir::new().unwrap();
+        let sub = init_repo(&dir.path().join("s"));
+        let sup = init_repo(&dir.path().join("p"));
+        run_git(
+            &sup,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                sub.to_str().unwrap(),
+                "sub",
+            ],
+        );
+        run_git(&sup, &["commit", "-q", "-m", "sub"]);
+        run_git(&sup, &["worktree", "add", "-q", "../wt/feat", "-b", "feat"]);
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "projects": { "proj": { "apps": { "api": {
+                "type": "custom",
+                "path": sup.join("sub/apps/api"),
+                "commands": { "local": { "start": "true" } },
+                "defaults": { "local": "start" }
+            } } } }
+        }))
+        .unwrap();
+        let here = git::canonical(&dir.path().join("p/wt/feat"));
+
+        let err = resolve_all_at(
+            &config,
+            "api",
+            None,
+            Mode::FromCwdStrict,
+            false,
+            Some(&here),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("submodule"), "{err}");
+        let started =
+            resolve_all_at(&config, "api", None, Mode::FromCwd, false, Some(&here)).unwrap();
+        assert_eq!(started[0].project, "proj");
+    }
+
+    /// Each repository names its own worktrees: in a project spanning two,
+    /// `feat` is a worktree of each, and each app runs in its own.
+    #[test]
+    fn a_slug_is_looked_up_in_each_apps_own_repository() {
+        let _env = crate::test_utils::TempConfigDir::new();
+        let dir = tempfile::TempDir::new().unwrap();
+        let one = init_repo(&dir.path().join("one"));
+        let two = init_repo(&dir.path().join("two"));
+        for repo in [&one, &two] {
+            run_git(repo, &["worktree", "add", "-q", "../wt/feat", "-b", "feat"]);
+        }
+        let app = |path: PathBuf| {
+            serde_json::json!({
+                "type": "custom", "path": path,
+                "commands": { "local": { "start": "true" } },
+                "defaults": { "local": "start" }
+            })
+        };
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "projects": { "proj": { "apps": {
+                "api": app(one.join("apps/api")),
+                "web": app(two.join("apps/api")),
+            } } }
+        }))
+        .unwrap();
+        let feat_one = git::canonical(&dir.path().join("one/wt/feat"));
+        let feat_two = git::canonical(&dir.path().join("two/wt/feat"));
+
+        let web = resolve(&config, "web@feat", None, Mode::Exact).unwrap();
+        assert_eq!(web.worktree.unwrap().root, feat_two);
+        let (mut roots, slugs) = slug_roots(&config, "proj", "feat").unwrap();
+        roots.sort();
+        assert_eq!(roots, vec![feat_one.clone(), feat_two.clone()]);
+        assert_eq!(slugs, vec!["feat".to_string()]);
+        assert!(slug_roots(&config, "proj", "nope").unwrap().0.is_empty());
+
+        // What a TUI row for `proj@feat` of repository one can run.
+        assert_eq!(apps_of_worktree(&config, "proj", &feat_one), vec!["api"]);
+        assert_eq!(apps_of_worktree(&config, "proj", &feat_two), vec!["web"]);
     }
 
     #[test]

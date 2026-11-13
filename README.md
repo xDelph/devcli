@@ -252,8 +252,9 @@ devcli stop api@*           # every checkout (refused under an AI agent)
 ```
 
 A worktree instance is the project `shop@agent-1`: its own process, state and
-log file. Worktrees are numbered (slot 1, 2, ...) and keep their number while
-they exist; an app gets `DEVCLI_WORKTREE`, `DEVCLI_WORKTREE_INDEX` and
+log file. Its slug is the worktree's name in git, sanitized (`-2` is added
+on a clash). Worktrees are numbered (slot 1, 2, ...) and keep their number
+while they exist; an app gets `DEVCLI_WORKTREE`, `DEVCLI_WORKTREE_INDEX` and
 `DEVCLI_PORT_OFFSET` (slot × 100). Declare the port an app reads from `$PORT`
 to have devcli shift it:
 
@@ -263,18 +264,24 @@ to have devcli shift it:
 ```
 
 `api` then listens on 3000 in the main checkout and on 3100 in slot 1, and its
-health check follows. Without `port`, a `PORT` from the app's env files is
-shifted. Also handled:
+health check follows. A `PORT` from the app's env files wins over `port`, and
+is the one shifted; Docker, OrbStack and Compose instances get the shifted
+`PORT` too. Run in a worktree whose branch has no `api`, only `start api`
+falls back to the main checkout's; `stop`, `logs` and the others fail and ask
+for `api@`. Also handled:
 
 - a fresh worktree has no env files (they are gitignored): the main
   checkout's are used until the worktree has its own
 - dependencies in the same repository start in the same worktree; shared ones
   (a database, another repository) stay the configured instance. Each app gets
-  `DEVCLI_PORT_<APP>` with the port of each dependency that declares one (for
+  `DEVCLI_PORT_<APP>` with the port each dependency listens on (for
   example `sh -c 'API_URL=http://localhost:$DEVCLI_PORT_API npm run dev'` as a
   command), so a worktree's web talks to its own api
 - Docker Compose apps get a `COMPOSE_PROJECT_NAME` per worktree
-- deleting a worktree stops the apps that ran from it (pm-daemon)
+- deleting a worktree stops the apps that ran from it (pm-daemon); one moved
+  with `mv` keeps them running, still named `api@slug`
+- an app inside a git submodule has no instance in a worktree of the
+  superproject (the submodule is a repository of its own)
 - `auto-add` run inside a worktree registers the main checkout's path
 - the TUI lists each worktree instance under its project
 

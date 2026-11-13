@@ -47,16 +47,40 @@ struct LogsOutput {
     lines: Vec<String>,
 }
 
+/// The instance whose logs are read.
+struct Instance {
+    project: String,
+    app_name: String,
+}
+
 /// Execute the logs command
 #[tracing::instrument(skip(args), fields(app = %args.app_name, project = ?args.project, env = ?args.environment, lines = args.lines, follow = args.follow))]
 pub async fn logs_command(args: LogsArgs) -> Result<()> {
     let config = load_config()?;
-    let resolved = crate::worktrees::resolve(
+    let resolved = match crate::worktrees::resolve_readonly(
         &config,
         &args.app_name,
         args.project.as_deref(),
-        crate::worktrees::Mode::FromCwd,
-    )?;
+        crate::worktrees::Mode::FromCwdStrict,
+    ) {
+        Ok(resolved) => Instance {
+            project: resolved.project,
+            app_name: resolved.app_name,
+        },
+        // `api@feat` once worktree `feat` is gone: its logs are still there.
+        Err(e) => match crate::worktrees::slug_instance_name(
+            &config,
+            &args.app_name,
+            args.project.as_deref(),
+        ) {
+            Some((project, app_name))
+                if find_latest_log(&project, &app_name, args.environment.as_deref())?.is_some() =>
+            {
+                Instance { project, app_name }
+            }
+            _ => return Err(e),
+        },
+    };
 
     let file = find_latest_log(
         &resolved.project,

@@ -22,11 +22,11 @@ pub struct HealthCheckArgs {
 #[tracing::instrument(skip(args), fields(app_name = %args.app_name, environment = ?args.environment))]
 pub async fn health_check_command(args: HealthCheckArgs) -> Result<()> {
     let config = load_config()?;
-    let resolved = crate::worktrees::resolve(
+    let resolved = crate::worktrees::resolve_readonly(
         &config,
         &args.app_name,
         args.project.as_deref(),
-        crate::worktrees::Mode::FromCwd,
+        crate::worktrees::Mode::FromCwdStrict,
     )?;
 
     tracing::info!(
