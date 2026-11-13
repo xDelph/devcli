@@ -1029,8 +1029,11 @@ devcli auto-add [OPTIONS]
 - `-n, --name <NAME>` - App name to register (non-interactive)
 - `--type <TYPE>` - App type override (non-interactive): `nodejs`, `nx`,
   `nx-workspace`, `rust`, `python`, `docker`, `redis`, `traefik`
-- `--force` - Replace an app that already exists (keeps its dependencies,
-  health check, restart policy and alternative name)
+- `--force` - Replace the detected settings of an app that already exists.
+  What was set by hand is kept: dependencies, port, health check, restart
+  policy, alternative name, default stages, and the commands, defaults and env
+  files the detection does not produce (docker-compose and ci commands, commands
+  added with `config add-command`). Detected commands are refreshed.
 
 **Examples**:
 ```bash

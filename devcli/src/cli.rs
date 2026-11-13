@@ -195,7 +195,7 @@ pub enum Commands {
 
         #[arg(
             long,
-            help = "Replace an app that already exists (keeps its dependencies, health check, restart policy and alternative name)"
+            help = "Replace the detected settings of an app that already exists (keeps what was set by hand: dependencies, port, health check, restart policy, alternative name, and commands, defaults and env files the detection does not produce)"
         )]
         force: bool,
     },

@@ -233,8 +233,9 @@ detected defaults are accepted without prompting, and env files with an
 ambiguous context are skipped. Without a TTY and without `--yes`, the command
 fails with a clear message. Monorepos and multi-app directories require the
 interactive mode. An app that already exists is not replaced unless `--force`
-is given; its dependencies, health check, restart policy and alternative name
-are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
+is given; what was set by hand is then kept: dependencies, port, health check,
+restart policy, alternative name, default stages, and the commands, defaults
+and env files the detection does not produce (detected ones are refreshed). `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
 `python`, `docker`, `redis`, `traefik`; `path` in the answer is absolute.
 
 ```json
