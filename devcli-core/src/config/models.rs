@@ -520,28 +520,6 @@ impl Defaults {
 }
 
 impl App {
-    /// Get the env file path for a specific stage and environment
-    /// Falls back to stage-only or base .env if context-specific not found
-    pub fn get_env_file(&self, stage: Option<&str>, env: &str) -> Option<String> {
-        // Check env_files structure
-        if let Some(ref env_files) = self.env_files
-            && let Some(stage_name) = stage
-        {
-            // Try stage + environment specific
-            if let Some(stage_map) = env_files.get(stage_name) {
-                if let Some(path) = stage_map.get(env) {
-                    return Some(path.clone());
-                }
-                // Try stage with "all" context
-                if let Some(path) = stage_map.get("all") {
-                    return Some(path.clone());
-                }
-            }
-        }
-
-        None
-    }
-
     /// Get the default stage for a specific environment
     /// Falls back to preferences default_stage
     pub fn get_default_stage(
@@ -558,38 +536,6 @@ impl App {
 
         // Fall back to preferences default
         preferences_default.map(|s| s.to_string())
-    }
-
-    /// Set env file for a specific stage and environment
-    pub fn set_env_file(&mut self, stage: &str, env: &str, path: String) {
-        if self.env_files.is_none() {
-            self.env_files = Some(HashMap::new());
-        }
-
-        let env_files = self
-            .env_files
-            .as_mut()
-            .expect("env_files should be Some after initialization");
-        if !env_files.contains_key(stage) {
-            env_files.insert(stage.to_string(), HashMap::new());
-        }
-
-        env_files
-            .get_mut(stage)
-            .expect("stage should exist after insertion")
-            .insert(env.to_string(), path);
-    }
-
-    /// Set default stage for a specific environment
-    pub fn set_default_stage(&mut self, env: &str, stage: String) {
-        if self.default_stages.is_none() {
-            self.default_stages = Some(HashMap::new());
-        }
-
-        self.default_stages
-            .as_mut()
-            .expect("default_stages should be Some after initialization")
-            .insert(env.to_string(), stage);
     }
 }
 

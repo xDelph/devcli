@@ -26,10 +26,6 @@ pub struct ContainerEnvFile {
     pub summary: String,
 }
 
-pub fn stage_from_opt(stage: Option<&str>) -> Option<Stage> {
-    stage.map(Stage::from)
-}
-
 /// The stage whose env files are loaded: the one devcli resolved (`--stage`,
 /// the app's `default_stages`, the `default-stage` preference), else none -
 /// the base files only.
@@ -375,21 +371,6 @@ pub fn resolve_runtime_env_display(
         &cascade_summary(&existing),
         &layer_infos(&layers),
     )))
-}
-
-/// Layer plan for one runtime (includes non-existent layers).
-pub fn resolve_runtime_layers(
-    working_dir: &Path,
-    stage: Option<&str>,
-    environment: &str,
-    dockerfile_path: Option<&str>,
-) -> Result<Vec<LayerInfo>> {
-    Ok(layer_infos(&runtime_layers(
-        working_dir,
-        stage,
-        environment,
-        dockerfile_path,
-    )?))
 }
 
 fn runtime_layers(
