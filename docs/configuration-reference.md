@@ -572,6 +572,13 @@ selected)
 Without `env_files`, devcli looks for `.env` files in the app directory
 (`.env`, `.env.<stage>`, ...) and layers them.
 
+The stage comes from `--stage`, else the app's `default_stages`, else the
+`default-stage` preference. Without any of them no stage is selected and only
+the files that name no stage are loaded (`.env`, `.env.<environment>`,
+`.env.local`, and the `base` entry of `env_files`). devcli never takes the stage from the shell: `NODE_ENV`,
+`APP_ENV`, `RAILS_ENV` and the like are passed to apps as they are, but do not
+pick env files.
+
 **Example**:
 ```json
 {
