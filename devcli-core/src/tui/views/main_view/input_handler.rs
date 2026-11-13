@@ -284,7 +284,6 @@ impl NavigationHandler for MainView {
                         state.view_history.push(prev);
                         state.current_view = crate::tui::state::ViewType::LogViewer {
                             log_paths: vec![log_file.path.clone()],
-                            active_index: 0,
                         };
                         return Ok(true);
                     }
@@ -498,7 +497,6 @@ impl NavigationHandler for MainView {
                             state.view_history.push(prev);
                             state.current_view = crate::tui::state::ViewType::LogViewer {
                                 log_paths: vec![log.path.clone()],
-                                active_index: 0,
                             };
                             return Ok(true);
                         }

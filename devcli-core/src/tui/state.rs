@@ -906,10 +906,9 @@ pub enum ViewType {
     Main,
     /// Log viewer showing contents of specific log files
     LogViewer {
-        /// Paths to the log files being viewed
+        /// Paths of the log files it opens with (none: it opens on the log
+        /// selector)
         log_paths: Vec<PathBuf>,
-        /// Index of the currently active log panel
-        active_index: usize,
     },
 }
 

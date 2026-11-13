@@ -32,10 +32,6 @@ impl PopupManager {
         self.active_popup.is_some()
     }
 
-    pub(crate) fn close_popup(&mut self) {
-        self.active_popup = None;
-    }
-
     pub(crate) fn update_status(&mut self, status: String) {
         if let Some(popup) = &mut self.active_popup {
             popup.update_status(status);

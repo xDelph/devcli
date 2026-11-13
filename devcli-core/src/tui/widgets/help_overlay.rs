@@ -16,17 +16,36 @@ use ratatui::{
 pub struct HelpOverlay {
     /// Whether the help overlay is currently visible
     visible: bool,
+    /// First line shown (the help is longer than most terminals)
+    scroll: u16,
+    /// Largest useful `scroll`, known once rendered
+    max_scroll: std::cell::Cell<u16>,
 }
 
 impl HelpOverlay {
     /// Creates a new help overlay (initially hidden)
     pub fn new() -> Self {
-        Self { visible: false }
+        Self {
+            visible: false,
+            scroll: 0,
+            max_scroll: std::cell::Cell::new(u16::MAX),
+        }
     }
 
-    /// Shows the help overlay
+    /// Shows the help overlay, from the top
     pub fn show(&mut self) {
         self.visible = true;
+        self.scroll = 0;
+    }
+
+    /// Scrolls the help up by `lines`
+    pub fn scroll_up(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_sub(lines);
+    }
+
+    /// Scrolls the help down by `lines` (not past its end)
+    pub fn scroll_down(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_add(lines).min(self.max_scroll.get());
     }
 
     /// Hides the help overlay
@@ -41,7 +60,11 @@ impl HelpOverlay {
 
     /// Toggles the visibility of the help overlay
     pub fn toggle(&mut self) {
-        self.visible = !self.visible;
+        if self.visible {
+            self.hide();
+        } else {
+            self.show();
+        }
     }
 
     /// Renders the help overlay on the screen
@@ -61,13 +84,22 @@ impl HelpOverlay {
 
         // Build the help content
         let lines = self.build_help_content(theme);
+        let visible = popup_area.height.saturating_sub(2);
+        let max_scroll = u16::try_from(lines.len())
+            .unwrap_or(u16::MAX)
+            .saturating_sub(visible);
+        self.max_scroll.set(max_scroll);
+        let scroll = self.scroll.min(max_scroll);
 
-        let paragraph = Paragraph::new(lines).alignment(Alignment::Left).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.style_text_primary())
-                .title(" Keyboard Shortcuts - Press ? or Esc to close "),
-        );
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Left)
+            .scroll((scroll, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.style_text_primary())
+                    .title(" Keyboard Shortcuts - ↑↓/PgUp/PgDn: scroll, any other key: close "),
+            );
 
         frame.render_widget(paragraph, popup_area);
     }
