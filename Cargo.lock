@@ -96,7 +96,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app-detector"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "config-manager"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "devcli"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "devcli-core"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "app-detector",
@@ -794,7 +794,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "env-flow"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "indexmap",
  "serde",
@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "process-manager"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
