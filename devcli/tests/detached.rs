@@ -692,3 +692,42 @@ fn stop_reaches_a_crashed_app_awaiting_restart() {
     assert_eq!(stopped["stopped"], 1, "stop: {stopped}");
     assert_eq!(sb.tracked(), vec![], "the entry was left to pm-daemon");
 }
+
+/// `restart APP --env E` stops the app in that environment only.
+#[test]
+fn restart_with_env_leaves_the_other_environments_alone() {
+    let sb = Sandbox::new();
+    sb.edit_config(|config| {
+        let ticker = &mut config["projects"]["smoke"]["apps"]["ticker"];
+        ticker["commands"]["orbstack"] =
+            serde_json::json!({ "start": format!("sh -c '{TICKER}'") });
+        ticker["defaults"]["orbstack"] = serde_json::json!("start");
+    });
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    sb.json(&["start", "ticker", "--project", "smoke", "--env", "orbstack"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+    let pid_in = |env: &str| {
+        sb.tracked()
+            .into_iter()
+            .find(|(_, e, _, running)| e == env && *running)
+            .map(|(_, _, pid, _)| pid)
+    };
+    let local = pid_in("local").expect("local instance");
+    let orbstack = pid_in("orbstack").expect("orbstack instance");
+
+    sb.json(&[
+        "restart",
+        "ticker",
+        "--project",
+        "smoke",
+        "--env",
+        "orbstack",
+    ]);
+    assert_eq!(
+        pid_in("local"),
+        Some(local),
+        "the local instance was stopped"
+    );
+    assert!(pid_alive(local));
+    assert!(pid_in("orbstack").is_some_and(|pid| pid != orbstack));
+}
