@@ -94,24 +94,34 @@ pub(crate) fn prompt_for_environment() -> Result<String> {
 ///
 /// The selected command name
 pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) -> Result<String> {
-    let commands = match environment {
-        "local" => app.commands.local.as_ref(),
-        "docker" => app.commands.docker.as_ref(),
-        "orbstack" => app.commands.orbstack.as_ref(),
-        "k8s" => app.commands.k8s.as_ref(),
-        _ => {
-            use crate::config::models::Environment;
-            if Environment::from_string(environment).is_none() {
-                return Err(anyhow::anyhow!("Invalid environment: {}", environment));
-            }
-            return Err(anyhow::anyhow!(
-                "Environment '{}' not supported in this context",
-                environment
-            ));
-        }
-    };
+    use crate::config::models::Environment;
 
-    let commands = commands
+    // Every environment: this used to handle local/docker/orbstack/k8s only,
+    // so `config set-default api docker-compose` (or ci) failed with "not
+    // supported in this context", and the "(default)" marker ignored orbstack.
+    let env = Environment::parse(environment).map_err(|e| anyhow::anyhow!(e))?;
+    let names = command_choices(app, env)?;
+    let selection = Select::new("Select command:", names).prompt()?;
+
+    // Remove the " (default)" suffix if present
+    Ok(selection
+        .strip_suffix(DEFAULT_MARKER)
+        .map(str::to_string)
+        .unwrap_or(selection))
+}
+
+/// Suffix marking the environment's default command in [`command_choices`].
+const DEFAULT_MARKER: &str = " (default)";
+
+/// The sorted command names of `env`, the default one marked.
+pub(crate) fn command_choices(
+    app: &crate::config::App,
+    env: crate::config::models::Environment,
+) -> Result<Vec<String>> {
+    let environment = env.as_str();
+    let commands = app
+        .commands
+        .get(environment)
         .ok_or_else(|| anyhow::anyhow!("No commands configured for {} environment", environment))?;
 
     if commands.is_empty() {
@@ -121,39 +131,20 @@ pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) ->
         ));
     }
 
-    // Create sorted list of command names with default indicator
-    let default_command = match environment {
-        "local" => app.defaults.local.as_ref(),
-        "docker" => app.defaults.docker.as_ref(),
-        "k8s" => app.defaults.k8s.as_ref(),
-        _ => None,
-    };
-
+    let default_command = app.defaults.get(environment);
     let mut command_names: Vec<String> = commands.keys().cloned().collect();
     command_names.sort();
 
-    // Add default indicator to the display
-    let display_names: Vec<String> = command_names
-        .iter()
+    Ok(command_names
+        .into_iter()
         .map(|name| {
-            if Some(name) == default_command {
-                format!("{} (default)", name)
+            if Some(&name) == default_command {
+                format!("{name}{DEFAULT_MARKER}")
             } else {
-                name.clone()
+                name
             }
         })
-        .collect();
-
-    let selection = Select::new("Select command:", display_names).prompt()?;
-
-    // Remove the " (default)" suffix if present
-    let clean_selection = if selection.ends_with(" (default)") {
-        selection.trim_end_matches(" (default)").to_string()
-    } else {
-        selection
-    };
-
-    Ok(clean_selection)
+        .collect())
 }
 
 /// Prompt user for a text input
