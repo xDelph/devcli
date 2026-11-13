@@ -330,6 +330,115 @@ mod tests {
         assert_eq!(entry.runtime.restart_count, 0);
     }
 
+    /// A `stop` during an in-flight health check keeps its `stopping` flag:
+    /// the daemon used to write back the copy it read before the check, and
+    /// the app the user stopped was then restarted.
+    #[tokio::test]
+    async fn test_slow_health_check_keeps_a_stop_made_meanwhile() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut task = sleep_task("stopped-mid-check", 120);
+        task.health_check = HealthCheck::Command {
+            command: "sleep 1; false".to_string(),
+            timeout_secs: 5,
+            expected_exit_code: 0,
+        };
+        let running = spawn_and_track(&store, task).await;
+
+        let tick = monitor.tick();
+        let stop = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            store
+                .mark_stopping_async("stopped-mid-check")
+                .await
+                .unwrap()
+        };
+        let (ticked, marked) = tokio::join!(tick, stop);
+        ticked.unwrap();
+        assert!(marked.is_some());
+
+        let entry = store.load("stopped-mid-check").unwrap().unwrap();
+        assert!(entry.is_stopping(), "the stopping flag was overwritten");
+        assert_eq!(entry.runtime.health_failures, 0);
+        kill_and_reap(&running).await;
+    }
+
+    /// A restart recorded during an in-flight health check is not overwritten
+    /// with the PID of the process that was checked.
+    #[tokio::test]
+    async fn test_slow_health_check_keeps_a_restart_made_meanwhile() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+
+        let mut task = sleep_task("restarted-mid-check", 120);
+        task.health_check = HealthCheck::Command {
+            command: "sleep 1; false".to_string(),
+            timeout_secs: 5,
+            expected_exit_code: 0,
+        };
+        let running = spawn_and_track(&store, task).await;
+        let replacement = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let new_pid = replacement.id();
+
+        let tick = monitor.tick();
+        let restart = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let _guard = store.lock_entry_async("restarted-mid-check").await.unwrap();
+            let mut entry = store.load("restarted-mid-check").unwrap().unwrap();
+            entry.pid = new_pid;
+            entry.pgid = None;
+            store.save(&entry).unwrap();
+        };
+        let (ticked, ()) = tokio::join!(tick, restart);
+        ticked.unwrap();
+
+        let entry = store.load("restarted-mid-check").unwrap().unwrap();
+        assert_eq!(entry.pid, new_pid, "the restart's PID was overwritten");
+        kill_and_reap(&running).await;
+        let mut replacement = replacement;
+        let _ = replacement.kill();
+        let _ = replacement.wait();
+    }
+
+    /// The restart decision is taken again on the entry as it is after the
+    /// backoff: an exit code recorded meanwhile can rule it out.
+    #[tokio::test]
+    async fn test_restart_rechecks_the_policy_after_the_backoff() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        let monitor = monitor_for(Arc::clone(&store), temp_dir.path().join("locks"));
+        let marker = temp_dir.path().join("respawned");
+
+        let mut task = sleep_task("clean-exit-during-backoff", 120);
+        task.restart_policy.initial_backoff_secs = 1;
+        task.command = format!("sh -c 'touch {}; sleep 120'", marker.display());
+        let running = spawn_and_track(&store, task).await;
+        wait_until(|| marker.exists(), Duration::from_secs(10)).await;
+        std::fs::remove_file(&marker).unwrap();
+        kill_and_reap(&running).await;
+        wait_until(|| !store.is_running(&running), Duration::from_secs(10)).await;
+
+        monitor.tick().await.unwrap();
+        // During the backoff, the exit turns out to have been a clean one.
+        store
+            .update_if_current("clean-exit-during-backoff", running.pid, |p| {
+                p.runtime.last_exit_code = Some(0);
+            })
+            .unwrap()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+
+        assert!(!marker.exists(), "restarted despite a clean exit");
+        let entry = store.load("clean-exit-during-backoff").unwrap().unwrap();
+        assert_eq!(entry.pid, running.pid);
+    }
+
     /// Health failures are not counted while the app is still starting up.
     #[tokio::test]
     async fn test_health_failures_ignored_during_startup_grace() {

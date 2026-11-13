@@ -96,7 +96,7 @@ impl Monitor {
             if proc.owner_gone() && proc.is_shared() && !worktree_gone {
                 // Its owner is gone, but another app depends on it.
                 tracing::info!(id = %proc.id, "Owner exited; releasing a shared process");
-                if let Err(e) = self.state.release(&proc.id) {
+                if let Err(e) = self.state.release_async(&proc.id).await {
                     tracing::warn!(id = %proc.id, error = %e, "Failed to release process");
                 }
                 continue;
@@ -149,12 +149,13 @@ impl Monitor {
             worktree_gone = proc.worktree_gone(),
             "Orphaned process, stopping it"
         );
-        let Some(current) = self.state.mark_stopping(&proc.id)? else {
+        let Some(current) = self.state.mark_stopping_async(&proc.id).await? else {
             return Ok(());
         };
         // Dead already: its PID may belong to an unrelated process by now.
         if !self.state.is_running(&current) {
-            return self.state.delete(&current.id);
+            self.state.forget_async(&current.id, current.pid).await?;
+            return Ok(());
         }
 
         engine::terminate(current.pid, current.pgid, false).await?;
@@ -168,7 +169,8 @@ impl Monitor {
             engine::terminate(current.pid, current.pgid, true).await?;
         }
 
-        self.state.delete(&current.id)
+        self.state.forget_async(&current.id, current.pid).await?;
+        Ok(())
     }
 
     async fn check_process(&self, proc: &mut crate::state::ManagedProcess) -> Result<()> {
@@ -189,21 +191,34 @@ impl Monitor {
         }
 
         let health_passed = self.health_engine.check(&proc.task.health_check).await?;
+        if health_passed && proc.runtime.health_failures == 0 {
+            return Ok(());
+        }
 
-        if !health_passed {
-            proc.runtime.health_failures += 1;
-            proc.runtime.last_health_check = Some(Utc::now());
-            self.state.save(proc)?;
+        // The check can take up to its timeout: meanwhile `stop` may have
+        // flagged the entry, or a restart replaced the process. Update the
+        // entry as it is now, and only if it still describes this process.
+        let updated = self
+            .state
+            .update_if_current_async(&proc.id, proc.pid, |current| {
+                current.runtime.last_health_check = Some(Utc::now());
+                if health_passed {
+                    current.runtime.health_failures = 0;
+                } else {
+                    current.runtime.health_failures += 1;
+                }
+            })
+            .await?;
+        let Some(updated) = updated else {
+            tracing::debug!(id = %proc.id, "Entry changed during the health check; result dropped");
+            return Ok(());
+        };
+        *proc = updated;
 
-            if proc.runtime.health_failures >= 3 {
-                tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
-                self.handle_failure(proc, "health_check".to_string())
-                    .await?;
-            }
-        } else if proc.runtime.health_failures > 0 {
-            proc.runtime.health_failures = 0;
-            proc.runtime.last_health_check = Some(Utc::now());
-            self.state.save(proc)?;
+        if !health_passed && proc.runtime.health_failures >= 3 {
+            tracing::warn!(id = %proc.id, "Process unhealthy (3 consecutive failures), triggering restart");
+            self.handle_failure(proc, "health_check".to_string())
+                .await?;
         }
 
         Ok(())
@@ -219,7 +234,6 @@ impl Monitor {
         if proc.should_restart(&policy) {
             let backoff = proc.calculate_backoff(&policy);
             let id = proc.id.clone();
-            let task = proc.task.clone();
             let old_pid = proc.pid;
             let old_pgid = proc.pgid;
 
@@ -230,13 +244,23 @@ impl Monitor {
                 let _ = coordinator.execute_if_allowed(&id, backoff, || async {
                     // Re-check under the entry lock: the backoff can last a minute,
                     // and `stop` takes the same lock before it signals anything.
-                    let _guard = state.lock_entry(&id)?;
+                    // The lock is held through the kill and the respawn below so
+                    // that a `stop` cannot slip in between and miss the new PID;
+                    // it is taken without blocking the runtime's thread.
+                    let _guard = state.lock_entry_async(&id).await?;
                     let Some(current) = state.load(&id)? else {
                         tracing::info!(id = %id, "Entry removed during backoff, not restarting");
                         return Ok(());
                     };
                     if current.is_stopping() || current.pid != old_pid {
                         tracing::info!(id = %id, "Entry stopped or already restarted, not restarting");
+                        return Ok(());
+                    }
+                    // Decide on the entry as it is now: the exit code of the
+                    // process (recorded by `watch_exit` after the tick looked)
+                    // or a policy change can rule the restart out.
+                    if !current.should_restart(&current.task.restart_policy) {
+                        tracing::info!(id = %id, "Restart policy no longer allows a restart");
                         return Ok(());
                     }
 
@@ -249,7 +273,7 @@ impl Monitor {
                         let _ = engine::terminate(old_pid, old_pgid, true).await;
                     }
 
-                    let mut result = engine::spawn_supervised(&task).await?;
+                    let mut result = engine::spawn_supervised(&current.task).await?;
                     // Output goes straight to the log file; nobody reads the channel.
                     drop(result.output_rx);
                     let child = result.child.take();
@@ -282,11 +306,20 @@ impl Monitor {
                 .await;
             });
         } else {
-            tracing::error!(id = %proc.id, "Max restarts reached or policy prevents restart. Deleting state.");
-            if self.state.is_running(proc) {
-                let _ = engine::terminate(proc.pid, proc.pgid, true).await;
+            // Act on the entry as it is now: a `stop` may own it, or a fresh
+            // `start` may have recorded a new process under the same id.
+            let guard = self.state.lock_entry_async(&proc.id).await?;
+            let Some(current) = self.state.load(&proc.id)? else {
+                return Ok(());
+            };
+            if current.pid != proc.pid || current.is_stopping() {
+                return Ok(());
             }
-            self.state.delete(&proc.id)?;
+            tracing::error!(id = %proc.id, "Max restarts reached or policy prevents restart. Deleting state.");
+            if self.state.is_running(&current) {
+                let _ = engine::terminate(current.pid, current.pgid, true).await;
+            }
+            self.state.forget_locked(&guard, &current.id, current.pid)?;
         }
 
         Ok(())
@@ -300,7 +333,7 @@ fn watch_exit(state: Arc<StateStore>, id: String, pid: u32, mut child: tokio::pr
             return;
         };
         let code = exit_code(&status);
-        let Ok(_guard) = state.lock_entry(&id) else {
+        let Ok(_guard) = state.lock_entry_async(&id).await else {
             return;
         };
         if let Ok(Some(mut proc)) = state.load(&id) {
@@ -316,15 +349,8 @@ fn watch_exit(state: Arc<StateStore>, id: String, pid: u32, mut child: tokio::pr
 
 /// Exit code, or 128 + signal number for a signal death (shell convention).
 fn exit_code(status: &std::process::ExitStatus) -> Option<i32> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        status
-            .code()
-            .or_else(|| status.signal().map(|sig| 128 + sig))
-    }
-    #[cfg(not(unix))]
-    {
-        status.code()
-    }
+    use std::os::unix::process::ExitStatusExt;
+    status
+        .code()
+        .or_else(|| status.signal().map(|sig| 128 + sig))
 }
