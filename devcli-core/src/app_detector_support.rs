@@ -152,18 +152,13 @@ pub fn resolve_app_name(report: &DetectionReport, path: &Path, app_type: &str) -
         return Ok(name.to_string());
     }
 
+    // [project].name / [tool.poetry].name only: a line scan picked up
+    // `name = ...` from any table (`[[tool.uv.index]] name = "pytorch"`).
     if app_type == "python"
         && let Ok(content) = fs::read_to_string(path.join("pyproject.toml"))
+        && let Some(name) = app_detector::utils::pyproject::project_name(&content)
     {
-        for line in content.lines() {
-            if line.starts_with("name")
-                && line.contains('=')
-                && let Some(name) = line.split('=').nth(1)
-            {
-                let name = name.trim().trim_matches('"').trim_matches('\'');
-                return Ok(name.to_string());
-            }
-        }
+        return Ok(name);
     }
 
     path.file_name()
