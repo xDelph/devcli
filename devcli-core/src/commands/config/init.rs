@@ -85,6 +85,12 @@ pub async fn config_init() -> Result<()> {
     // Write the empty config to the config file
     fs::write(&config_path, empty_config)?;
 
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({
+            "created": config_path.display().to_string(),
+        }));
+    }
+
     // Show success message with example
     println!("✓ Created empty config file at {}", config_path.display());
     println!("\nHere's an example project configuration you can use as a reference:");

@@ -373,7 +373,9 @@ devcli --json logs api -n 100
   `~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log`
 - Lines are the app's raw stdout/stderr; devcli adds no timestamps
 - `--json` returns `{ project, app, environment, file, lines: [...] }`
-- Use `--json` for agents; `--follow` is meant for humans
+- Use `--json` for agents; `--follow` is meant for humans. With both, the
+  output is newline-delimited JSON: the usual document on one line, then one
+  `{"line": "..."}` object per new line
 
 ---
 

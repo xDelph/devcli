@@ -93,13 +93,21 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
             .environment
             .clone()
             .or_else(|| environment_from_log_name(&path, &resolved.project, &resolved.app_name));
-        output::print_json(&LogsOutput {
+        let document = LogsOutput {
             project: resolved.project.clone(),
             app: resolved.app_name.clone(),
             environment,
             file: Some(path.display().to_string()),
             lines: tail,
-        })?;
+        };
+        // A stream is newline-delimited JSON throughout: this document on
+        // one line, then one `{"line": ...}` object per new line. A pretty
+        // first document made the stream unreadable line by line.
+        if args.follow {
+            output::print_json_line(&document)?;
+        } else {
+            output::print_json(&document)?;
+        }
     } else {
         for line in &tail {
             println!("{line}");

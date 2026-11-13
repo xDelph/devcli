@@ -58,6 +58,12 @@ pub async fn config_edit() -> Result<()> {
         anyhow::bail!("Editor exited with error");
     }
 
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({
+            "path": config_path.display().to_string(),
+            "editor": editor,
+        }));
+    }
     // Remind user to validate their changes
     println!("Config file updated. Run 'devcli config validate' to check your changes.");
 
@@ -104,13 +110,21 @@ pub async fn config_add_command(
     let command_name = if let Some(name) = command_name {
         name
     } else {
-        crate::commands::config::prompt_for_text("Enter command name:", None)?
+        crate::commands::config::prompt_for_text(
+            "Enter command name:",
+            None,
+            "the command name (COMMAND_NAME)",
+        )?
     };
 
     let command_value = if let Some(value) = command_value {
         value
     } else {
-        crate::commands::config::prompt_for_text("Enter command value:", None)?
+        crate::commands::config::prompt_for_text(
+            "Enter command value:",
+            None,
+            "the command (COMMAND_VALUE)",
+        )?
     };
 
     // Get mutable reference to the app
@@ -136,6 +150,15 @@ pub async fn config_add_command(
     // Save the updated config
     save_config(&config)?;
 
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({
+            "project": resolved_project,
+            "app": resolved_app_name,
+            "environment": environment,
+            "command": command_name,
+            "value": command_value,
+        }));
+    }
     println!(
         "✓ Added command '{}' to {}/{} ({} environment)",
         command_name, resolved_project, resolved_app_name, environment
@@ -238,14 +261,26 @@ pub async fn config_remove_command(
     if was_default {
         // Clear the default since the command no longer exists
         *default = None;
+    }
+
+    // Save the updated config
+    save_config(&config)?;
+
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({
+            "project": resolved_project,
+            "app": resolved_app_name,
+            "environment": environment,
+            "command": command_name,
+            "default_cleared": was_default,
+        }));
+    }
+    if was_default {
         println!(
             "⚠ Warning: '{}' was the default {} command. Default cleared.",
             command_name, environment
         );
     }
-
-    // Save the updated config
-    save_config(&config)?;
 
     println!(
         "✓ Removed command '{}' from {}/{} ({} environment)",
@@ -341,6 +376,15 @@ pub async fn config_set_default(
     // Save the updated config
     save_config(&config)?;
 
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({
+            "project": resolved_project,
+            "app": resolved_app_name,
+            "environment": environment,
+            "default": command_name,
+        }));
+    }
+
     println!(
         "✓ Set '{}' as default {} command for {}/{}",
         command_name, environment, resolved_project, resolved_app_name
@@ -369,6 +413,13 @@ pub async fn config_edit_command(
     environment: Option<String>,
     command_name: Option<String>,
 ) -> Result<()> {
+    // The new value is always typed into a prompt.
+    if crate::output::json_enabled() {
+        anyhow::bail!(
+            "config edit-command prompts for the new value, which --json does not allow; \
+             use `config add-command APP ENVIRONMENT COMMAND_NAME VALUE` to replace it"
+        );
+    }
     let mut config = load_config()?;
 
     // Interactive prompts for missing parameters

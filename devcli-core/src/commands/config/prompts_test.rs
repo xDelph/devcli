@@ -99,6 +99,19 @@ mod prompts_tests {
     }
 
     #[test]
+    fn prompts_are_refused_under_json_and_without_a_terminal() {
+        use crate::commands::config::prompts::prompt_refusal;
+
+        assert_eq!(prompt_refusal("the app name (APP_NAME)", false, true), None);
+        let json = prompt_refusal("the app name (APP_NAME)", true, true).unwrap();
+        assert!(json.contains("Missing the app name (APP_NAME)"), "{json}");
+        assert!(json.contains("--json"), "{json}");
+        let no_tty = prompt_refusal("the environment (ENVIRONMENT)", false, false).unwrap();
+        assert!(no_tty.contains("Missing the environment"), "{no_tty}");
+        assert!(no_tty.contains("terminal"), "{no_tty}");
+    }
+
+    #[test]
     fn test_empty_config_handling() {
         let empty_config = Config {
             projects: Default::default(),

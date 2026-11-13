@@ -174,7 +174,8 @@ devcli logs api --follow                     # human streaming mode
 ```
 
 `--follow` is for humans; it blocks and streams. Agents should poll `logs`
-instead.
+instead. With `--json`, `--follow` writes newline-delimited JSON: the document
+above on one line, then one `{"line": "..."}` object per new line.
 
 ### `config`
 
@@ -195,6 +196,57 @@ devcli --json config validate
   { "<env>": { "default", "commands" } } }`.
 - `config validate` → `{ "valid", "errors": [{ "field", "message" }],
   "warnings": [...], "projects", "apps" }`.
+- `config add-command APP ENV NAME VALUE` → `{ "project", "app",
+  "environment", "command", "value" }` (an existing command of that name is
+  replaced).
+- `config remove-command APP ENV NAME` → `{ "project", "app", "environment",
+  "command", "default_cleared" }`.
+- `config set-default APP ENV NAME` → `{ "project", "app", "environment",
+  "default" }`.
+- `config init` → `{ "created": "<path of config.json>" }`.
+- `config edit` (opens `$VISUAL`/`$EDITOR`) → `{ "path", "editor" }`;
+  `config edit-command` always prompts for the new value and is refused with
+  `--json` (use `config add-command`).
+
+Every argument these commands would prompt for must be given: with `--json`,
+or without a terminal on stdin, a missing one is an error naming it
+(`Missing the app name (APP_NAME): ...`).
+
+### `env`
+
+```bash
+devcli --json env add APP --stage dev --context local --file .env.dev [--project P]
+devcli --json env remove APP --stage dev [--context local] [--project P]
+devcli --json env list APP [--project P]
+devcli --json env set-default APP --context docker --stage qa [--project P]
+```
+
+The app is found like everywhere else (`--project`, `project/app`,
+alternative name; an ambiguous name is an error). `--context` is an
+environment (aliases accepted, stored canonical); `env add` writes only that
+context.
+
+- `env add` → `{ "project", "app", "stage", "context", "file" }`
+- `env remove` → `{ "project", "app", "stage", "context", "removed":
+  { "<context>": "<file>" } }` (`context` is `null` when the whole stage was
+  removed)
+- `env list` → `{ "project", "app", "env_files": { "<stage>": { "<context>":
+  "<file>" } }, "default_stages": { "<context>": "<stage>" } }`
+- `env set-default` → `{ "project", "app", "context", "stage" }`
+
+### `pref`
+
+```bash
+devcli --json pref show
+devcli --json pref set default-env docker
+devcli --json pref reset
+```
+
+- `pref show` and `pref reset` → `{ "default-env", "detached-mode",
+  "auto-start-deps", "docker-platform", "default-stage" }` (the keys `pref
+  set` takes; `default-stage` is `null` when unset)
+- `pref set KEY VALUE` → `{ "key", "value" }` with the value as saved
+  (`compose` is saved as `docker-compose`)
 
 ### `health-check`
 
