@@ -16,9 +16,11 @@ pub struct MatchRange {
 
 #[derive(Default)]
 pub struct SearchState {
-    /// Whether search mode is active
+    /// Whether the query is being typed (every printable key goes into it).
+    /// Once confirmed (Enter) the search stays, with its results, until
+    /// cleared (Esc) or replaced (`/`).
     pub active: bool,
-    /// Current search query string
+    /// Current search query string (empty: no search)
     pub query: String,
     /// Line indices that match the search query
     pub results: Vec<usize>,
@@ -33,20 +35,33 @@ impl SearchState {
     /// Updates results with matching line indices and match ranges for highlighting
     /// Uses smart matching: word boundaries for alphanumeric queries, substring for others
     pub fn perform_search(&mut self, content: &[LogLine]) -> Option<usize> {
-        self.results.clear();
-        self.match_ranges.clear();
         self.current_idx = 0;
+        self.rescan_from(content, 0);
+        self.results.first().copied()
+    }
 
+    /// Whether there is a search (typed or confirmed).
+    pub fn has_query(&self) -> bool {
+        !self.query.is_empty()
+    }
+
+    /// Match lines `start..` of `content` again (they were appended or
+    /// re-parsed), keeping the results before `start` and the current
+    /// result. The matches used to be computed once, when the query was
+    /// typed: new matching lines were neither counted nor highlighted, and a
+    /// reloaded file kept highlights at stale positions.
+    pub fn rescan_from(&mut self, content: &[LogLine], start: usize) {
+        let current = self.results.get(self.current_idx).copied();
+        self.results.retain(|&idx| idx < start);
+        self.match_ranges.retain(|&idx, _| idx < start);
         if self.query.is_empty() {
-            return None;
+            self.current_idx = 0;
+            return;
         }
 
         // Search for the query in each line (case-insensitive)
         let query_lower: Vec<char> = self.query.chars().map(fold_case).collect();
-
-        self.results.reserve(content.len() / 20);
-
-        for (idx, log_line) in content.iter().enumerate() {
+        for (idx, log_line) in content.iter().enumerate().skip(start) {
             // Reconstruct the text from formatted spans to ensure consistency with highlighting
             let formatted_text: String = log_line
                 .formatted
@@ -64,12 +79,10 @@ impl SearchState {
             }
         }
 
-        // Return the first result index if any
-        if !self.results.is_empty() {
-            Some(self.results[0])
-        } else {
-            None
-        }
+        // The current result stays the same line (or the next one after it).
+        self.current_idx = current
+            .and_then(|line| self.results.iter().position(|&idx| idx >= line))
+            .unwrap_or(0);
     }
 
     /// Finds all matches of the query in a line using substring matching
