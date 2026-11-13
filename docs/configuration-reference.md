@@ -855,7 +855,13 @@ Error: Failed to load configuration: Failed to parse JSON from ~/.devcli/config.
 **Unknown field** (warning):
 ```
   - [my-project/api] Unknown field 'dependecies' is ignored. Did you mean 'dependencies'?
+  - [my-project/api] Unknown field 'commands.dokcer' is ignored. Did you mean 'docker'?
 ```
+
+Unknown fields are reported at every level (top level, project, app, and an
+app's `commands`, `defaults`, `restart_policy` and `health_check`). devcli
+keeps them when it saves the config (`config add-command`, `env add`, the
+TUI, ...), except those of a `health_check`, which are dropped.
 
 ## Best Practices
 

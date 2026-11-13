@@ -18,7 +18,16 @@ use serde_json::json;
 pub async fn config_validate() -> Result<()> {
     let config = load_config()?;
 
-    let result = DevCliConfigValidator::new().validate(&config);
+    let mut result = DevCliConfigValidator::new().validate(&config);
+    // Unknown keys the typed config has no place for (top level, health checks).
+    if let Some(raw) = std::fs::read_to_string(crate::config::loader::get_config_path()?)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    {
+        for warning in crate::config_manager_support::unknown_raw_field_warnings(&raw) {
+            result.add_warning(warning);
+        }
+    }
     let all_apps = list_all_apps(&config);
 
     // Machine-readable validation report for agents.

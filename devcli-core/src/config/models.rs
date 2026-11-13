@@ -336,6 +336,11 @@ pub struct Commands {
     // CI pipeline commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci: Option<HashMap<String, String>>,
+
+    /// Keys that are not an environment (a typo such as `"dokcer"`), kept on
+    /// save and reported by `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -466,6 +471,11 @@ pub struct Defaults {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci: Option<String>,
+
+    /// Keys that are not an environment, kept on save and reported by
+    /// `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -789,6 +799,11 @@ pub struct RestartPolicy {
     // Exit codes that trigger restart (None = any non-zero code)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_on_exit_codes: Option<Vec<i32>>,
+
+    /// Unknown keys (`"max_restart"`), kept on save and reported by
+    /// `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Helper functions for RestartPolicy defaults
@@ -826,6 +841,7 @@ impl Default for RestartPolicy {
             max_backoff_secs: 60,
             backoff_multiplier: 2.0,
             restart_on_exit_codes: None,
+            extra: UnknownFields::new(),
         }
     }
 }

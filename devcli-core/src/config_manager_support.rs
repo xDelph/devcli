@@ -76,12 +76,50 @@ impl DevCliConfigManager {
     /// load → save round-trip does not rewrite portable tilde paths to
     /// absolute paths (see `expand_app_paths` on load). The caller's in-memory
     /// config is left untouched; only the persisted copy is contracted.
+    ///
+    /// Top-level keys other than `projects` that the file on disk has (a
+    /// `"$schema"`, a newer devcli's setting) are written back: `Config` has
+    /// no place for them, and every save used to delete them.
     pub fn save(&self, config: &Config) -> Result<()> {
         let mut out = config.clone();
         contract_app_paths(&mut out);
-        self.manager
-            .save(&out)
-            .map_err(|err| anyhow::anyhow!("{err}"))
+
+        let extra = self.top_level_extra();
+        if extra.is_empty() {
+            return self
+                .manager
+                .save(&out)
+                .map_err(|err| anyhow::anyhow!("{err}"));
+        }
+
+        #[derive(serde::Serialize)]
+        struct WithExtra<'a> {
+            #[serde(flatten)]
+            config: &'a Config,
+            #[serde(flatten)]
+            extra: &'a serde_json::Map<String, serde_json::Value>,
+        }
+        let content = serde_json::to_string_pretty(&WithExtra {
+            config: &out,
+            extra: &extra,
+        })?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        config_manager::utils::fs::write_atomic(&self.path, content.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to write to {}: {e}", self.path.display()))
+    }
+
+    /// Top-level keys of the file on disk that `Config` does not model.
+    fn top_level_extra(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut map = std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|text| {
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text).ok()
+            })
+            .unwrap_or_default();
+        map.retain(|key, _| !KNOWN_CONFIG_KEYS.contains(&key.as_str()));
+        map
     }
 }
 
@@ -439,6 +477,18 @@ impl Validator<Config> for DevCliConfigValidator {
             for (app_name, app) in &project.apps {
                 let field = format!("{project_name}/{app_name}");
                 warn_unknown_fields(&mut result, &field, &app.extra, KNOWN_APP_KEYS);
+                for (prefix, extra, known) in [
+                    ("commands.", &app.commands.extra, KNOWN_ENVIRONMENT_KEYS),
+                    ("defaults.", &app.defaults.extra, KNOWN_ENVIRONMENT_KEYS),
+                ]
+                .into_iter()
+                .chain(
+                    app.restart_policy
+                        .as_ref()
+                        .map(|p| ("restart_policy.", &p.extra, KNOWN_RESTART_POLICY_KEYS)),
+                ) {
+                    warn_unknown_nested_fields(&mut result, &field, prefix, extra, known);
+                }
 
                 if seen_app_names.contains(app_name) {
                     result.add_warning(ValidationWarning::new(
@@ -546,8 +596,92 @@ fn validate_names(result: &mut ValidationResult, config: &Config) {
     }
 }
 
+/// Top-level keys of config.json that devcli understands.
+const KNOWN_CONFIG_KEYS: &[&str] = &["projects"];
+
 /// Keys of a project object that devcli understands.
 const KNOWN_PROJECT_KEYS: &[&str] = &["apps", "alternative_name"];
+
+/// Keys of an app's `commands` and `defaults` objects: the environments.
+const KNOWN_ENVIRONMENT_KEYS: &[&str] =
+    &["local", "docker", "orbstack", "docker-compose", "k8s", "ci"];
+
+/// Keys of a `restart_policy` object that devcli understands.
+const KNOWN_RESTART_POLICY_KEYS: &[&str] = &[
+    "enabled",
+    "max_restarts",
+    "restart_window_secs",
+    "initial_backoff_secs",
+    "max_backoff_secs",
+    "backoff_multiplier",
+    "restart_on_exit_codes",
+];
+
+/// Keys of a `health_check` object of type `kind` that devcli understands.
+fn known_health_check_keys(kind: &str) -> Option<&'static [&'static str]> {
+    Some(match kind {
+        "http" => &["type", "url", "timeout_secs", "expected_status"],
+        "tcp" => &["type", "host", "port", "timeout_secs"],
+        "command" => &["type", "command", "timeout_secs", "expected_exit_code"],
+        "process" => &["type"],
+        _ => return None,
+    })
+}
+
+/// Warnings for unknown keys that the typed config cannot hold: top-level
+/// keys of config.json and keys of `health_check` objects (an enum, whose
+/// unknown keys serde drops). `raw` is the file as parsed JSON.
+///
+/// Unlike the other unknown keys, a health check's are not kept on save.
+pub fn unknown_raw_field_warnings(raw: &serde_json::Value) -> Vec<ValidationWarning> {
+    let mut warnings = Vec::new();
+    let Some(top) = raw.as_object() else {
+        return warnings;
+    };
+    for key in top.keys() {
+        if !KNOWN_CONFIG_KEYS.contains(&key.as_str()) {
+            warnings.push(unknown_field_warning("config", key, KNOWN_CONFIG_KEYS, ""));
+        }
+    }
+    let projects = top.get("projects").and_then(|p| p.as_object());
+    for (project_name, project) in projects.into_iter().flatten() {
+        let apps = project.get("apps").and_then(|a| a.as_object());
+        for (app_name, app) in apps.into_iter().flatten() {
+            let Some(check) = app.get("health_check").and_then(|h| h.as_object()) else {
+                continue;
+            };
+            let Some(known) = check
+                .get("type")
+                .and_then(|t| t.as_str())
+                .and_then(known_health_check_keys)
+            else {
+                continue;
+            };
+            for key in check.keys() {
+                if !known.contains(&key.as_str()) {
+                    warnings.push(unknown_field_warning(
+                        &format!("{project_name}/{app_name}"),
+                        &format!("health_check.{key}"),
+                        known,
+                        " It is not kept when devcli saves the config.",
+                    ));
+                }
+            }
+        }
+    }
+    warnings
+}
+
+fn unknown_field_warning(field: &str, key: &str, known: &[&str], note: &str) -> ValidationWarning {
+    let last = key.rsplit('.').next().unwrap_or(key);
+    let hint = config_manager::utils::find_closest_match(last, known, 3)
+        .map(|k| format!(" Did you mean '{k}'?"))
+        .unwrap_or_default();
+    ValidationWarning::new(
+        field,
+        format!("Unknown field '{key}' is ignored.{hint}{note}"),
+    )
+}
 
 /// Keys of an app object that devcli understands.
 const KNOWN_APP_KEYS: &[&str] = &[
@@ -560,6 +694,7 @@ const KNOWN_APP_KEYS: &[&str] = &[
     "dockerfile_path",
     "env_files",
     "default_stages",
+    "port",
     "health_check",
     "restart_policy",
 ];
@@ -572,13 +707,24 @@ fn warn_unknown_fields(
     extra: &crate::config::models::UnknownFields,
     known: &[&str],
 ) {
+    warn_unknown_nested_fields(result, field, "", extra, known);
+}
+
+/// [`warn_unknown_fields`] for an object below the app, named by `prefix`
+/// (`"commands."`) in the message.
+fn warn_unknown_nested_fields(
+    result: &mut ValidationResult,
+    field: &str,
+    prefix: &str,
+    extra: &crate::config::models::UnknownFields,
+    known: &[&str],
+) {
     for key in extra.keys() {
-        let hint = config_manager::utils::find_closest_match(key, known, 3)
-            .map(|k| format!(" Did you mean '{k}'?"))
-            .unwrap_or_default();
-        result.add_warning(ValidationWarning::new(
+        result.add_warning(unknown_field_warning(
             field,
-            format!("Unknown field '{key}' is ignored.{hint}"),
+            &format!("{prefix}{key}"),
+            known,
+            "",
         ));
     }
 }
@@ -723,6 +869,65 @@ mod tests {
 
         fs::write(&path, r#"{ "default_env": "kubernetes" }"#).unwrap();
         assert_eq!(load_preferences(&path).unwrap().default_env, "k8s");
+    }
+
+    #[test]
+    fn unknown_keys_below_the_app_survive_a_save_and_are_reported() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config.json");
+        let json = r#"{
+              "$schema": "https://example.com/devcli.json",
+              "projects": {
+                "p": {
+                  "apps": {
+                    "api": {
+                      "type": "nodejs",
+                      "path": "/tmp",
+                      "prot": 3000,
+                      "commands": { "local": { "start": "npm start" }, "dokcer": { "run": "x" } },
+                      "defaults": { "local": "start", "lcoal": "start" },
+                      "restart_policy": { "enabled": true, "max_restart": 3 },
+                      "health_check": { "type": "http", "url": "http://x", "timeout_sec": 3 }
+                    }
+                  }
+                }
+              }
+            }"#;
+        fs::write(&path, json).unwrap();
+
+        let manager = DevCliConfigManager::for_path(&path).unwrap();
+        let config = manager.load().unwrap();
+        manager.save(&config).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let app = &saved["projects"]["p"]["apps"]["api"];
+        assert_eq!(saved["$schema"], "https://example.com/devcli.json");
+        assert_eq!(app["prot"], 3000);
+        assert_eq!(app["commands"]["dokcer"]["run"], "x");
+        assert_eq!(app["defaults"]["lcoal"], "start");
+        assert_eq!(app["restart_policy"]["max_restart"], 3);
+
+        let (_, warnings) = messages(&DevCliConfigValidator::new().validate(&config));
+        let original: serde_json::Value = serde_json::from_str(json).unwrap();
+        let raw: Vec<String> = unknown_raw_field_warnings(&original)
+            .iter()
+            .map(|w| w.message().to_string())
+            .collect();
+        let all: Vec<&String> = warnings.iter().chain(&raw).collect();
+        for expected in [
+            "'prot' is ignored. Did you mean 'port'?",
+            "'commands.dokcer' is ignored. Did you mean 'docker'?",
+            "'defaults.lcoal' is ignored. Did you mean 'local'?",
+            "'restart_policy.max_restart' is ignored. Did you mean 'max_restarts'?",
+            "'health_check.timeout_sec' is ignored. Did you mean 'timeout_secs'?",
+            "'$schema' is ignored.",
+        ] {
+            assert!(
+                all.iter().any(|w| w.contains(expected)),
+                "no warning containing {expected:?} in {all:?}"
+            );
+        }
     }
 
     #[test]
