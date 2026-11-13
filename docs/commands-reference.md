@@ -171,6 +171,8 @@ a security boundary.
 - Waits 5 seconds for graceful exit
 - Uses SIGKILL if --force or after timeout
 - Removes from state tracking
+- A crashed app that pm-daemon is about to restart is stopped too (nothing to
+  signal; it is not restarted)
 - An app name that is neither configured nor running is an error (exit code 1);
   a configured app that is not running is reported, with exit code 0
 - `pm-daemon` exits when no processes remain
@@ -191,7 +193,7 @@ devcli restart <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (defaults to the one it runs in)
+- `-e, --env <ENV>` - Environment of the instance to restart: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (defaults to the one it runs in)
 - `--skip-deps` - Skip restarting dependencies
 - `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
@@ -203,7 +205,7 @@ devcli restart api
 # Restart and return, leaving it running in the background
 devcli restart api --detached
 
-# Restart in different environment
+# Restart the docker instance (one running locally is left alone)
 devcli restart api --env docker
 
 # Restart without dependencies
@@ -211,12 +213,13 @@ devcli restart api --skip-deps
 ```
 
 **Behavior**:
-- Fails (exit code 1) when the app is not running: use `start`
-- Stops current process
+- Fails (exit code 1) when the app is not running (in that environment, with
+  `--env`): use `start`. A crashed app pm-daemon is about to restart counts as
+  running and is restarted right away.
+- Stops the current process, in its environment only
 - Starts it again with the same command (the environment's default, or the
   variant last given to `run`), attached or detached like `start`; under an AI
   agent it always returns right away
-- Can change environment on restart
 
 ---
 
