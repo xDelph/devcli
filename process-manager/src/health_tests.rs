@@ -79,6 +79,34 @@ mod tests {
         assert!(!result); // Should fail due to timeout
     }
 
+    /// A timed-out check kills what the shell started, not only the shell.
+    #[tokio::test]
+    async fn test_health_check_command_timeout_kills_its_children() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pid_file = dir.path().join("child.pid");
+        let engine = HealthCheckEngine::new();
+        let check = HealthCheck::Command {
+            command: format!("sleep 30 & echo $! > {}; wait", pid_file.display()),
+            timeout_secs: 1,
+            expected_exit_code: 0,
+        };
+
+        assert!(!engine.check(&check).await.unwrap());
+        let child: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while crate::engine::pid_alive(child) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            !crate::engine::pid_alive(child),
+            "the check's child outlived its timeout"
+        );
+    }
+
     #[tokio::test]
     async fn test_health_check_tcp_nonexistent_port() {
         let engine = HealthCheckEngine::new();

@@ -248,18 +248,21 @@ pub async fn run(cli: Cli) -> Result<()> {
                 stage,
                 context,
                 file,
-            } => add_env_file(&app_name, &stage, &context, &file)?,
+                project,
+            } => add_env_file(&app_name, project.as_deref(), &stage, &context, &file)?,
             EnvAction::Remove {
                 app_name,
                 stage,
                 context,
-            } => remove_env_file(&app_name, &stage, context.as_deref())?,
-            EnvAction::List { app_name } => list_env_files(&app_name)?,
+                project,
+            } => remove_env_file(&app_name, project.as_deref(), &stage, context.as_deref())?,
+            EnvAction::List { app_name, project } => list_env_files(&app_name, project.as_deref())?,
             EnvAction::SetDefault {
                 app_name,
                 context,
                 stage,
-            } => set_default_stage(&app_name, &context, &stage)?,
+                project,
+            } => set_default_stage(&app_name, project.as_deref(), &context, &stage)?,
         },
 
         Commands::Pref { action } => match action {

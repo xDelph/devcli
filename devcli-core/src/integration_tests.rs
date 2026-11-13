@@ -284,14 +284,15 @@ CMD ["node", "server.js"]
 
         // Step 3: Verify all stages detected
         assert!(docker_cmds.contains_key("build"));
-        assert!(docker_cmds.contains_key("test"));
-        assert!(docker_cmds.contains_key("production"));
+        assert!(docker_cmds.contains_key("build:build"));
+        assert!(docker_cmds.contains_key("build:test"));
+        assert!(docker_cmds.contains_key("build:production"));
 
         // Step 4: Verify test stage has run command
-        assert!(docker_cmds.contains_key("test-run"));
+        assert!(docker_cmds.contains_key("run:test"));
 
         // Step 5: Verify commands are properly formatted
-        let test_cmd = docker_cmds.get("test").unwrap();
+        let test_cmd = docker_cmds.get("build:test").unwrap();
         assert!(test_cmd.contains("--target test"));
         assert!(test_cmd.contains("docker build"));
     }

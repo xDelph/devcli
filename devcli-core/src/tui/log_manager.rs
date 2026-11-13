@@ -29,9 +29,6 @@ type ListingCache =
 pub struct LogManager {
     /// Path to the log directory (~/.devcli/logs/)
     log_dir: PathBuf,
-    /// Last known modification time of the logs directory
-    /// Used to detect when new log files are created
-    last_dir_modified: Option<DateTime<Utc>>,
     /// Recent listings per `(project, app)`: the status panel asks on every
     /// redraw, which used to cost a directory read plus a `stat` per file.
     listing_cache: std::cell::RefCell<ListingCache>,
@@ -50,7 +47,6 @@ impl LogManager {
 
         Ok(Self {
             log_dir,
-            last_dir_modified: None,
             listing_cache: Default::default(),
         })
     }
@@ -183,36 +179,6 @@ impl LogManager {
         }
 
         filename.to_string()
-    }
-
-    /// Checks if the logs directory has been modified since last check
-    /// Returns true if the directory was modified or if this is the first check
-    pub fn has_logs_dir_changed(&mut self) -> bool {
-        // Get current modification time of logs directory
-        let current_modified = if self.log_dir.exists() {
-            std::fs::metadata(&self.log_dir)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .map(|t| {
-                    let dt: DateTime<Utc> = t.into();
-                    dt
-                })
-        } else {
-            None
-        };
-
-        // Check if it changed
-        let changed = current_modified != self.last_dir_modified;
-
-        // Update our tracked time
-        self.last_dir_modified = current_modified;
-
-        changed
-    }
-
-    /// Returns the path to the logs directory
-    pub fn log_dir_path(&self) -> &PathBuf {
-        &self.log_dir
     }
 }
 

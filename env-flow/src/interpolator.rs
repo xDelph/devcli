@@ -4,6 +4,8 @@
 /// - `${VAR}`          → value of VAR (from EnvVars then std::env)
 /// - `${VAR:-default}` → value of VAR, or "default" if unset/empty
 /// - `\$`              → literal `$` (so `\${VAR}` is the literal `${VAR}`)
+/// - `\\`              → literal `\` (so `\\${VAR}` is a backslash and VAR's value)
+/// - a default is itself expanded: `${A:-${B}}` is B's value when A is unset
 /// - `${SELF}` inside SELF's own value → SELF's previous value from the process
 ///   environment (`PATH=${PATH}:./bin`)
 /// - Single-quoted values are NEVER interpolated (bash semantics, handled in loader)
@@ -58,9 +60,10 @@ fn interpolate_value(
     let mut i = 0;
 
     while i < chars.len() {
-        // Escaped `\$`: a literal dollar, never the start of an expansion
-        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '$' {
-            out.push('$');
+        // Escaped `\$`: a literal dollar, never the start of an expansion;
+        // escaped `\\`: a literal backslash, which escapes nothing after it.
+        if chars[i] == '\\' && i + 1 < chars.len() && matches!(chars[i + 1], '$' | '\\') {
+            out.push(chars[i + 1]);
             i += 2;
             continue;
         }
@@ -99,7 +102,16 @@ fn interpolate_value(
             // (`PATH=${PATH}:./bin`); that used to be reported as a cycle and
             // fail the whole start.
             if var_name == source_key {
-                out.push_str(&from_process_env(var_name, default_val));
+                match std::env::var(var_name) {
+                    Ok(val) if !val.is_empty() || default_val.is_none() => out.push_str(&val),
+                    _ => out.push_str(&expand_default(
+                        default_val,
+                        source_key,
+                        map,
+                        done,
+                        in_progress,
+                    )?),
+                }
                 continue;
             }
 
@@ -111,10 +123,23 @@ fn interpolate_value(
             }
             in_progress.insert(var_name.to_string());
 
-            let resolved = resolve_var(var_name, default_val, map, done, in_progress, source_key)?;
-            out.push_str(&resolved);
-
+            let resolved = resolve_var(var_name, map, done, in_progress, source_key)?;
             in_progress.remove(var_name);
+
+            // `${VAR:-default}`: the default applies when VAR is unset *or
+            // empty*, and is expanded like the rest of the value (it used to
+            // be returned as written, `${B}` included).
+            if resolved.is_empty() && default_val.is_some() {
+                out.push_str(&expand_default(
+                    default_val,
+                    source_key,
+                    map,
+                    done,
+                    in_progress,
+                )?);
+            } else {
+                out.push_str(&resolved);
+            }
         } else {
             out.push(chars[i]);
             i += 1;
@@ -133,18 +158,49 @@ fn parse_expr(expr: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// `var_name` from the process environment, or `default` when unset or empty.
-fn from_process_env(var_name: &str, default_val: Option<&str>) -> String {
-    match std::env::var(var_name) {
-        Ok(val) if !val.is_empty() || default_val.is_none() => val,
-        _ => default_val.unwrap_or_default().to_string(),
+/// The expansion of a `${VAR:-default}` default (empty without one).
+fn expand_default(
+    default_val: Option<&str>,
+    source_key: &str,
+    map: &IndexMap<String, EnvEntry>,
+    done: &HashSet<String>,
+    in_progress: &mut HashSet<String>,
+) -> Result<String> {
+    match default_val {
+        Some(default) => interpolate_value(default, source_key, map, done, in_progress),
+        None => Ok(String::new()),
     }
 }
 
-/// Look up `var_name` in the merged map, then in `std::env`.
+/// Resolve the `\$` and `\\` escapes of a value that is not interpolated.
+///
+/// The parser keeps them escaped for the interpolator; with interpolation
+/// turned off they are resolved here instead, so a value reads the same
+/// either way except for its `${...}`.
+pub fn unescape_all(map: &mut IndexMap<String, EnvEntry>) {
+    for entry in map.values_mut() {
+        if !entry.interpolate {
+            continue;
+        }
+        let mut out = String::with_capacity(entry.value.len());
+        let mut chars = entry.value.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\\'
+                && let Some(&next @ ('$' | '\\')) = chars.peek()
+            {
+                out.push(next);
+                chars.next();
+            } else {
+                out.push(ch);
+            }
+        }
+        entry.value = out;
+    }
+}
+
+/// Look up `var_name` in the merged map, then in `std::env` (empty when unset).
 fn resolve_var(
     var_name: &str,
-    default_val: Option<&str>,
     map: &IndexMap<String, EnvEntry>,
     done: &HashSet<String>,
     in_progress: &mut HashSet<String>,
@@ -163,19 +219,13 @@ fn resolve_var(
         std::env::var(var_name).unwrap_or_default()
     };
 
-    // `${VAR:-default}`: the default applies when VAR is unset *or empty*.
-    if value.is_empty() {
-        if let Some(default) = default_val {
-            return Ok(default.to_string());
-        }
-        if !map.contains_key(var_name) {
-            // Variable not found, emit empty string (bash semantics for unset)
-            tracing::debug!(
-                key = source_key,
-                var = var_name,
-                "interpolation: variable not found, using empty string"
-            );
-        }
+    if value.is_empty() && !map.contains_key(var_name) {
+        // Variable not found, emit empty string (bash semantics for unset)
+        tracing::debug!(
+            key = source_key,
+            var = var_name,
+            "interpolation: variable not found, using empty string"
+        );
     }
     Ok(value)
 }
@@ -322,6 +372,69 @@ mod tests {
     fn default_applies_to_empty_values() {
         let map = interpolated(&[("EMPTY", "", true), ("V", "${EMPTY:-fallback}", true)]).unwrap();
         assert_eq!(map["V"].value, "fallback");
+    }
+
+    /// Parse `content` and interpolate it, as `EnvFlow` does.
+    fn parse_and_interpolate(content: &str) -> IndexMap<String, EnvEntry> {
+        let parsed = crate::parser::parse(content, std::path::Path::new(".env"), true).unwrap();
+        let mut map: IndexMap<String, EnvEntry> = parsed
+            .entries
+            .into_iter()
+            .map(|e| {
+                let mut v = entry(&e.raw_value);
+                v.interpolate = e.interpolate;
+                (e.key, v)
+            })
+            .collect();
+        interpolate_all(&mut map).unwrap();
+        map
+    }
+
+    #[test]
+    fn an_escaped_backslash_does_not_escape_the_dollar_after_it() {
+        let map = parse_and_interpolate(
+            "X=boom\nA=\"a\\\\${X}\"\nB=\"a\\\\\\${X}\"\nC=a\\\\${X}\nD=C:\\dir\\sub\nE=a\\${X}\n",
+        );
+        // "a\\${X}": a backslash, then X expanded
+        assert_eq!(map["A"].value, "a\\boom");
+        // "a\\\${X}": a backslash, then a literal ${X}
+        assert_eq!(map["B"].value, "a\\${X}");
+        // unquoted: a backslash is literal, except the one escaping a dollar
+        assert_eq!(map["C"].value, "a\\${X}");
+        assert_eq!(map["D"].value, "C:\\dir\\sub");
+        assert_eq!(map["E"].value, "a${X}");
+    }
+
+    #[test]
+    fn defaults_are_expanded() {
+        let map = parse_and_interpolate(
+            "B=bee\nA1=${UNSET_ENVFLOW_A:-${B}}\nA2=${UNSET_ENVFLOW_A:-x${B}y}\nA3=${UNSET_ENVFLOW_A:-${UNSET_ENVFLOW_C:-deep}}\nA4=\"${UNSET_ENVFLOW_A:-\\${B}}\"\n",
+        );
+        assert_eq!(map["A1"].value, "bee");
+        assert_eq!(map["A2"].value, "xbeey");
+        assert_eq!(map["A3"].value, "deep");
+        assert_eq!(map["A4"].value, "${B}");
+    }
+
+    #[test]
+    fn escapes_are_resolved_without_interpolation() {
+        let parsed = crate::parser::parse(
+            "A=\"a\\\\b \\$c ${X}\"\n",
+            std::path::Path::new(".env"),
+            true,
+        )
+        .unwrap();
+        let mut map: IndexMap<String, EnvEntry> = parsed
+            .entries
+            .into_iter()
+            .map(|e| {
+                let mut v = entry(&e.raw_value);
+                v.interpolate = e.interpolate;
+                (e.key, v)
+            })
+            .collect();
+        unescape_all(&mut map);
+        assert_eq!(map["A"].value, "a\\b $c ${X}");
     }
 
     #[test]

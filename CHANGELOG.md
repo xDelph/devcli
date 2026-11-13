@@ -148,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tui:** optimize TUI performance ([863059f](https://github.com/xDelph/devcli/commit/863059fc8b49f64e444697131a7eb262c7d319fb))
 * **website:** optimize images using astro:assets ([5f96175](https://github.com/xDelph/devcli/commit/5f9617503b1e1e0a24d1edfafa58d45ef4188524))
 
-## [0.5.0](https://github.com/xDelph/devcli/compare/v0.4.0...v0.5.0) (2026-10-07)
+## [0.5.0](https://github.com/xDelph/devcli/compare/v0.3.0...v0.5.0) (2026-10-07)
 
 
 ### Features
@@ -284,7 +284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tui:** optimize TUI performance ([863059f](https://github.com/xDelph/devcli/commit/863059fc8b49f64e444697131a7eb262c7d319fb))
 * **website:** optimize images using astro:assets ([5f96175](https://github.com/xDelph/devcli/commit/5f9617503b1e1e0a24d1edfafa58d45ef4188524))
 
-## [0.4.0](https://github.com/xDelph/devcli/compare/v0.3.0...v0.4.0) (2026-10-07)
+## [0.4.0](https://github.com/xDelph/devcli/compare/v0.3.0...9cb030eb5380265743ca0ba0b8ef393b89a950a9) (2026-10-07)
 
 
 ### Features
@@ -301,7 +301,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **release:** check out the repo in the prepare job ([eeede05](https://github.com/xDelph/devcli/commit/eeede05c398b42baba9601c5e50e89d2bb61c441))
 * **release:** re-resolve the tag in publish and homebrew ([b029897](https://github.com/xDelph/devcli/commit/b0298974162c8f363a3613816a2dae66750b2373))
 
-## [0.3.0](https://github.com/xDelph/devcli/compare/v0.2.1...v0.3.0) (2026-10-07)
+## [0.3.0](https://github.com/xDelph/devcli/compare/v0.1.0...v0.3.0) (2026-10-07)
 
 
 ### Features
@@ -430,7 +430,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tui:** optimize TUI performance ([863059f](https://github.com/xDelph/devcli/commit/863059fc8b49f64e444697131a7eb262c7d319fb))
 * **website:** optimize images using astro:assets ([5f96175](https://github.com/xDelph/devcli/commit/5f9617503b1e1e0a24d1edfafa58d45ef4188524))
 
-## [0.2.1](https://github.com/xDelph/devcli/compare/v0.2.0...v0.2.1) (2026-10-07)
+## [0.2.1](https://github.com/xDelph/devcli/compare/v0.1.0...115e5b628bd5711f67ac0d94d44d0f8a94f19076) (2026-10-07)
 
 
 ### Features
@@ -557,7 +557,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **tui:** optimize TUI performance ([863059f](https://github.com/xDelph/devcli/commit/863059fc8b49f64e444697131a7eb262c7d319fb))
 * **website:** optimize images using astro:assets ([5f96175](https://github.com/xDelph/devcli/commit/5f9617503b1e1e0a24d1edfafa58d45ef4188524))
 
-## [0.2.0](https://github.com/xDelph/devcli/compare/v0.1.0...v0.2.0) (2026-10-07)
+## [0.2.0](https://github.com/xDelph/devcli/compare/v0.1.0...e9dcfe9fdd1519923cc6c151865196e15e549f9b) (2026-10-07)
 
 
 ### Features
@@ -634,35 +634,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **website:** optimize images using astro:assets ([5f96175](https://github.com/xDelph/devcli/commit/5f9617503b1e1e0a24d1edfafa58d45ef4188524))
 
-## [Unreleased]
-
-### Added
-- Structured logging with tracing crate
-  - JSON logs written to `~/.devcli/logs/devcli.YYYY-MM-DD.json`
-  - Daily log rotation
-  - Environment-based filtering via `RUST_LOG`
-  - Spans for operation tracking
-- Metrics collection system
-  - HTTP JSON API on `localhost:9090/metrics`
-  - `devcli metrics` CLI command for formatted display
-  - Tracks process, system, and performance metrics
-  - In-memory aggregation with automatic pruning
-- GitHub Actions workflows
-  - CI workflow for tests, linting, and builds
-  - Release workflow for multi-platform binary builds
-- Comprehensive documentation
-  - Release process guide
-  - Metrics implementation summary
-
-### Changed
-- Improved logging throughout codebase (150+ locations)
-- Better error messages with structured context
-- Monitor daemon now starts metrics server automatically
-
-### Deprecated
-- `FileLogger` - Use tracing infrastructure instead
-- `MonitorLogger` - Use tracing spans and events instead
-
 ## [0.1.0] - 2024-02-09
 
 ### Added
@@ -680,5 +651,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment file management
 - User preferences system
 
-[Unreleased]: https://github.com/xDelph/devcli/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/xDelph/devcli/releases/tag/v0.1.0

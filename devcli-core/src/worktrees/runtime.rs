@@ -97,20 +97,15 @@ pub fn apply(
 
     // Where the dependencies listen: in a worktree the API next to this web
     // is on its own shifted port, which a URL hard-coded to the configured
-    // port would miss. DEVCLI_PORT_<APP> for each dependency with a declared
-    // `port`, as it runs for this instance.
+    // port would miss. DEVCLI_PORT_<APP> for each dependency with a port, as
+    // it runs for this instance.
     if let Ok(config) = crate::config::load_config()
         && let Ok(chain) = crate::config::dependencies::resolve_dependency_chain(&config, resolved)
     {
         for dep in chain {
-            let Some(port) = dep.app.port else {
-                continue;
-            };
-            let offset = dep.worktree.as_ref().map_or(0, |i| i.port_offset());
-            env_vars.insert(
-                dependency_port_var(&dep.app_name),
-                shifted(port, offset)?.to_string(),
-            );
+            if let Some(port) = dependency_port(&dep, environment)? {
+                env_vars.insert(dependency_port_var(&dep.app_name), port.to_string());
+            }
         }
     }
 
@@ -138,6 +133,84 @@ pub fn apply(
     }
 
     Ok(applied)
+}
+
+/// The port `dep` listens on: the one its running process got, else the
+/// one starting it in `environment` gives - its env files' `PORT` (they
+/// win over the declared `port`, as in [`apply`]), else its declared
+/// `port` - shifted by its worktree offset.
+fn dependency_port(dep: &ResolvedApp, environment: &str) -> Result<Option<u16>> {
+    if let Some(port) = running_port(dep) {
+        return Ok(Some(port));
+    }
+    let offset = dep.worktree.as_ref().map_or(0, |i| i.port_offset());
+    env_file_port(dep, environment)
+        .or(dep.app.port)
+        .map(|port| shifted(port, offset))
+        .transpose()
+}
+
+/// `DEVCLI_PORT` (else `PORT`) of the running process of `dep`, if any. The
+/// process state is not created just to look.
+fn running_port(dep: &ResolvedApp) -> Option<u16> {
+    let dir = crate::config::loader::config_home().join("processes");
+    if !dir.is_dir() {
+        return None;
+    }
+    let store = process_manager::StateStore::new(dir).ok()?;
+    let process =
+        crate::process_manager_support::find_process(&store, &dep.project, &dep.app_name, None)
+            .ok()??;
+    if !store.is_running(&process) {
+        return None;
+    }
+    let env = &process.task.env;
+    env.get(DEVCLI_PORT)
+        .or_else(|| env.get("PORT"))?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// The `PORT` of the env files `app` would load when started in
+/// `environment` (with its default stage there), unshifted.
+fn env_file_port(app: &ResolvedApp, environment: &str) -> Option<u16> {
+    let preferences = crate::config::load_preferences().ok();
+    let stage = app.app.get_default_stage(
+        environment,
+        preferences
+            .as_ref()
+            .and_then(|p| p.default_stage.as_deref()),
+    );
+    let stage = stage.as_deref();
+    let working_dir = crate::utils::path::expand_path(&app.app.path);
+    // Its own overlay, removed after: the instance's may be in use.
+    let overlay = crate::config::loader::config_home()
+        .join("env-overlays")
+        .join(format!(".lookup-{}", std::process::id()))
+        .join(overlay_name(app));
+    let port = env_dir_at(app, &working_dir, stage, environment, &overlay)
+        .ok()
+        .and_then(|(dir, _)| {
+            crate::env_flow_support::load_process_runtime(
+                &dir,
+                app.app.env_files.as_ref(),
+                stage,
+                environment,
+                app.app.dockerfile_path.as_deref(),
+            )
+            .ok()
+            .flatten()
+        })
+        .and_then(|loaded| loaded.vars.get("PORT")?.trim().parse().ok());
+    if let Some(lookup) = overlay.parent() {
+        let _ = std::fs::remove_dir_all(lookup);
+    }
+    port
+}
+
+fn overlay_name(resolved: &ResolvedApp) -> String {
+    super::registry::sanitize_slug(&format!("{}_{}", resolved.project, resolved.app_name))
 }
 
 /// The env files the cascade would load for an app at `root`, relative to
@@ -189,6 +262,20 @@ pub fn env_dir(
     stage: Option<&str>,
     environment: &str,
 ) -> Result<(PathBuf, Option<String>)> {
+    let overlay = crate::config::loader::config_home()
+        .join("env-overlays")
+        .join(overlay_name(resolved));
+    env_dir_at(resolved, working_dir, stage, environment, &overlay)
+}
+
+/// [`env_dir`], building any overlay at `overlay`.
+fn env_dir_at(
+    resolved: &ResolvedApp,
+    working_dir: &Path,
+    stage: Option<&str>,
+    environment: &str,
+    overlay: &Path,
+) -> Result<(PathBuf, Option<String>)> {
     let Some(instance) = &resolved.worktree else {
         return Ok((working_dir.to_path_buf(), None));
     };
@@ -230,13 +317,7 @@ pub fn env_dir(
         return Ok((base.clone(), Some(note)));
     }
 
-    let overlay = crate::config::loader::config_home()
-        .join("env-overlays")
-        .join(super::registry::sanitize_slug(&format!(
-            "{}_{}",
-            resolved.project, resolved.app_name
-        )));
-    let _ = std::fs::remove_dir_all(&overlay);
+    let _ = std::fs::remove_dir_all(overlay);
     for file in &files {
         let source = if working_dir.join(file).is_file() {
             working_dir.join(file)
@@ -259,7 +340,7 @@ pub fn env_dir(
         base.display(),
         instance.slug
     );
-    Ok((overlay, Some(note)))
+    Ok((overlay.to_path_buf(), Some(note)))
 }
 
 /// `DEVCLI_PORT_<APP>`: the app name upper-cased, other characters as `_`.
@@ -553,6 +634,32 @@ mod tests {
         let mut env = HashMap::from([("PORT".to_string(), "4000".to_string())]);
         apply(&resolved(Some(3000), Some(1)), "local", &mut env).unwrap();
         assert_eq!(env["PORT"], "4100");
+    }
+
+    /// `DEVCLI_PORT_API` used api's declared port while api listened on its
+    /// env file's PORT (which wins).
+    #[test]
+    fn a_dependency_is_reached_on_its_env_files_port() {
+        let _env = crate::test_utils::TempConfigDir::new();
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dep = resolved(Some(3000), Some(1));
+        dep.app.path = dir.path().to_string_lossy().into_owned();
+        assert_eq!(dependency_port(&dep, "local").unwrap(), Some(3100));
+
+        std::fs::write(dir.path().join(".env"), "PORT=4000\n").unwrap();
+        assert_eq!(dependency_port(&dep, "local").unwrap(), Some(4100));
+        dep.worktree = None;
+        assert_eq!(dependency_port(&dep, "local").unwrap(), Some(4000));
+        assert!(
+            !crate::config::loader::config_home()
+                .join("env-overlays")
+                .exists(),
+            "looking left an overlay behind"
+        );
+
+        dep.app.port = None;
+        std::fs::remove_file(dir.path().join(".env")).unwrap();
+        assert_eq!(dependency_port(&dep, "local").unwrap(), None);
     }
 
     #[test]

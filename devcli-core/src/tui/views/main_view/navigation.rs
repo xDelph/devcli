@@ -136,10 +136,4 @@ impl MainView {
             format!("{}h {}m {}s", hours, minutes, seconds)
         }
     }
-
-    /// Checks if the logs directory has changed and returns true if a UI refresh is needed
-    /// This should be called after start, run, or restart commands complete
-    pub fn refresh_log_list(&mut self) -> bool {
-        self.log_manager.has_logs_dir_changed()
-    }
 }

@@ -126,12 +126,12 @@ async fn ensure_dependencies(
     // Handle missing dependencies based on preferences
     if preferences.auto_start_deps {
         let waves = start_waves(&config, &missing)?;
-        for (index, wave) in waves.iter().enumerate() {
+        for wave in &waves {
             start_missing_dependencies(wave.clone(), environment, silent, owner).await?;
-            // Later waves depend on this one: give it the chance to come up.
-            if index + 1 < waves.len() {
-                wait_until_ready(&config, wave, silent).await;
-            }
+            // Later waves, and in the end the apps asked for, depend on this
+            // one: give it the chance to come up. The last wave too: the
+            // apps used to start before their only dependency was ready.
+            wait_until_ready(&config, wave, silent).await;
         }
         if crate::output::human(silent) {
             println!("\n✓ All dependencies started successfully");
@@ -197,62 +197,75 @@ pub(super) fn start_waves(config: &Config, missing: &[String]) -> Result<Vec<Vec
 
 /// Wait (bounded) for the health checks of a freshly started wave to pass.
 ///
-/// Apps without a health check are only known to be spawned; nothing to wait
-/// for. A dependency that is still not healthy after the timeout is reported
-/// but does not abort the start: the dependent app may well retry on its own.
+/// The dependencies of a wave are waited for together, so a wave takes at
+/// most [`DEPENDENCY_READY_TIMEOUT`], however many it holds. Apps without a
+/// health check are only known to be spawned; nothing to wait for. A
+/// dependency that is still not healthy after the timeout is reported but
+/// does not abort the start: the dependent app may well retry on its own.
 async fn wait_until_ready(config: &Config, wave: &[String], silent: bool) {
     let engine = process_manager::HealthCheckEngine::new();
-    for key in wave {
-        let Some((project, app)) = key.split_once('/') else {
-            continue;
-        };
-        let Ok(resolved) =
-            crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)
-        else {
-            continue;
-        };
-        // The check the dependency was just started with: in a git worktree
-        // it targets the instance's shifted port, not the configured one.
-        let started = crate::process_manager_support::state_store()
-            .ok()
-            .and_then(|store| {
-                crate::process_manager_support::find_process(
-                    &store,
-                    &resolved.project,
-                    &resolved.app_name,
-                    None,
-                )
-                .ok()
-                .flatten()
-            });
-        let check = match started {
-            Some(process) => process.task.health_check,
-            None => crate::process_manager_support::to_pm_health_check(
-                resolved.app.health_check.as_ref(),
-            ),
-        };
-        if matches!(check, process_manager::HealthCheck::Process {}) {
-            continue;
-        }
+    futures::future::join_all(
+        wave.iter()
+            .map(|key| wait_until_dependency_ready(config, &engine, key, silent)),
+    )
+    .await;
+}
 
-        let deadline = tokio::time::Instant::now() + DEPENDENCY_READY_TIMEOUT;
-        let mut healthy = false;
-        while tokio::time::Instant::now() < deadline {
-            if engine.check(&check).await.unwrap_or(false) {
-                healthy = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+async fn wait_until_dependency_ready(
+    config: &Config,
+    engine: &process_manager::HealthCheckEngine,
+    key: &str,
+    silent: bool,
+) {
+    let Some((project, app)) = key.split_once('/') else {
+        return;
+    };
+    let Ok(resolved) =
+        crate::worktrees::resolve(config, app, Some(project), crate::worktrees::Mode::Exact)
+    else {
+        return;
+    };
+    // The check the dependency was just started with: in a git worktree
+    // it targets the instance's shifted port, not the configured one.
+    let started = crate::process_manager_support::state_store()
+        .ok()
+        .and_then(|store| {
+            crate::process_manager_support::find_process(
+                &store,
+                &resolved.project,
+                &resolved.app_name,
+                None,
+            )
+            .ok()
+            .flatten()
+        });
+    let check = match started {
+        Some(process) => process.task.health_check,
+        None => {
+            crate::process_manager_support::to_pm_health_check(resolved.app.health_check.as_ref())
         }
-        if !healthy {
-            tracing::warn!(dependency = %key, "Dependency not healthy before timeout");
-            if crate::output::human(silent) {
-                println!(
-                    "⚠ {} is not healthy after {}s, continuing",
-                    key,
-                    DEPENDENCY_READY_TIMEOUT.as_secs()
-                );
-            }
+    };
+    if matches!(check, process_manager::HealthCheck::Process {}) {
+        return;
+    }
+
+    let deadline = tokio::time::Instant::now() + DEPENDENCY_READY_TIMEOUT;
+    let mut healthy = false;
+    while tokio::time::Instant::now() < deadline {
+        if engine.check(&check).await.unwrap_or(false) {
+            healthy = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    if !healthy {
+        tracing::warn!(dependency = %key, "Dependency not healthy before timeout");
+        if crate::output::human(silent) {
+            println!(
+                "⚠ {} is not healthy after {}s, continuing",
+                key,
+                DEPENDENCY_READY_TIMEOUT.as_secs()
+            );
         }
     }
 }

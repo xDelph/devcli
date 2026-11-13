@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedProcess {
@@ -41,10 +41,27 @@ pub struct StateStore {
     base_dir: PathBuf,
 }
 
+/// What [`StateStore::spawn_unless_running`] did.
+#[derive(Debug)]
+pub enum SpawnOutcome {
+    /// The process was spawned and recorded.
+    Started {
+        process: ManagedProcess,
+        output_rx: crate::engine::OutputReceiver,
+    },
+    /// The entry already held this live process; nothing was spawned.
+    AlreadyRunning(ManagedProcess),
+}
+
 /// Metadata key set by `stop` before it signals a process. pm-daemon leaves such
 /// an entry alone: a process that dies because the user stopped it is not a
 /// crash to recover from.
 pub const STOPPING_KEY: &str = "stopping";
+
+/// Metadata key set next to [`STOPPING_KEY`]: when the stop began (RFC 3339).
+/// A live process holding the stopper's PID that started later is not the
+/// stopper (its PID was reused), so the stop counts as abandoned.
+pub const STOPPING_SINCE_KEY: &str = "stopping_since";
 
 /// Metadata key holding the PID of the attached `devcli start` that owns the
 /// process. The owner stops its processes when it exits; pm-daemon stops them
@@ -61,11 +78,23 @@ pub const SHARED_KEY: &str = "shared";
 /// app has nothing left to serve and pm-daemon stops it.
 pub const WORKTREE_ROOT_KEY: &str = "worktree_root";
 
+/// How long [`StateStore::lock_entry`] waits for another holder of the lock.
+///
+/// Holders keep it for a few milliseconds (a load/update/save), or for the
+/// kill and respawn of an automatic restart. Waiting forever turned any stuck
+/// holder into a `devcli stop` that hung without a word.
+pub const ENTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Interval between two attempts to take a busy entry lock.
+const ENTRY_LOCK_POLL: Duration = Duration::from_millis(20);
+
 /// Exclusive hold on one state entry; released on drop.
 ///
-/// Serialises the read-modify-write sequences of `stop` and of pm-daemon's
-/// automatic restart, which otherwise interleave: the daemon could respawn an
-/// app the user had just stopped and leave the new process running untracked.
+/// Serialises the read-modify-write sequences of `stop`, `start`, health
+/// checks and pm-daemon's automatic restart, which otherwise interleave: the
+/// daemon could respawn an app the user had just stopped and leave the new
+/// process running untracked, or write back a copy of the entry that lacks
+/// the `stopping` flag or the PID of a restart.
 pub struct EntryLock {
     file: fs::File,
 }
@@ -227,28 +256,57 @@ pub fn group_has_live_member(pgid: i32) -> bool {
 impl StateStore {
     /// Check if a process or its group is still running
     pub fn is_running(&self, process: &ManagedProcess) -> bool {
-        #[cfg(unix)]
-        {
-            // The tracked PID answers for itself - as long as it is still ours.
-            if crate::engine::pid_alive(process.pid) {
-                return !process.pid_was_reused();
-            }
-
-            // The leader is gone, but the app may still be alive as a child of its
-            // group: `npm run dev` records npm's pid while node keeps serving.
-            // Only trust the group if it still holds a live, non-zombie member.
-            process.pgid.is_some_and(group_has_live_member)
+        // The tracked PID answers for itself - as long as it is still ours.
+        if crate::engine::pid_alive(process.pid) {
+            return !process.pid_was_reused();
         }
-        #[cfg(not(unix))]
-        {
-            false // TODO: Windows support
+
+        // The leader is gone, but the app may still be alive as a child of its
+        // group: `npm run dev` records npm's pid while node keeps serving.
+        // Only trust the group if it still holds a live, non-zombie member.
+        process.pgid.is_some_and(group_has_live_member)
+    }
+
+    /// Wait (at most [`ENTRY_LOCK_TIMEOUT`]) until no one else is modifying
+    /// entry `id`, and hold it until the returned guard is dropped.
+    ///
+    /// Hold it only around short load/update/save sequences. This blocks the
+    /// calling thread: from async code (pm-daemon), use
+    /// [`Self::lock_entry_async`] instead.
+    pub fn lock_entry(&self, id: &str) -> Result<EntryLock> {
+        let deadline = std::time::Instant::now() + ENTRY_LOCK_TIMEOUT;
+        loop {
+            if let Some(lock) = self.try_lock_entry(id)? {
+                return Ok(lock);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(lock_timeout(id));
+            }
+            std::thread::sleep(ENTRY_LOCK_POLL);
         }
     }
 
-    /// Block until no one else is modifying entry `id`.
+    /// [`Self::lock_entry`] for async code: waits without blocking the thread.
     ///
-    /// Hold it only around short load/update/save sequences.
-    pub fn lock_entry(&self, id: &str) -> Result<EntryLock> {
+    /// `flock` blocks the thread that calls it. Inside pm-daemon's runtime a
+    /// task waiting that way could occupy the very worker the holder needed
+    /// to make progress, and the daemon (and every `devcli stop` waiting on
+    /// the lock) hung for good.
+    pub async fn lock_entry_async(&self, id: &str) -> Result<EntryLock> {
+        let deadline = tokio::time::Instant::now() + ENTRY_LOCK_TIMEOUT;
+        loop {
+            if let Some(lock) = self.try_lock_entry(id)? {
+                return Ok(lock);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(lock_timeout(id));
+            }
+            tokio::time::sleep(ENTRY_LOCK_POLL).await;
+        }
+    }
+
+    /// Take the lock on entry `id` if nobody holds it, without waiting.
+    pub fn try_lock_entry(&self, id: &str) -> Result<Option<EntryLock>> {
         let dir = self.base_dir.join("locks");
         fs::create_dir_all(&dir)?;
         let file = fs::OpenOptions::new()
@@ -257,9 +315,16 @@ impl StateStore {
             .truncate(false)
             .open(dir.join(format!("{id}.entry.lock")))
             .context("Failed to open state entry lock")?;
-        file.lock_exclusive()
-            .context("Failed to lock state entry")?;
-        Ok(EntryLock { file })
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(EntryLock { file })),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(anyhow::Error::new(e).context("Failed to lock state entry")),
+        }
     }
 
     /// Flag entry `id` as being stopped and return its current content.
@@ -267,17 +332,140 @@ impl StateStore {
     /// Callers must signal the PID of the returned entry, not of an earlier
     /// snapshot: pm-daemon may have restarted the app in the meantime.
     pub fn mark_stopping(&self, id: &str) -> Result<Option<ManagedProcess>> {
-        let _guard = self.lock_entry(id)?;
+        let guard = self.lock_entry(id)?;
+        self.mark_stopping_locked(&guard, id)
+    }
+
+    /// [`Self::mark_stopping`] for async code (see [`Self::lock_entry_async`]).
+    pub async fn mark_stopping_async(&self, id: &str) -> Result<Option<ManagedProcess>> {
+        let guard = self.lock_entry_async(id).await?;
+        self.mark_stopping_locked(&guard, id)
+    }
+
+    fn mark_stopping_locked(&self, _guard: &EntryLock, id: &str) -> Result<Option<ManagedProcess>> {
         let Some(mut process) = self.load(id)? else {
             return Ok(None);
         };
-        // Who is stopping it: if that process dies midway, pm-daemon finishes
-        // the job instead of skipping the entry forever.
+        // Who is stopping it, and since when: if that process dies midway,
+        // pm-daemon finishes the job instead of skipping the entry forever.
         process
             .metadata
             .insert(STOPPING_KEY.to_string(), std::process::id().to_string());
+        process
+            .metadata
+            .insert(STOPPING_SINCE_KEY.to_string(), Utc::now().to_rfc3339());
         self.save(&process)?;
         Ok(Some(process))
+    }
+
+    /// Delete entry `id` if it still describes the process `pid`. Returns
+    /// whether it was deleted.
+    ///
+    /// For whoever stopped (or gave up on) that process: by the time it is
+    /// done, a fresh `start` may have recorded a new process under the same
+    /// id, and a plain `delete` would leave that one running untracked.
+    pub fn forget(&self, id: &str, pid: u32) -> Result<bool> {
+        let guard = self.lock_entry(id)?;
+        self.forget_locked(&guard, id, pid)
+    }
+
+    /// [`Self::forget`] for async code (see [`Self::lock_entry_async`]).
+    pub async fn forget_async(&self, id: &str, pid: u32) -> Result<bool> {
+        let guard = self.lock_entry_async(id).await?;
+        self.forget_locked(&guard, id, pid)
+    }
+
+    /// [`Self::forget`] for a caller that already holds the lock on `id`.
+    pub fn forget_locked(&self, _guard: &EntryLock, id: &str, pid: u32) -> Result<bool> {
+        match self.load(id)? {
+            Some(current) if current.pid == pid => {
+                self.delete(id)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Apply `update` to entry `id` and save it, if the entry still describes
+    /// the process `pid` and nobody is stopping it. Returns the saved entry.
+    ///
+    /// For updates computed from an earlier read (a health check that took
+    /// seconds): writing that earlier copy back would drop a `stopping` flag
+    /// set meanwhile (and the stopped app came back) or the PID of a restart.
+    pub fn update_if_current(
+        &self,
+        id: &str,
+        pid: u32,
+        update: impl FnOnce(&mut ManagedProcess),
+    ) -> Result<Option<ManagedProcess>> {
+        let guard = self.lock_entry(id)?;
+        self.update_if_current_locked(&guard, id, pid, update)
+    }
+
+    /// [`Self::update_if_current`] for async code (see [`Self::lock_entry_async`]).
+    pub async fn update_if_current_async(
+        &self,
+        id: &str,
+        pid: u32,
+        update: impl FnOnce(&mut ManagedProcess),
+    ) -> Result<Option<ManagedProcess>> {
+        let guard = self.lock_entry_async(id).await?;
+        self.update_if_current_locked(&guard, id, pid, update)
+    }
+
+    fn update_if_current_locked(
+        &self,
+        _guard: &EntryLock,
+        id: &str,
+        pid: u32,
+        update: impl FnOnce(&mut ManagedProcess),
+    ) -> Result<Option<ManagedProcess>> {
+        let Some(mut current) = self.load(id)? else {
+            return Ok(None);
+        };
+        if current.pid != pid || current.is_stopping() {
+            return Ok(None);
+        }
+        update(&mut current);
+        self.save(&current)?;
+        Ok(Some(current))
+    }
+
+    /// Spawn `task` and record it under `task.id`, unless that entry already
+    /// holds a live process.
+    ///
+    /// The check, the spawn and the save happen under the entry lock: two
+    /// commands starting the same app (`start api` and `start worker` both
+    /// auto-starting a missing redis) used to both spawn it, the second save
+    /// overwriting the first and leaving one copy running untracked.
+    pub async fn spawn_unless_running(
+        &self,
+        task: Task,
+        metadata: HashMap<String, String>,
+    ) -> Result<SpawnOutcome> {
+        let _guard = self.lock_entry_async(&task.id).await?;
+        if let Some(existing) = self.load(&task.id)?
+            && self.is_running(&existing)
+        {
+            return Ok(SpawnOutcome::AlreadyRunning(existing));
+        }
+        let running = crate::engine::spawn(&task).await?;
+        let process = ManagedProcess {
+            id: task.id.clone(),
+            pid: running.pid,
+            pgid: running.pgid,
+            task,
+            start_time: Utc::now(),
+            metadata,
+            runtime: ProcessRuntime::default(),
+        };
+        // Replaces a dead entry, if any: pm-daemon, about to restart it,
+        // finds another PID and leaves it alone.
+        self.save(&process)?;
+        Ok(SpawnOutcome::Started {
+            process,
+            output_rx: running.output_rx,
+        })
     }
 
     /// Record that `process` is being restarted, until the returned marker is
@@ -288,8 +476,18 @@ impl StateStore {
         let owner = process
             .owner_pid()
             .map(|o| o.to_string())
-            .unwrap_or_default();
-        fs::write(&path, format!("{} {}", std::process::id(), owner))?;
+            .unwrap_or_else(|| "-".to_string());
+        // When the marker was written: a live PID that started later is not
+        // the restarter (it died and the OS reused its PID).
+        fs::write(
+            &path,
+            format!(
+                "{} {} {}",
+                std::process::id(),
+                owner,
+                Utc::now().timestamp()
+            ),
+        )?;
         Ok(RestartMarker { path })
     }
 
@@ -309,7 +507,17 @@ impl StateStore {
             };
             let mut fields = content.split_whitespace();
             let restarter = fields.next().and_then(|p| p.parse::<u32>().ok());
-            restarter.is_some_and(crate::engine::pid_alive) && fields.next() == Some(owner)
+            let for_owner = fields.next() == Some(owner);
+            // Markers written by older versions carry no time.
+            let written = fields
+                .next()
+                .and_then(|t| t.parse::<i64>().ok())
+                .and_then(|t| DateTime::<Utc>::from_timestamp(t, 0));
+            for_owner
+                && restarter.is_some_and(|pid| {
+                    crate::engine::pid_alive(pid)
+                        && !written.is_some_and(|since| pid_started_after(pid, since))
+                })
         })
     }
 
@@ -329,7 +537,17 @@ impl StateStore {
 
     /// Let entry `id` go: it keeps running, owned by nobody, until stopped.
     pub fn release(&self, id: &str) -> Result<()> {
-        let _guard = self.lock_entry(id)?;
+        let guard = self.lock_entry(id)?;
+        self.release_locked(&guard, id)
+    }
+
+    /// [`Self::release`] for async code (see [`Self::lock_entry_async`]).
+    pub async fn release_async(&self, id: &str) -> Result<()> {
+        let guard = self.lock_entry_async(id).await?;
+        self.release_locked(&guard, id)
+    }
+
+    fn release_locked(&self, _guard: &EntryLock, id: &str) -> Result<()> {
         if let Some(mut process) = self.load(id)? {
             process.metadata.remove(OWNER_PID_KEY);
             process.metadata.remove(SHARED_KEY);
@@ -413,8 +631,24 @@ impl StateStore {
             // Every CLI command runs this first. Deleting a crashed app that the
             // daemon is about to restart (it checks every few seconds, then waits
             // out the backoff) silently disabled auto-restart.
-            if !self.is_running(&proc) && !self.awaiting_restart(&proc) {
-                self.delete(&proc.id)?;
+            if self.is_running(&proc) || self.awaiting_restart(&proc) {
+                continue;
+            }
+            // Someone is working on this entry (a stop, a start, a restart):
+            // leave it to them rather than wait.
+            let Some(guard) = self.try_lock_entry(&proc.id)? else {
+                continue;
+            };
+            // Decide on the entry as it is now: a `start` may have recorded a
+            // new process under this id since the listing.
+            let Some(current) = self.load(&proc.id)? else {
+                continue;
+            };
+            if current.pid == proc.pid
+                && !self.is_running(&current)
+                && !self.awaiting_restart(&current)
+                && self.forget_locked(&guard, &proc.id, proc.pid)?
+            {
                 cleaned.push(proc.id);
             }
         }
@@ -560,6 +794,21 @@ fn os_start_time(pid: u32) -> Option<DateTime<Utc>> {
     Some(Utc::now() - age)
 }
 
+/// Whether the process now holding `pid` started after `since`: whatever
+/// held the PID at `since` exited and the OS gave it to something else.
+/// `false` when the age cannot be read.
+fn pid_started_after(pid: u32, since: DateTime<Utc>) -> bool {
+    os_start_time(pid).is_some_and(|os_start| os_start > since + PID_REUSE_TOLERANCE)
+}
+
+fn lock_timeout(id: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Timed out after {}s waiting for the lock on process entry '{id}': another devcli \
+         command or pm-daemon is still working on it. Try again in a moment.",
+        ENTRY_LOCK_TIMEOUT.as_secs()
+    )
+}
+
 impl ManagedProcess {
     /// Whether `stop` is taking this process down.
     pub fn is_stopping(&self) -> bool {
@@ -573,20 +822,27 @@ impl ManagedProcess {
     /// unrelated process of the user's that happened to receive the PID. When
     /// the age cannot be read the PID is assumed to be ours.
     pub fn pid_was_reused(&self) -> bool {
-        os_start_time(self.pid)
-            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+        pid_started_after(self.pid, self.start_time)
     }
 
     /// Whether the process that set the `stopping` flag is gone (killed while
-    /// stopping the app). Entries flagged by older versions (`true`) count as
-    /// abandoned.
+    /// stopping the app), including when its PID now belongs to a process
+    /// started after the stop began. Entries flagged by older versions
+    /// (`true`) count as abandoned.
     pub fn stopper_gone(&self) -> bool {
-        match self.metadata.get(STOPPING_KEY) {
-            None => false,
-            Some(value) => value
-                .parse::<u32>()
-                .map_or(true, |pid| !crate::engine::pid_alive(pid)),
+        let Some(value) = self.metadata.get(STOPPING_KEY) else {
+            return false;
+        };
+        let Ok(stopper) = value.parse::<u32>() else {
+            return true;
+        };
+        if !crate::engine::pid_alive(stopper) {
+            return true;
         }
+        self.metadata
+            .get(STOPPING_SINCE_KEY)
+            .and_then(|since| DateTime::parse_from_rfc3339(since).ok())
+            .is_some_and(|since| pid_started_after(stopper, since.with_timezone(&Utc)))
     }
 
     /// Whether another app depends on this owned process.
@@ -627,8 +883,7 @@ impl ManagedProcess {
         if !crate::engine::pid_alive(owner) {
             return true;
         }
-        os_start_time(owner)
-            .is_some_and(|os_start| os_start > self.start_time + PID_REUSE_TOLERANCE)
+        pid_started_after(owner, self.start_time)
     }
 
     pub fn should_restart(&self, policy: &RestartPolicy) -> bool {

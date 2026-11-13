@@ -11,7 +11,7 @@ use crate::process_manager_support::{
 };
 use crate::utils::path::expand_path;
 use crate::Result;
-use process_manager::state::{ManagedProcess, ProcessRuntime};
+use process_manager::state::SpawnOutcome;
 use process_manager::{engine, Task};
 use std::collections::HashMap;
 
@@ -92,23 +92,22 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     let store = state_store()?;
     store.cleanup_dead()?;
 
-    // Check if this app/environment is already running
+    // Check if this app/environment is already running (checked again under
+    // the entry lock when the process is spawned). A dead entry left is
+    // replaced when the new process is recorded.
     if let Some(process) = find_process(
         &store,
         &resolved_app.project,
         &resolved_app.app_name,
         Some(&environment),
-    )? {
-        if store.is_running(&process) {
-            anyhow::bail!(
-                "Process '{}:{}' is already running with PID {}",
-                args.app_name,
-                args.command_variant,
-                process.pid
-            );
-        } else {
-            store.delete(&process.id)?;
-        }
+    )? && store.is_running(&process)
+    {
+        anyhow::bail!(
+            "Process '{}:{}' is already running with PID {}",
+            args.app_name,
+            args.command_variant,
+            process.pid
+        );
     }
 
     // Dependency checking
@@ -199,12 +198,38 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         health_check,
         restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
     };
+    let log_file = task.log_file.clone();
 
-    // Spawn process via process-manager
-    let running = engine::spawn(&task).await?;
-    let pid = running.pid;
-    let pgid = running.pgid;
-    let output_rx = running.output_rx;
+    let mut metadata = HashMap::new();
+    metadata.insert("project".to_string(), resolved_app.project.clone());
+    metadata.insert("app_config_name".to_string(), resolved_app.app_name.clone());
+    metadata.insert("environment".to_string(), environment.clone());
+    metadata.insert("command_variant".to_string(), args.command_variant.clone());
+    if let Some(stage_name) = &stage {
+        metadata.insert("stage".to_string(), stage_name.clone());
+    }
+    if let Some(alt) = &resolved_app.app.alternative_name {
+        metadata.insert("alternative_name".to_string(), alt.clone());
+    }
+    crate::worktrees::record(&mut metadata, &resolved_app);
+
+    // Listen for Ctrl+C before anything runs: the process is detached (its
+    // own session), so an interrupt with the default action killed devcli
+    // and left the process behind, untracked until the save below.
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+
+    // Spawn and record in one step: the process is tracked from the start
+    // (it used to be saved only after the 2s wait below), and a concurrent
+    // `run`/`start` of the same app cannot spawn a second copy.
+    let (pid, output_rx) = match store.spawn_unless_running(task, metadata).await? {
+        SpawnOutcome::Started { process, output_rx } => (process.pid, output_rx),
+        SpawnOutcome::AlreadyRunning(existing) => anyhow::bail!(
+            "Process '{}:{}' is already running with PID {}",
+            args.app_name,
+            args.command_variant,
+            existing.pid
+        ),
+    };
 
     if show_output || args.output_tx.is_some() {
         let display_name = resolved_app
@@ -220,10 +245,6 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         drop(output_rx);
     }
 
-    // Wait a moment to check if the process completed or crashed
-    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-
-    let log_file = task.log_file.clone();
     let json_result = |running: bool| -> Result<()> {
         if crate::output::json_enabled() && !silent {
             crate::output::print_json(&serde_json::json!({
@@ -239,7 +260,15 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         Ok(())
     };
 
+    // Wait a moment to check if the process completed or crashed
+    let interrupted = tokio::select! {
+        _ = tokio::time::sleep(tokio::time::Duration::from_millis(2000)) => false,
+        _ = interrupt.recv() => true,
+    };
+
     if !engine::pid_alive(pid) {
+        // A one-shot command: nothing left to track.
+        store.forget(&id, pid)?;
         emit_line(
             silent,
             args.output_tx.as_ref(),
@@ -252,31 +281,6 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Save process metadata
-    let mut metadata = HashMap::new();
-    metadata.insert("project".to_string(), resolved_app.project.clone());
-    metadata.insert("app_config_name".to_string(), resolved_app.app_name.clone());
-    metadata.insert("environment".to_string(), environment.clone());
-    metadata.insert("command_variant".to_string(), args.command_variant.clone());
-    if let Some(stage_name) = &stage {
-        metadata.insert("stage".to_string(), stage_name.clone());
-    }
-    if let Some(alt) = &resolved_app.app.alternative_name {
-        metadata.insert("alternative_name".to_string(), alt.clone());
-    }
-    crate::worktrees::record(&mut metadata, &resolved_app);
-
-    let process_info = ManagedProcess {
-        id,
-        pid,
-        pgid,
-        task,
-        start_time: chrono::Utc::now(),
-        metadata,
-        runtime: ProcessRuntime::default(),
-    };
-
-    store.save(&process_info)?;
     store.ensure_daemon_running()?;
 
     emit_line(
@@ -289,6 +293,16 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
     );
 
     json_result(true)?;
+
+    if interrupted {
+        emit_line(
+            silent,
+            args.output_tx.as_ref(),
+            "Process is running in the background. Use 'devcli status' to check process status."
+                .to_string(),
+        );
+        return Ok(());
+    }
 
     // Non-detached mode: keep viewing until Ctrl+C or process exits. `--json`
     // implies detached, like `start`: an agent waiting on this would hang.
@@ -311,7 +325,7 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
+                _ = interrupt.recv() => {
                     emit_line(
                         silent,
                         args.output_tx.as_ref(),
@@ -325,14 +339,22 @@ pub async fn run_command(args: RunCommandArgs) -> Result<()> {
                     break;
                 }
                 _ = interval.tick() => {
-                    if let Some(latest) = store.load(&process_info.id)? {
+                    if let Some(latest) = store.load(&id)? {
                         if !store.is_running(&latest) {
+                            // pm-daemon restarts it shortly: keep its entry.
+                            let restarting = store.awaiting_restart(&latest);
                             emit_line(
                                 silent,
                                 args.output_tx.as_ref(),
-                                "\n\nProcess exited.".to_string(),
+                                if restarting {
+                                    "\n\nProcess exited; pm-daemon will restart it.".to_string()
+                                } else {
+                                    "\n\nProcess exited.".to_string()
+                                },
                             );
-                            let _ = store.delete(&process_info.id);
+                            if !restarting {
+                                let _ = store.forget(&id, latest.pid);
+                            }
                             break;
                         }
                     } else {

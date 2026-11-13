@@ -11,7 +11,7 @@
 //    - Prevents blocking the main thread during status polling
 //    - Ensures smooth UI responsiveness even during heavy operations
 //
-// 3. Efficient Event Polling: 250ms timeout balances responsiveness and CPU
+// 3. Efficient Event Polling: 100ms timeout balances responsiveness and CPU
 //    - Quick enough for smooth user interaction
 //    - Long enough to avoid busy-waiting and wasting CPU cycles
 //
@@ -82,20 +82,74 @@ impl Drop for TerminalGuard {
     }
 }
 
-/// Restore the terminal before the panic message is printed.
+/// The thread running the TUI's event loop, while it runs.
+static TUI_THREAD: Mutex<Option<std::thread::ThreadId>> = Mutex::new(None);
+
+/// The message of a panic in a background thread (a tokio task) while the
+/// TUI runs, for the event loop to show in the error bar.
+static TASK_PANIC: Mutex<Option<String>> = Mutex::new(None);
+
+/// The text of a panic: its message and where it happened.
+fn panic_text(info: &std::panic::PanicHookInfo<'_>) -> String {
+    let payload = info.payload();
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".to_string());
+    match info.location() {
+        Some(at) => format!("{message} ({}:{})", at.file(), at.line()),
+        None => message,
+    }
+}
+
+/// Restore the terminal before the message of a panic of the TUI itself is
+/// printed.
 ///
-/// Without it a panic in the TUI (or in one of its tasks) left the shell in
-/// raw mode on the alternate screen with the mouse captured: the message was
-/// unreadable and the terminal unusable until `reset`.
+/// Without it a panic in the event loop left the shell in raw mode on the
+/// alternate screen with the mouse captured: the message was unreadable and
+/// the terminal unusable until `reset`.
+///
+/// A panic in a background thread (a tokio task: the status poller, a
+/// command) does not end the TUI - tokio catches it and the event loop goes
+/// on. It used to restore the terminal all the same and print over the
+/// screen, leaving the still-running TUI garbled. Now it only records the
+/// message, which the event loop shows in the error bar.
 fn install_restore_on_panic() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            restore_terminal();
-            previous(info);
+            let tui_thread = *TUI_THREAD.lock().unwrap_or_else(|e| e.into_inner());
+            match tui_thread {
+                Some(id) if id != std::thread::current().id() => {
+                    let text = panic_text(info);
+                    tracing::error!(panic = %text, "background task panicked");
+                    *TASK_PANIC.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+                }
+                _ => {
+                    restore_terminal();
+                    previous(info);
+                }
+            }
         }));
     });
+}
+
+/// Marks the calling thread as the TUI's while alive.
+struct TuiThreadGuard;
+
+impl TuiThreadGuard {
+    fn new() -> Self {
+        *TUI_THREAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
+        Self
+    }
+}
+
+impl Drop for TuiThreadGuard {
+    fn drop(&mut self) {
+        *TUI_THREAD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
 }
 
 /// The main TUI application struct
@@ -204,16 +258,22 @@ impl TuiApp {
                 let tx = result_tx.clone();
                 tokio::spawn(async move {
                     let id = request.id;
-                    let result = crate::tui::command_executor::execute_command_async(
+                    // In a task of its own: a panic in the command ends that
+                    // task, and its popup gets an error instead of waiting
+                    // forever.
+                    let run = tokio::spawn(crate::tui::command_executor::execute_command_async(
                         request.clone(),
                         tx.clone(),
-                    )
-                    .await;
-                    let _ = match result {
-                        Ok(message) => tx.send(CommandResult::Success { id, message }),
-                        Err(e) => tx.send(CommandResult::Error {
+                    ));
+                    let _ = match run.await {
+                        Ok(Ok(message)) => tx.send(CommandResult::Success { id, message }),
+                        Ok(Err(e)) => tx.send(CommandResult::Error {
                             id,
                             message: format!("{:#}", e),
+                        }),
+                        Err(e) => tx.send(CommandResult::Error {
+                            id,
+                            message: format!("Internal error: {e}"),
                         }),
                     };
                 });
@@ -247,8 +307,10 @@ impl TuiApp {
         crate::debug!("TuiApp::run() starting");
 
         // Setup terminal. From here on the terminal is restored however this
-        // function ends: normal return, error (`?`), or a panic anywhere.
+        // function ends: normal return, error (`?`), or a panic of the event
+        // loop (see `install_restore_on_panic`).
         install_restore_on_panic();
+        let _tui_thread = TuiThreadGuard::new();
         enable_raw_mode().context("Failed to enable raw mode")?;
         let _restore = TerminalGuard;
         let mut stdout = io::stdout();
@@ -286,14 +348,20 @@ impl TuiApp {
     pub(crate) fn tick(&mut self) -> Result<()> {
         let mut needs_redraw = false;
 
+        // A background task panicked: say so (it used to go unnoticed, or
+        // garble the screen).
+        let task_panic = TASK_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(text) = task_panic
+            && let Ok(mut state) = self.state.lock()
+        {
+            state.error_message = Some(format!("A background task failed: {text}"));
+            needs_redraw = true;
+        }
+
         // Delegate popup checks to manager
         needs_redraw |=
             self.popup_manager
                 .tick(&self.state, &mut self.command_rx, &self.main_view)?;
-
-        if self.popup_manager.active_popup.is_some() {
-            // If popup is active, we might need to redraw more often or differently
-        }
 
         self.check_log_viewer_creation()?;
         self.refresh_log_viewer()?;
@@ -350,6 +418,11 @@ impl TuiApp {
         crate::tui::input::router::handle_key_event(self, key)
     }
 
+    /// Handles a mouse-wheel step (as the Up/Down key it maps to)
+    pub(crate) fn handle_scroll_event(&mut self, key: KeyEvent) -> Result<()> {
+        crate::tui::input::router::handle_scroll_event(self, key)
+    }
+
     /// Handles input for the main view
     /// Returns true if the key was handled, false otherwise
     pub(crate) fn handle_main_view_input(&mut self, key: KeyEvent) -> Result<bool> {
@@ -368,9 +441,9 @@ impl TuiApp {
             error_message: None,
             status_message: None,
             command_execution_requested: None,
-            stop_requested: false,
-            restart_requested: false,
-            env_selection_requested: false,
+            stop_requested: None,
+            restart_requested: None,
+            env_selection_requested: None,
             status_updated: false,
         }));
 
@@ -449,13 +522,9 @@ impl TuiApp {
 
     /// Handles the back action (Esc key)
     /// Returns to the previous view or main view
+    ///
+    /// Not reached with a popup open: the popup takes Esc first.
     pub(crate) fn handle_back(&mut self) {
-        // If popup is open, close it instead of going back
-        if self.popup_manager.is_active() {
-            self.popup_manager.close_popup();
-            return;
-        }
-
         // Clean up log viewer when leaving that view
         if let Ok(state) = self.state.lock()
             && matches!(state.current_view, ViewType::LogViewer { .. })
@@ -577,12 +646,12 @@ impl TuiApp {
                 state.status_updated = false; // Clear the flag
             }
 
-            // Get the current app status if popup is open
-            let app_status = if self.popup_manager.is_active() {
-                state.selected_app().map(|app| app.status.display_label())
-            } else {
-                None
-            };
+            // The status of the app the open popup is about - not of the
+            // selected app, which can be another one by now.
+            let app_status = self.popup_manager.active_popup.as_ref().and_then(|popup| {
+                let key = crate::tui::state::AppKey::new(&popup.project, &popup.app_name);
+                state.find_app(&key).map(|app| app.status.display_label())
+            });
 
             (updated, app_status)
         };
@@ -602,51 +671,95 @@ impl TuiApp {
     /// Starts a background task that polls process status using a hybrid strategy:
     /// fast checks on `.status_changed` every 250ms, plus a full refresh every 2s.
     /// Returns a JoinHandle that can be used to abort the task when the app exits.
+    ///
+    /// The poller is supervised: if it panics it is started again, and the
+    /// error bar says so (a panic used to stop the status updates silently).
     fn start_status_polling(&self) -> tokio::task::JoinHandle<()> {
         // Clone Arc references so they can be moved into the async task
         let state = Arc::clone(&self.state);
         let state_store = Arc::clone(&self.state_store);
 
         tokio::spawn(async move {
-            let mut fast_interval = interval(Duration::from_millis(250));
-            let mut full_interval = interval(Duration::from_secs(2));
-            let mut last_mtime: Option<SystemTime> =
-                state_store.last_status_change().ok().flatten();
+            /// Aborts the poller when the supervisor is aborted (dropped).
+            struct AbortOnDrop(tokio::task::AbortHandle);
+            impl Drop for AbortOnDrop {
+                fn drop(&mut self) {
+                    self.0.abort();
+                }
+            }
 
             loop {
-                tokio::select! {
-                    _ = fast_interval.tick() => {
-                        match state_store.last_status_change() {
-                            Ok(Some(mtime)) if last_mtime != Some(mtime) => {
-                                last_mtime = Some(mtime);
-                                Self::update_all_app_statuses(&state, &state_store).await;
-                            }
-                            Ok(None) | Err(_) => {}
-                            Ok(Some(_)) => {}
+                let mut poller = tokio::spawn(Self::poll_statuses(
+                    Arc::clone(&state),
+                    Arc::clone(&state_store),
+                ));
+                let _abort = AbortOnDrop(poller.abort_handle());
+                match (&mut poller).await {
+                    Err(e) if e.is_panic() => {
+                        if let Ok(mut state) = state.lock() {
+                            state.error_message =
+                                Some("Status updates crashed; restarting them".to_string());
                         }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
-                    _ = full_interval.tick() => {
-                        Self::update_all_app_statuses(&state, &state_store).await;
-                        last_mtime = state_store.last_status_change().ok().flatten();
-                    }
+                    // Cancelled, or (it never does) returned.
+                    _ => return,
                 }
             }
         })
     }
 
-    /// Updates the status of all apps by checking the process-manager state store.
+    /// The status polling loop (see [`Self::start_status_polling`]).
+    async fn poll_statuses(
+        state: Arc<Mutex<AppState>>,
+        state_store: Arc<process_manager::StateStore>,
+    ) {
+        let mut fast_interval = interval(Duration::from_millis(250));
+        let mut full_interval = interval(Duration::from_secs(2));
+        let mut last_mtime: Option<SystemTime> = state_store.last_status_change().ok().flatten();
+
+        loop {
+            tokio::select! {
+                _ = fast_interval.tick() => {
+                    if let Ok(Some(mtime)) = state_store.last_status_change()
+                        && last_mtime != Some(mtime)
+                        // Only once the change is applied: an update skipped
+                        // because the UI held the lock is retried next tick
+                        // (it used to wait for the next full refresh).
+                        && Self::update_all_app_statuses(&state, &state_store).await
+                    {
+                        last_mtime = Some(mtime);
+                    }
+                }
+                _ = full_interval.tick() => {
+                    // Read before updating: a change made during the update
+                    // is still seen by the next fast tick.
+                    let mtime = state_store.last_status_change().ok().flatten();
+                    if Self::update_all_app_statuses(&state, &state_store).await {
+                        last_mtime = mtime;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Updates the status of all apps by checking the process-manager state
+    /// store. Returns whether it did (it skips when the UI holds the lock).
     async fn update_all_app_statuses(
         state: &Arc<Mutex<AppState>>,
         state_store: &Arc<process_manager::StateStore>,
-    ) {
+    ) -> bool {
         // Which apps to look at - a brief lock. If the UI holds it, skip.
-        let keys: Vec<(String, String)> = match state.try_lock() {
-            Ok(state) => state
-                .projects
-                .iter()
-                .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
-                .collect(),
-            Err(_) => return,
+        let (keys, listed): (Vec<(String, String)>, Vec<String>) = match state.try_lock() {
+            Ok(state) => (
+                state
+                    .projects
+                    .iter()
+                    .flat_map(|p| p.apps.iter().map(|a| (a.project.clone(), a.name.clone())))
+                    .collect(),
+                state.projects.iter().map(|p| p.name.clone()).collect(),
+            ),
+            Err(_) => return false,
         };
 
         // Read the store once and probe processes on a blocking thread, with
@@ -658,7 +771,7 @@ impl TuiApp {
         let Ok((tracked, snapshots)) = tokio::task::spawn_blocking(move || {
             let processes = store.list().unwrap_or_default();
             // Worktree instances, which the config does not list.
-            let tracked: Vec<crate::tui::state::TrackedInstance> = processes
+            let mut tracked: Vec<crate::tui::state::TrackedInstance> = processes
                 .iter()
                 .filter_map(|p| {
                     let slug = p.metadata.get(crate::worktrees::meta::WORKTREE)?;
@@ -668,9 +781,24 @@ impl TuiApp {
                         slug: slug.clone(),
                         app: p.metadata.get("app_config_name")?.clone(),
                         path: p.task.working_dir.to_string_lossy().into_owned(),
+                        repo_apps: None,
                     })
                 })
                 .collect();
+            // Which apps a new worktree row lists (asks git: done here, off
+            // the lock, and only for rows not listed yet).
+            if tracked.iter().any(|t| !listed.contains(&t.project))
+                && let Ok(config) = crate::config::loader::load_config_cached()
+            {
+                for t in tracked.iter_mut().filter(|t| !listed.contains(&t.project)) {
+                    t.repo_apps = Some(crate::tui::state::TrackedInstance::apps_in_repository(
+                        &config,
+                        &t.base_project,
+                        &t.app,
+                        &t.path,
+                    ));
+                }
+            }
             let mut keys = keys;
             keys.extend(tracked.iter().map(|t| (t.project.clone(), t.app.clone())));
             let snapshots = keys
@@ -689,11 +817,11 @@ impl TuiApp {
         })
         .await
         else {
-            return;
+            return false;
         };
 
         let Ok(mut state) = state.lock() else {
-            return;
+            return false;
         };
         let mut any_changed = state.sync_worktree_projects(&tracked);
         for project in &mut state.projects {
@@ -723,6 +851,7 @@ impl TuiApp {
         if any_changed {
             state.status_updated = true;
         }
+        true
     }
 
     /// Renders the UI
@@ -730,31 +859,29 @@ impl TuiApp {
     /// Also renders popup if one is active
     /// Optimization: Layered rendering approach for efficient updates
     pub(crate) fn render(&mut self, frame: &mut Frame) {
-        // Lock the state for reading during rendering
-        // If we can't get the lock, skip this frame
-        // Performance: Non-blocking approach prevents frame drops
+        // Lock the state for reading during rendering. This waits for the
+        // lock (the poller holds it only briefly); a poisoned lock skips the
+        // frame.
         let state_arc = self.state.clone();
         let Ok(state) = state_arc.lock() else {
             return;
         };
+        let error = state.error_message.clone();
 
-        let current_view = state.current_view.clone();
-
-        match &current_view {
-            ViewType::Main => {
-                crate::debug!("[Render] Rendering Main view");
-                self.render_main_view(frame, &state)
-            }
-            ViewType::LogViewer { .. } => {
-                crate::debug!("[Render] Rendering LogViewer view");
-                drop(state); // Release the lock before calling mutable render
-                self.render_log_viewer_view(frame);
-                return; // Early return to avoid double-locking
-            }
+        if matches!(state.current_view, ViewType::Main) {
+            crate::debug!("[Render] Rendering Main view");
+            self.render_main_view(frame, &state);
+            drop(state);
+        } else {
+            crate::debug!("[Render] Rendering LogViewer view");
+            drop(state); // Release the lock before calling mutable render
+            self.render_log_viewer_view(frame);
         }
 
-        // Render error message if present (but not if popup or help is showing)
-        if let Some(error) = &state.error_message
+        // Render error message if present (but not if popup or help is
+        // showing), in every view: the log viewer's errors (a log that cannot
+        // be opened) used to be set but never shown.
+        if let Some(error) = &error
             && !self.popup_manager.is_active()
             && !self.help_overlay.is_visible()
         {
@@ -773,15 +900,15 @@ impl TuiApp {
 
     /// Renders the main view
     /// Shows projects, apps, and their status
-    /// Shows projects, apps, and their status
     fn render_main_view(&mut self, frame: &mut Frame, state: &AppState) {
         // Delegate to the main view's render method
         self.main_view.render(frame, state, &self.theme);
     }
 
     /// Renders an error message as a status bar at the bottom
-    /// This is for non-blocking errors that don't require user acknowledgment
-    /// The error can be dismissed by pressing any key or will auto-clear on next action
+    /// This is for non-blocking errors that don't require user acknowledgment.
+    /// The next key dismisses it, and still does what it does (see the
+    /// router); mouse scrolling does not.
     fn render_error_message(&self, frame: &mut Frame, error: &str) {
         let size = frame.area();
 
@@ -799,7 +926,7 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled(" ✗ Error: ", self.theme.style_error_bold()),
                 Span::styled(error, self.theme.style_text()),
-                Span::styled("  [Press any key to dismiss]", self.theme.style_text_dim()),
+                Span::styled("  [next key dismisses]", self.theme.style_text_dim()),
             ]),
         ];
 

@@ -7,6 +7,26 @@
 use crate::config::{load_preferences, save_preferences, Preferences};
 use crate::Result;
 
+/// The preferences under the keys `pref set` takes, for `--json`.
+fn preferences_json(prefs: &Preferences) -> serde_json::Value {
+    serde_json::json!({
+        "default-env": prefs.default_env,
+        "detached-mode": prefs.detached_mode,
+        "auto-start-deps": prefs.auto_start_deps,
+        "docker-platform": prefs.docker_platform,
+        "default-stage": prefs.default_stage,
+    })
+}
+
+/// Confirm a `pref set`: one JSON document with `--json`, a line otherwise.
+fn report_set(key: &str, value: serde_json::Value, message: String) -> Result<()> {
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&serde_json::json!({ "key": key, "value": value }));
+    }
+    println!("{message}");
+    Ok(())
+}
+
 // Set a preference value
 // Example: devcli pref set default-env docker
 pub async fn pref_set(key: String, value: String) -> Result<()> {
@@ -18,22 +38,20 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
     // This prevents setting invalid preference keys
     match key.as_str() {
         "default-env" => {
-            // Validate that the value is a valid environment
+            // Stored under its canonical name: `compose` kept as typed was
+            // used as is by every later `start`.
             use crate::config::models::Environment;
-            if Environment::from_string(value.as_str()).is_none() {
-                anyhow::bail!(
-                    "Invalid value '{}' for default-env. Must be one of: {}.",
-                    value,
-                    Environment::all_names()
-                );
-            }
+            let env = Environment::parse(&value)
+                .map_err(|e| anyhow::anyhow!("Invalid value for default-env: {e}"))?;
+            let value = env.as_str().to_string();
 
-            // Value is valid - update the preference
             prefs.default_env = value.clone();
-            // Save the updated preferences to file
             save_preferences(&prefs)?;
-            // Confirm to the user
-            println!("✓ Set default-env to '{}'", value);
+            report_set(
+                &key,
+                value.clone().into(),
+                format!("✓ Set default-env to '{value}'"),
+            )?;
         }
 
         "detached-mode" => {
@@ -50,7 +68,11 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
 
             prefs.detached_mode = bool_value;
             save_preferences(&prefs)?;
-            println!("✓ Set detached-mode to '{}'", bool_value);
+            report_set(
+                &key,
+                bool_value.into(),
+                format!("✓ Set detached-mode to '{bool_value}'"),
+            )?;
         }
 
         "auto-start-deps" => {
@@ -67,7 +89,11 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
 
             prefs.auto_start_deps = bool_value;
             save_preferences(&prefs)?;
-            println!("✓ Set auto-start-deps to '{}'", bool_value);
+            report_set(
+                &key,
+                bool_value.into(),
+                format!("✓ Set auto-start-deps to '{bool_value}'"),
+            )?;
         }
 
         "docker-platform" => {
@@ -85,7 +111,11 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
 
             prefs.docker_platform = value.clone();
             save_preferences(&prefs)?;
-            println!("✓ Set docker-platform to '{}'", value);
+            report_set(
+                &key,
+                value.clone().into(),
+                format!("✓ Set docker-platform to '{value}'"),
+            )?;
         }
 
         "default-stage" => {
@@ -94,11 +124,19 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
             if value == "none" {
                 prefs.default_stage = None;
                 save_preferences(&prefs)?;
-                println!("✓ Removed default-stage");
+                report_set(
+                    &key,
+                    serde_json::Value::Null,
+                    "✓ Removed default-stage".to_string(),
+                )?;
             } else if Stage::from_string(&value).is_some() {
                 prefs.default_stage = Some(value.clone());
                 save_preferences(&prefs)?;
-                println!("✓ Set default-stage to '{}'", value);
+                report_set(
+                    &key,
+                    value.clone().into(),
+                    format!("✓ Set default-stage to '{value}'"),
+                )?;
             } else {
                 anyhow::bail!(
                     "Invalid value '{}' for default-stage. Must be one of: {}, none",
@@ -122,6 +160,9 @@ pub async fn pref_set(key: String, value: String) -> Result<()> {
 pub async fn pref_show() -> Result<()> {
     // Load preferences from file
     let prefs = load_preferences()?;
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&preferences_json(&prefs));
+    }
 
     // Display all preference values
     println!("Current preferences:");
@@ -146,6 +187,9 @@ pub async fn pref_reset() -> Result<()> {
 
     // Save the defaults to file (overwrites existing preferences)
     save_preferences(&prefs)?;
+    if crate::output::json_enabled() {
+        return crate::output::print_json(&preferences_json(&prefs));
+    }
 
     // Confirm to the user and show what the defaults are
     println!("✓ Preferences reset to defaults");
@@ -159,4 +203,35 @@ pub async fn pref_reset() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TempConfigDir;
+
+    #[tokio::test]
+    async fn default_env_is_stored_under_its_canonical_name() {
+        let _dir = TempConfigDir::new();
+        pref_set("default-env".into(), "compose".into())
+            .await
+            .unwrap();
+        assert_eq!(load_preferences().unwrap().default_env, "docker-compose");
+
+        let err = pref_set("default-env".into(), "dokcer".into())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Did you mean 'docker'?"), "{err}");
+    }
+
+    #[test]
+    fn json_uses_the_keys_pref_set_takes() {
+        let value = preferences_json(&Preferences::default());
+        assert_eq!(value["default-env"], "local");
+        assert_eq!(value["detached-mode"], false);
+        assert_eq!(value["auto-start-deps"], true);
+        assert_eq!(value["docker-platform"], "linux/amd64");
+        assert!(value["default-stage"].is_null());
+    }
 }

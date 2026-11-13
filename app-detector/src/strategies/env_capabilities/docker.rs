@@ -38,6 +38,38 @@ const COMPOSE_FILES: &[&str] = &[
     "docker-compose.yml",
 ];
 
+/// Whether `ctx` has Docker files this strategy (and OrbStack) builds on.
+///
+/// At an Nx monorepo root only root-level files count: each workspace is
+/// detected on its own by hierarchical detection.
+pub(crate) fn has_docker_files(ctx: &DetectionContext) -> bool {
+    let root_files =
+        ctx.file_exists("Dockerfile") || COMPOSE_FILES.iter().any(|name| ctx.file_exists(name));
+    if ctx.get_result("nx").is_some() && !ctx.is_workspace() {
+        return root_files;
+    }
+    root_files || !nested_dockerfiles(ctx).is_empty()
+}
+
+/// Dockerfiles anywhere under the root, sorted.
+///
+/// `Dockerfile.dockerignore` (BuildKit's per-Dockerfile ignore file) matches
+/// `Dockerfile*` but is not a Dockerfile.
+fn nested_dockerfiles(ctx: &DetectionContext) -> Vec<std::path::PathBuf> {
+    let mut found: Vec<_> = ctx
+        .glob("**/Dockerfile*")
+        .into_iter()
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".dockerignore"))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 /// Image / container name derived from the folder name.
 ///
 /// Docker image names must be lowercase `[a-z0-9._-]` and start with a letter
@@ -115,15 +147,7 @@ impl DetectionStrategy for DockerStrategy {
     }
 
     fn can_apply(&self, ctx: &DetectionContext) -> bool {
-        // At monorepo root, only detect root-level files (not recursive into workspaces).
-        // Each workspace will be detected independently via hierarchical detection.
-        let root_files =
-            ctx.file_exists("Dockerfile") || COMPOSE_FILES.iter().any(|name| ctx.file_exists(name));
-        if ctx.get_result("nx").is_some() && !ctx.is_workspace() {
-            return root_files;
-        }
-
-        root_files || !ctx.glob("**/Dockerfile*").is_empty()
+        has_docker_files(ctx)
     }
 
     fn detect(&self, ctx: &DetectionContext) -> Result<DetectionResult> {
@@ -146,9 +170,7 @@ impl DetectionStrategy for DockerStrategy {
         // Dockerfile is "the" one (the first) no longer depends on directory
         // listing order.
         if !monorepo_root {
-            let mut nested = ctx.glob("**/Dockerfile*");
-            nested.sort();
-            for path in nested {
+            for path in nested_dockerfiles(ctx) {
                 if !dockerfiles.contains(&path) {
                     dockerfiles.push(path);
                 }
@@ -208,19 +230,23 @@ impl DetectionStrategy for DockerStrategy {
                 format!("docker build {dockerfile_flag}-t {app} ."),
             );
 
-            // Stage-specific build commands (use stage name as key)
+            // Stage-specific build commands, namespaced as `build:<stage>`
+            // (the `devcli run <app> build:production` form). Keyed by the
+            // bare stage name, a stage called `build`, `run` or `stop`
+            // replaced the generic command: `build` then tagged `app:build`
+            // and `run` started an `app` image nothing had built.
             if !stages.is_empty() {
                 for stage in &stages {
                     commands.insert(
-                        stage.clone(),
+                        format!("build:{stage}"),
                         format!(
                             "docker build {dockerfile_flag}--target {stage} -t {app}:{stage} ."
                         ),
                     );
                     if stage.to_lowercase().contains("test") {
                         commands.insert(
-                            format!("{stage}-run"),
-                            format!("docker run --rm {app}:{stage}"),
+                            format!("run:{stage}"),
+                            format!("docker run --rm --pull never {app}:{stage}"),
                         );
                     }
                 }
@@ -228,11 +254,14 @@ impl DetectionStrategy for DockerStrategy {
                 metadata.insert("stages".to_string(), serde_json::json!(stages));
             }
 
-            // Run / stop commands
+            // Run / stop commands. `run` starts the image `build` tags, and
+            // never pulls: an image that was not built yet must fail, not
+            // fetch docker.io/library/<folder> (an unrelated official image
+            // for folders called redis, nginx, postgres...).
             let port = run_port_mapping(app_type);
             let run = match port {
-                Some(p) => format!("docker run --name {app} --rm {p} {app}"),
-                None => format!("docker run --name {app} --rm {app}"),
+                Some(p) => format!("docker run --name {app} --rm --pull never {p} {app}"),
+                None => format!("docker run --name {app} --rm --pull never {app}"),
             };
             commands.insert("run".to_string(), run);
             commands.insert("stop".to_string(), format!("docker stop {app}"));
@@ -468,18 +497,18 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
                     .is_some_and(|cmd| cmd.starts_with("docker build -t ") && cmd.ends_with(" .")));
 
                 // Should have stage-specific build commands
-                assert!(info.commands.contains_key("builder"));
-                assert!(info.commands.contains_key("production"));
+                assert!(info.commands.contains_key("build:builder"));
+                assert!(info.commands.contains_key("build:production"));
 
                 assert!(info
                     .commands
-                    .get("builder")
+                    .get("build:builder")
                     .is_some_and(|cmd| cmd.contains("--target builder")
                         && cmd.contains(" -t ")
                         && cmd.ends_with(" .")));
                 assert!(info
                     .commands
-                    .get("production")
+                    .get("build:production")
                     .is_some_and(|cmd| cmd.contains("--target production")
                         && cmd.contains(" -t ")
                         && cmd.ends_with(" .")));
@@ -502,6 +531,88 @@ COPY --from=builder /app/target/release/app /usr/local/bin/
             }
             _ => panic!("Expected DockerEnv data"),
         }
+    }
+
+    fn docker_info(dir: &std::path::Path) -> DockerEnvInfo {
+        let ctx = DetectionContext::new(dir).unwrap();
+        match DockerStrategy.detect(&ctx).unwrap().data {
+            DetectionData::DockerEnv(info) => info,
+            _ => panic!("Expected DockerEnv data"),
+        }
+    }
+
+    #[test]
+    fn stages_named_like_generic_commands_do_not_replace_them() {
+        let temp_dir = TempDir::new().unwrap();
+        let project = temp_dir.path().join("web");
+        fs::create_dir(&project).unwrap();
+        fs::write(
+            project.join("Dockerfile"),
+            "FROM node:20 AS build\nRUN npm ci\n\nFROM node:20 AS run\n\nFROM node:20 AS stop\n\nFROM node:20 AS test\n",
+        )
+        .unwrap();
+
+        let info = docker_info(&project);
+        let cmd = |key: &str| info.commands.get(key).map(String::as_str);
+        assert_eq!(info.suggested_default.as_deref(), Some("build"));
+        assert_eq!(cmd("build"), Some("docker build -t web ."));
+        assert_eq!(
+            cmd("run"),
+            Some("docker run --name web --rm --pull never web")
+        );
+        assert_eq!(cmd("stop"), Some("docker stop web"));
+        assert_eq!(
+            cmd("build:build"),
+            Some("docker build --target build -t web:build .")
+        );
+        assert!(info.commands.contains_key("build:run"));
+        assert!(info.commands.contains_key("build:stop"));
+        assert_eq!(
+            cmd("run:test"),
+            Some("docker run --rm --pull never web:test")
+        );
+    }
+
+    #[test]
+    fn run_starts_the_image_build_tags_without_pulling() {
+        let temp_dir = TempDir::new().unwrap();
+        let project = temp_dir.path().join("redis");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join("Dockerfile"), "FROM alpine\n").unwrap();
+
+        let info = docker_info(&project);
+        let cmd = |key: &str| info.commands.get(key).map(String::as_str);
+        assert_eq!(cmd("build"), Some("docker build -t redis ."));
+        assert_eq!(
+            cmd("run"),
+            Some("docker run --name redis --rm --pull never redis")
+        );
+    }
+
+    #[test]
+    fn dockerignore_files_and_dockerfile_directories_are_not_dockerfiles() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir(temp_dir.path().join("Dockerfiles")).unwrap();
+        fs::write(temp_dir.path().join("Dockerfiles/README.md"), "# docs\n").unwrap();
+        fs::write(
+            temp_dir.path().join("Dockerfile.dockerignore"),
+            "node_modules\n",
+        )
+        .unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        assert!(!DockerStrategy.can_apply(&ctx));
+
+        fs::write(
+            temp_dir.path().join("Dockerfiles/Dockerfile.api"),
+            "FROM alpine\n",
+        )
+        .unwrap();
+        let info = docker_info(temp_dir.path());
+        assert_eq!(
+            info.dockerfiles,
+            vec![std::path::PathBuf::from("Dockerfiles/Dockerfile.api")]
+        );
     }
 
     #[test]

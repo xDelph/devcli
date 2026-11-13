@@ -27,7 +27,9 @@ shapes, and non-interactive behaviour.
    worktree's apps.
 6. **In a git worktree, just run devcli from it.** `devcli start api` run
    inside a worktree starts *that worktree's* copy of the app, on its own
-   ports, and `stop`/`status`/`logs` act on that copy only. See
+   ports, and `stop`/`restart`/`status`/`logs`/`health-check` act on that
+   copy only (an error when the worktree's branch has no such app; name the
+   configured checkout's `api@` explicitly). See
    [Git worktrees](#git-worktrees).
 
 ```bash
@@ -56,15 +58,18 @@ Colors are automatically disabled when stdout is not a TTY.
 
 On error with `--json`, a JSON object `{"error": "..."}` is written to stderr
 and the process exits `1`. This includes command-line usage errors (unknown
-subcommand or flag); without `--json`, those usage errors print clap's message
-and exit `2`.
+or missing subcommand, unknown flag, invalid value); without `--json`, those
+usage errors print clap's message and exit `2`.
 
 An app name that is neither configured nor tracked is an error (exit `1`) for
 every command taking one, with a "did you mean" suggestion when a configured
 name is close.
 
 `--env` takes `local`, `docker`, `orbstack`, `docker-compose` (alias
-`compose`), `k8s` or `ci`. `--stage` takes `dev`, `qa`, `preprod` or `prod`.
+`compose`), `k8s` (alias `kubernetes`) or `ci`; an alias is replaced by the
+canonical name before anything runs (process ids, log files and JSON answers
+always carry the canonical name), and any other value is a usage error.
+`--stage` takes `dev`, `qa`, `preprod` or `prod`.
 
 ## Commands and JSON output
 
@@ -171,7 +176,8 @@ devcli logs api --follow                     # human streaming mode
 ```
 
 `--follow` is for humans; it blocks and streams. Agents should poll `logs`
-instead.
+instead. With `--json`, `--follow` writes newline-delimited JSON: the document
+above on one line, then one `{"line": "..."}` object per new line.
 
 ### `config`
 
@@ -192,6 +198,57 @@ devcli --json config validate
   { "<env>": { "default", "commands" } } }`.
 - `config validate` → `{ "valid", "errors": [{ "field", "message" }],
   "warnings": [...], "projects", "apps" }`.
+- `config add-command APP ENV NAME VALUE` → `{ "project", "app",
+  "environment", "command", "value" }` (an existing command of that name is
+  replaced).
+- `config remove-command APP ENV NAME` → `{ "project", "app", "environment",
+  "command", "default_cleared" }`.
+- `config set-default APP ENV NAME` → `{ "project", "app", "environment",
+  "default" }`.
+- `config init` → `{ "created": "<path of config.json>" }`.
+- `config edit` (opens `$VISUAL`/`$EDITOR`) → `{ "path", "editor" }`;
+  `config edit-command` always prompts for the new value and is refused with
+  `--json` (use `config add-command`).
+
+Every argument these commands would prompt for must be given: with `--json`,
+or without a terminal on stdin, a missing one is an error naming it
+(`Missing the app name (APP_NAME): ...`).
+
+### `env`
+
+```bash
+devcli --json env add APP --stage dev --context local --file .env.dev [--project P]
+devcli --json env remove APP --stage dev [--context local] [--project P]
+devcli --json env list APP [--project P]
+devcli --json env set-default APP --context docker --stage qa [--project P]
+```
+
+The app is found like everywhere else (`--project`, `project/app`,
+alternative name; an ambiguous name is an error). `--context` is an
+environment (aliases accepted, stored canonical); `env add` writes only that
+context.
+
+- `env add` → `{ "project", "app", "stage", "context", "file" }`
+- `env remove` → `{ "project", "app", "stage", "context", "removed":
+  { "<context>": "<file>" } }` (`context` is `null` when the whole stage was
+  removed)
+- `env list` → `{ "project", "app", "env_files": { "<stage>": { "<context>":
+  "<file>" } }, "default_stages": { "<context>": "<stage>" } }`
+- `env set-default` → `{ "project", "app", "context", "stage" }`
+
+### `pref`
+
+```bash
+devcli --json pref show
+devcli --json pref set default-env docker
+devcli --json pref reset
+```
+
+- `pref show` and `pref reset` → `{ "default-env", "detached-mode",
+  "auto-start-deps", "docker-platform", "default-stage" }` (the keys `pref
+  set` takes; `default-stage` is `null` when unset)
+- `pref set KEY VALUE` → `{ "key", "value" }` with the value as saved
+  (`compose` is saved as `docker-compose`)
 
 ### `health-check`
 
@@ -216,8 +273,10 @@ devcli --json metrics
 
 Returns the metrics document (process, system, performance). Works without a
 running metrics server: process and system metrics are then computed from the
-state (the performance counters stay at zero). Only `devcli monitor --daemon`
-serves the metrics API; pm-daemon, which `start` spawns, does not.
+state (the performance counters stay at zero), also when something else
+listens on the metrics address or nothing answers within 2 seconds. Only
+`devcli monitor --daemon` serves the metrics API; pm-daemon, which `start`
+spawns, does not.
 
 ### `auto-add` (non-interactive)
 
@@ -230,22 +289,48 @@ detected defaults are accepted without prompting, and env files with an
 ambiguous context are skipped. Without a TTY and without `--yes`, the command
 fails with a clear message. Monorepos and multi-app directories require the
 interactive mode. An app that already exists is not replaced unless `--force`
-is given; its dependencies, health check, restart policy and alternative name
-are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
+is given; what was set by hand is then kept: dependencies, port, health check,
+restart policy, alternative name, default stages, and the commands, defaults
+and env files the detection does not produce (detected ones are refreshed). `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
 `python`, `docker`, `redis`, `traefik`; `path` in the answer is absolute.
 
 ```json
 { "project": "proj", "app": "api", "type": "nodejs", "path": "/abs/apps/api" }
 ```
 
+### `install-agents` / `uninstall-agents`
+
+```bash
+devcli --json install-agents [--local PATH]
+devcli --json install-agents --global [--agent claude --agent codex ...]
+devcli --json uninstall-agents [--global] [--local PATH] [--agent ...]
+```
+
+```json
+{ "targets": [
+    { "agent": "claude", "path": "/Users/me/.claude/CLAUDE.md",
+      "action": "updated", "backup": "/Users/me/.devcli/backups/agents/..." } ],
+  "reference": "/Users/me/.devcli/AGENTS.md" }
+```
+
+`action` is one of `installed`, `updated`, `unchanged`, `removed`, `absent`.
+`agent` names the agent a file is for, `null` for a project's `AGENTS.md`
+and for the reference file; `backup` is the saved previous version (`null`
+when there was none to save).
+`reference` is the full rules file the global blocks point at, `null`
+without `--global`.
+
 ## Git worktrees
 
 An app is configured once, with the path of one checkout; devcli runs it
 from **any git worktree of that repository**, wherever the worktree lives
 (`.claude/worktrees/x`, `.worktrees/x`, a sibling directory, ...). Nothing
-is added to the config. A worktree instance is named `project@slug` (slug:
-the worktree's name in git), so its process id, state and log file never
-collide with another checkout's.
+is added to the config. A worktree instance is named `project@slug`, so
+its process id, state and log file never collide with another checkout's.
+The slug is the worktree's name in git (its admin directory name) with
+every character other than letters, digits, `-` and `_` replaced by `-`,
+and `-2`, `-3`, ... appended when that name is taken in the repository;
+`devcli worktrees` shows it. Each repository names its own worktrees.
 
 | Name | Designates |
 | ---- | ---------- |
@@ -254,26 +339,41 @@ collide with another checkout's.
 | `api@` | the configured checkout, from anywhere |
 | `api@*` | every checkout (`start`, `stop`, `status`) |
 
-The suffix also works on `--project` (`--project shop@slug`). From inside a
-worktree, `stop --project shop` only selects that worktree's processes.
+Run inside a worktree whose branch has no `api`, `start api` starts the
+configured checkout's (with a note); every other command fails instead,
+since it would act on the main checkout's instance: name it `api@`. The
+same holds for an app inside a git submodule run from a worktree of the
+superproject: the submodule's worktrees are not the superproject's.
+
+The suffix also works on `--project` (`--project shop@slug`); an unknown
+slug is an error (exit code 1). In a project whose apps live in several
+repositories, `shop@slug` is the worktree `slug` of each app's own
+repository. From inside a worktree, `stop --project shop` only selects that
+worktree's processes.
 
 Each instance gets its own ports and variables:
 
 | Variable | Value |
 | -------- | ----- |
 | `DEVCLI_WORKTREE` | slug (empty in the configured checkout) |
-| `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists) |
+| `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists, and while an app still runs from a worktree that was moved or deleted) |
 | `DEVCLI_PORT_OFFSET` | index × 100 |
 | `DEVCLI_WORKTREE_PATH`, `DEVCLI_WORKTREE_BRANCH` | in a worktree |
 | `PORT`, `DEVCLI_PORT` | the app's port + offset: its env files' `PORT`, else its configured `port` |
-| `DEVCLI_PORT_<APP>` | the port of each dependency with a configured `port`, as it runs for this instance (shifted when it runs in the same worktree), e.g. `DEVCLI_PORT_API` |
+| `DEVCLI_PORT_<APP>` | the port each dependency listens on, as it runs for this instance: its running process's, else its env files' `PORT` or configured `port`, shifted when it runs in the same worktree; e.g. `DEVCLI_PORT_API` |
 
-Without a `port` in the config, a `PORT` from the app's env files is shifted
-in worktrees. Health checks follow the shifted port. In a fresh worktree
-without env files (they are usually gitignored), the configured checkout's
-are used. Dependencies in the same repository start in the same worktree.
-When a worktree directory is deleted, pm-daemon stops the apps that ran
-from it.
+A `PORT` from the app's env files wins over its configured `port`; either
+is shifted in worktrees. Docker, OrbStack and Compose instances get it too:
+in a worktree the container's env file carries the shifted `PORT`, and
+Compose interpolates `${PORT}` from it (a compose file's own `env_file:`
+is read by Compose, unshifted: pass `PORT: ${PORT}` in `environment:`).
+Health checks follow the shifted port. In a fresh worktree without env
+files (they are usually gitignored), the configured checkout's are used.
+Dependencies in the same repository start in the same worktree. When a
+worktree directory is deleted, pm-daemon stops the apps that ran from it.
+A worktree moved with `mv` keeps its apps running: they stay reachable as
+`api@slug` (`stop`, `logs`, `status`), and their logs remain readable as
+`logs api@slug` after the worktree is gone.
 
 ### `worktrees`
 
@@ -296,8 +396,10 @@ devcli --json worktrees [--project P]
                    "running": false }] } ] } ] }
 ```
 
-`stale` worktrees were deleted without `git worktree remove`; devcli never
-prunes them.
+`stale` worktrees were deleted (or moved) without `git worktree remove`;
+devcli never prunes them. One an app still runs from keeps its `slug`,
+`index` and `port_offset` and lists that app; the others have a `null`
+index.
 
 ## Environment
 

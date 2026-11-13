@@ -255,9 +255,13 @@ let vars = EnvFlow::from_dir(".").stage(Stage::Dev).load()?;
 | Syntax | Behaviour |
 |---|---|
 | `${VAR}` | Substitute value of VAR (env map first, then `std::env`) |
-| `${VAR:-default}` | Substitute VAR, or "default" if unset |
+| `${VAR:-default}` | Substitute VAR, or the default if unset or empty; the default is itself expanded (`${A:-${B}}`) |
 | `\${VAR}` | Literal `${VAR}` — escaped |
+| `"a\\${VAR}"` | A backslash, then VAR's value (`\\` is an escaped backslash in double quotes) |
 | `'single quoted'` | Never interpolated (bash semantics) |
+
+In unquoted values a backslash is literal, except before `$` (`\$` is a
+literal dollar).
 
 Circular references (`A=${B}`, `B=${A}`) return `Error::CircularInterpolation`.
 

@@ -4,6 +4,7 @@ use crate::{
     context::DetectionContext,
     strategy::DetectionStrategy,
     types::*,
+    utils::pyproject,
     utils::workspace::{
         discover_python_packages, expand_uv_workspace, expand_workspace_members,
         uv_workspace_members,
@@ -174,13 +175,23 @@ fn self_category() -> StrategyCategory {
 fn package_metadata(ctx: &DetectionContext, pyproject: &str) -> HashMap<String, serde_json::Value> {
     let mut metadata = HashMap::new();
 
+    // Lockfiles first, then what pyproject.toml says (a hatch or pdm
+    // project without a lockfile is still a hatch or pdm project), then
+    // plain pip for anything pip can install.
     let package_manager = if ctx.file_exists("uv.lock") {
         "uv"
     } else if ctx.file_exists("poetry.lock") {
         "poetry"
+    } else if ctx.file_exists("pdm.lock") {
+        "pdm"
     } else if ctx.file_exists("Pipfile.lock") {
         "pipenv"
-    } else if ctx.file_exists("requirements.txt") {
+    } else if let Some(tool) = pyproject::project_tool(pyproject) {
+        tool
+    } else if ctx.file_exists("requirements.txt")
+        || ctx.file_exists("pyproject.toml")
+        || ctx.file_exists("setup.py")
+    {
         "pip"
     } else {
         "unknown"
@@ -193,16 +204,8 @@ fn package_metadata(ctx: &DetectionContext, pyproject: &str) -> HashMap<String, 
     let has_venv = ctx.file_exists(".venv") || ctx.file_exists("venv") || ctx.file_exists("env");
     metadata.insert("has_venv".to_string(), serde_json::json!(has_venv));
 
-    if !pyproject.is_empty() {
-        for line in pyproject.lines() {
-            if line.starts_with("name")
-                && line.contains('=')
-                && let Some(name) = line.split('=').nth(1)
-            {
-                let name = name.trim().trim_matches('"').trim_matches('\'');
-                metadata.insert("package_name".to_string(), serde_json::json!(name));
-            }
-        }
+    if let Some(name) = pyproject::project_name(pyproject) {
+        metadata.insert("package_name".to_string(), serde_json::json!(name));
     }
 
     metadata
@@ -281,6 +284,54 @@ members = ["packages/*"]
             }
             _ => panic!("Expected Monorepo data"),
         }
+    }
+
+    fn metadata_of(dir: &std::path::Path) -> HashMap<String, serde_json::Value> {
+        let ctx = DetectionContext::new(dir).unwrap();
+        match PythonStrategy.detect(&ctx).unwrap().data {
+            DetectionData::Language(info) => info.metadata,
+            _ => panic!("Expected Language data"),
+        }
+    }
+
+    #[test]
+    fn package_name_ignores_names_in_other_tables() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            r#"[project]
+name = "inference-api"
+
+[tool.setuptools]
+namespaces = false
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cpu"
+"#,
+        )
+        .unwrap();
+
+        let metadata = metadata_of(temp_dir.path());
+        assert_eq!(metadata["package_name"], "inference-api");
+    }
+
+    #[test]
+    fn pyproject_only_projects_get_their_tool() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+        )
+        .unwrap();
+        assert_eq!(metadata_of(temp_dir.path())["package_manager"], "hatch");
+
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\n\n[build-system]\nbuild-backend = \"setuptools.build_meta\"\n",
+        )
+        .unwrap();
+        assert_eq!(metadata_of(temp_dir.path())["package_manager"], "pip");
     }
 
     #[test]

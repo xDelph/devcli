@@ -37,6 +37,12 @@ pub struct SingleLogView {
     show_json_panel: bool,
     /// Last file size to detect changes
     last_file_size: u64,
+    /// Modification time, device and inode, and first bytes of the file as
+    /// last read: together they tell an append from a file replaced or
+    /// rewritten in place (see `refresh`).
+    last_mtime: Option<std::time::SystemTime>,
+    file_id: Option<(u64, u64)>,
+    head: Vec<u8>,
     /// Bytes of the file parsed into complete lines (up to the last `\n`):
     /// a refresh only reads what was appended after this.
     complete_bytes: u64,
@@ -79,6 +85,9 @@ impl SingleLogView {
             total_lines: 0,
             show_json_panel: false,
             last_file_size: 0,
+            last_mtime: None,
+            file_id: None,
+            head: Vec::new(),
             complete_bytes: 0,
             partial_tail: false,
             row_cache: Vec::new(),
@@ -538,22 +547,29 @@ impl SingleLogView {
 
     /// Returns status text for the unified footer
     pub fn get_status_text(&self) -> String {
+        let match_info = if !self.search.results.is_empty() {
+            format!(
+                " [{}/{} matches]",
+                self.search.current_idx + 1,
+                self.search.results.len()
+            )
+        } else if self.search.has_query() {
+            " [No matches]".to_string()
+        } else {
+            String::new()
+        };
         if self.search.active {
-            // Show search input with match count and navigation help
-            let match_info = if !self.search.results.is_empty() {
-                format!(
-                    " [{} matches] ({}/{}) - ↑↓/jk/Enter: Navigate  Esc: Exit",
-                    self.search.results.len(),
-                    self.search.current_idx + 1,
-                    self.search.results.len()
-                )
-            } else if !self.search.query.is_empty() {
-                " [No matches] - Esc: Exit".to_string()
+            let help = if self.search.has_query() {
+                "  ↑↓: Prev/Next  Enter: Done  Esc: Cancel"
             } else {
-                " - Type to search, Esc: Exit".to_string()
+                "  Type to search, Esc: Cancel"
             };
-
-            format!("Search: {}{}", self.search.query, match_info)
+            format!("Search: {}{match_info}{help}", self.search.query)
+        } else if self.search.has_query() {
+            format!(
+                "Search: {}{match_info}  n/N: Next/Prev  /: New search  Esc: Clear search",
+                self.search.query
+            )
         } else {
             let json_hint = if self.is_current_line_json() {
                 if self.show_json_panel {
@@ -586,8 +602,15 @@ impl SingleLogView {
         }
     }
 
-    /// Handles input when in search mode
+    /// Handles input while the search query is typed.
+    ///
+    /// Every printable character goes into the query (`j`, `k` and non-ASCII
+    /// ones used to be taken for navigation or dropped); the arrows move
+    /// between results; Enter keeps the search (n/N then move between its
+    /// results) and Esc cancels it.
     fn handle_search_input(&mut self, key: KeyEvent) -> Result<LogInputResult> {
+        use crossterm::event::KeyModifiers;
+
         match key.code {
             KeyCode::Backspace => {
                 // Remove last character from search query
@@ -598,42 +621,52 @@ impl SingleLogView {
                 Ok(LogInputResult::Handled)
             }
             KeyCode::Enter => {
-                // Cycle to next search result
-                if let Some(idx) = self.search.next_result() {
+                self.search.active = false;
+                if !self.search.has_query() {
+                    self.search.clear_results();
+                } else if let Some(&idx) = self.search.results.get(self.search.current_idx) {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
             KeyCode::Esc => {
-                // Exit search mode and clear all highlighting
-                self.search.active = false;
-                self.search.clear_results();
+                // Cancel the search and clear all highlighting
+                self.clear_search();
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                // Next search result (Down arrow or j)
+            KeyCode::Down => {
                 if let Some(idx) = self.search.next_result() {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                // Previous search result (Up arrow or k)
+            KeyCode::Up => {
                 if let Some(idx) = self.search.previous_result() {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
-            KeyCode::Char(c) if c.is_ascii() => {
-                // Add character to search query (allow all printable ASCII characters including 'n')
+            // Printable characters, AltGr ones included (Ctrl+Alt on some
+            // systems); Ctrl+key is not text.
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.search.query.push(c);
                 if let Some(idx) = self.search.perform_search(&self.content) {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
-            _ => Ok(LogInputResult::Ignored),
+            // Typing: nothing else acts behind the query.
+            _ => Ok(LogInputResult::Handled),
         }
+    }
+
+    fn clear_search(&mut self) {
+        self.search.active = false;
+        self.search.query.clear();
+        self.search.clear_results();
     }
 
     /// Handles input when in normal navigation mode
@@ -689,26 +722,30 @@ impl SingleLogView {
             }
             // Enter search mode
             KeyCode::Char('/') => {
+                self.clear_search();
                 self.search.active = true;
-                self.search.query.clear();
-                self.search.results.clear();
-                self.search.current_idx = 0;
                 Ok(LogInputResult::Handled)
             }
-            // 'n' for Add Panel -- CHANGED FROM NEXT SEARCH RESULT
-            KeyCode::Char('n') => Ok(LogInputResult::RequestAddPanel),
-            // Previous search result
-            KeyCode::Char('N') => {
-                // Reuse N for next result in non-search mode?
-                // Or keep it for previous result if search is active (it's not here)
-                // Let's implement Next Search Result on another key if needed
-                // Currently n is hijacked for panel.
-                // We'll leave N for Previous Search Result if someone used / before
+            // While a search is kept, n/N move between its results...
+            KeyCode::Char('n') if self.search.has_query() => {
+                if let Some(idx) = self.search.next_result() {
+                    self.viewport.cursor_line = idx;
+                }
+                Ok(LogInputResult::Handled)
+            }
+            KeyCode::Char('N') if self.search.has_query() => {
                 if let Some(idx) = self.search.previous_result() {
                     self.viewport.cursor_line = idx;
                 }
                 Ok(LogInputResult::Handled)
             }
+            // ...and Esc clears it (then Esc leaves the viewer).
+            KeyCode::Esc if self.search.has_query() => {
+                self.clear_search();
+                Ok(LogInputResult::Handled)
+            }
+            // Otherwise `n` adds a panel.
+            KeyCode::Char('n') => Ok(LogInputResult::RequestAddPanel),
             // Add Select Log shortcut (L)
             KeyCode::Char('L') => Ok(LogInputResult::RequestSelectLog),
             // Toggle JSON panel
@@ -732,7 +769,13 @@ impl SingleLogView {
 
     /// Load the whole file from scratch.
     fn reload(&mut self) -> Result<()> {
+        // Taken before reading: a write in between shows as a change next
+        // time, and is then read (an append) or reloaded.
+        let meta = std::fs::metadata(&self.log_path)?;
         let bytes = std::fs::read(&self.log_path)?;
+        self.last_mtime = meta.modified().ok();
+        self.file_id = file_id(&meta);
+        self.head = bytes[..bytes.len().min(HEAD_LEN)].to_vec();
         let text = String::from_utf8_lossy(&bytes);
         self.content = FileLoader::parse_lines(
             &text,
@@ -748,7 +791,19 @@ impl SingleLogView {
             .map_or(0, |pos| pos as u64 + 1);
         self.partial_tail = self.complete_bytes < self.last_file_size;
         self.row_cache.clear();
+        self.search.rescan_from(&self.content, 0);
         Ok(())
+    }
+
+    /// Whether the file still starts with the bytes it started with.
+    fn head_unchanged(&self) -> Result<bool> {
+        use std::io::Read;
+
+        let mut head = Vec::with_capacity(self.head.len());
+        std::fs::File::open(&self.log_path)?
+            .take(self.head.len() as u64)
+            .read_to_end(&mut head)?;
+        Ok(head == self.head)
     }
 
     /// Refreshes the log file content if it has changed
@@ -758,13 +813,21 @@ impl SingleLogView {
     /// be re-read, re-parsed and re-highlighted every time it grew (checked
     /// every 100 ms), which is constant work proportional to the log size for
     /// any app that is logging.
+    ///
+    /// A file that was replaced (another inode: rotated by renaming) or
+    /// rewritten (shorter than what was read, or its first bytes changed:
+    /// truncated and written again) is reloaded from the start. Only a
+    /// shrink used to be noticed, so a log truncated and refilled to the
+    /// same or a larger size showed stale or garbled lines.
     pub fn refresh(&mut self) -> Result<bool> {
-        // Check if file size has changed
-        let current_size = std::fs::metadata(&self.log_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        if current_size == self.last_file_size {
+        // A file that is gone (being rotated) keeps what is shown.
+        let Ok(meta) = std::fs::metadata(&self.log_path) else {
+            return Ok(false);
+        };
+        let current_size = meta.len();
+        let mtime = meta.modified().ok();
+        let id = file_id(&meta);
+        if current_size == self.last_file_size && mtime == self.last_mtime && id == self.file_id {
             // No changes
             return Ok(false);
         }
@@ -772,14 +835,20 @@ impl SingleLogView {
         // Remember if we were at the bottom before refresh
         let was_at_bottom = self.viewport.cursor_line + 1 >= self.total_lines;
 
-        if current_size < self.complete_bytes {
-            // Truncated (rotated): start over.
+        let replaced =
+            id != self.file_id || current_size < self.complete_bytes || !self.head_unchanged()?;
+        if replaced {
             self.reload()?;
+        } else if current_size == self.last_file_size {
+            // Touched, same content as far as can be told.
+            self.last_mtime = mtime;
+            return Ok(false);
         } else {
             use std::io::{Read, Seek, SeekFrom};
 
+            let read_from = self.complete_bytes;
             let mut file = std::fs::File::open(&self.log_path)?;
-            file.seek(SeekFrom::Start(self.complete_bytes))?;
+            file.seek(SeekFrom::Start(read_from))?;
             let mut appended = Vec::new();
             file.read_to_end(&mut appended)?;
 
@@ -803,8 +872,20 @@ impl SingleLogView {
             self.complete_bytes += complete as u64;
             self.last_file_size = self.complete_bytes + (appended.len() - complete) as u64;
             self.partial_tail = complete < appended.len();
+            self.last_mtime = mtime;
+            // A head shorter than HEAD_LEN is the whole file as it was:
+            // complete it with the bytes that follow it.
+            if self.head.len() < HEAD_LEN {
+                let skip = (self.head.len() as u64).saturating_sub(read_from) as usize;
+                let more = appended.get(skip..).unwrap_or_default();
+                let wanted = HEAD_LEN - self.head.len();
+                self.head.extend_from_slice(&more[..more.len().min(wanted)]);
+            }
             // Lines past the old end (and a re-parsed tail) need measuring.
             self.row_cache.truncate(first_line_number.saturating_sub(1));
+            // ... and matching against the search.
+            self.search
+                .rescan_from(&self.content, first_line_number.saturating_sub(1));
         }
 
         // Shrunk/rotated file: clamp a cursor that fell past the new content
@@ -817,6 +898,24 @@ impl SingleLogView {
         }
 
         Ok(true)
+    }
+}
+
+/// How many first bytes of a log are compared to tell a rewrite from an
+/// append.
+const HEAD_LEN: usize = 256;
+
+/// Device and inode of a file, where the platform has them.
+fn file_id(meta: &std::fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        None
     }
 }
 
@@ -934,5 +1033,103 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert_eq!(highlighted, vec!["aa", "aa"]);
+    }
+
+    fn press(view: &mut SingleLogView, code: KeyCode) -> LogInputResult {
+        view.handle_input(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE))
+            .unwrap()
+    }
+
+    fn type_query(view: &mut SingleLogView, query: &str) {
+        press(view, KeyCode::Char('/'));
+        for c in query.chars() {
+            press(view, KeyCode::Char(c));
+        }
+    }
+
+    fn log(dir: &tempfile::TempDir, body: &str) -> (PathBuf, SingleLogView) {
+        let path = dir.path().join("p_api_local_20260101.log");
+        std::fs::write(&path, body).unwrap();
+        let view = SingleLogView::new(path.clone(), "api".to_string(), Color::White).unwrap();
+        (path, view)
+    }
+
+    /// Every printable character is part of the query: `j`/`k` used to
+    /// navigate and non-ASCII ones were dropped.
+    #[test]
+    fn the_search_query_takes_every_character() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (_, mut view) = log(&dir, "jkété\nother\n");
+        type_query(&mut view, "jkété");
+        assert_eq!(view.search.query, "jkété");
+        assert_eq!(view.search.results, vec![0]);
+    }
+
+    /// Enter keeps the search: n/N move between its results, Esc clears it,
+    /// and `n` adds a panel again.
+    #[test]
+    fn a_confirmed_search_is_navigated_with_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (_, mut view) = log(&dir, "hit 1\nmiss\nhit 2\nhit 3\n");
+        type_query(&mut view, "hit");
+        press(&mut view, KeyCode::Enter);
+        assert!(!view.search.active);
+        assert_eq!(view.viewport.cursor_line, 0);
+
+        assert_eq!(
+            press(&mut view, KeyCode::Char('n')),
+            LogInputResult::Handled
+        );
+        assert_eq!(view.viewport.cursor_line, 2);
+        press(&mut view, KeyCode::Char('n'));
+        assert_eq!(view.viewport.cursor_line, 3);
+        press(&mut view, KeyCode::Char('N'));
+        assert_eq!(view.viewport.cursor_line, 2);
+
+        assert_eq!(press(&mut view, KeyCode::Esc), LogInputResult::Handled);
+        assert!(view.search.results.is_empty());
+        assert_eq!(
+            press(&mut view, KeyCode::Char('n')),
+            LogInputResult::RequestAddPanel
+        );
+        assert_eq!(press(&mut view, KeyCode::Esc), LogInputResult::Ignored);
+    }
+
+    /// New lines are matched against the search; a reload drops stale hits.
+    #[test]
+    fn refresh_updates_the_search() {
+        use std::io::Write;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let (path, mut view) = log(&dir, "error one\nok\n");
+        type_query(&mut view, "error");
+        press(&mut view, KeyCode::Enter);
+        assert_eq!(view.search.results, vec![0]);
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"error two\n").unwrap();
+        assert!(view.refresh().unwrap());
+        assert_eq!(view.search.results, vec![0, 2]);
+        assert!(view.search.is_match(2));
+
+        std::fs::write(&path, b"ok\n").unwrap();
+        assert!(view.refresh().unwrap());
+        assert!(view.search.results.is_empty());
+        assert!(!view.search.is_match(0));
+    }
+
+    /// A log truncated and written again, to a larger size, is reloaded
+    /// (only a shrink used to be noticed).
+    #[test]
+    fn a_rewritten_log_is_reloaded() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (path, mut view) = log(&dir, "first run\n");
+        std::fs::write(&path, b"second run, longer\nand more\n").unwrap();
+        assert!(view.refresh().unwrap());
+        let raws: Vec<&str> = view.content.iter().map(|l| l.raw.as_str()).collect();
+        assert_eq!(raws, vec!["second run, longer", "and more"]);
     }
 }

@@ -240,13 +240,17 @@ impl DetectionContext {
                         // Pattern like **/*.rs
                         let ext = suffix.trim_start_matches("*.");
                         path_str.ends_with(&format!(".{}", ext))
-                    } else if suffix.ends_with('*') {
-                        // Pattern like **/Dockerfile* - match files starting with prefix
-                        let prefix = suffix.trim_end_matches('*');
-                        path_str.split('/').any(|part| part.starts_with(prefix))
                     } else {
-                        // Pattern like **/Dockerfile - exact filename match
-                        path_str.split('/').any(|part| part == suffix)
+                        // Match the file name only: a directory component
+                        // (`Dockerfiles/README.md`) is not a match.
+                        let file_name = path_str.rsplit('/').next().unwrap_or(&path_str);
+                        if let Some(prefix) = suffix.strip_suffix('*') {
+                            // Pattern like **/Dockerfile* - file names starting with prefix
+                            file_name.starts_with(prefix)
+                        } else {
+                            // Pattern like **/Dockerfile - exact filename match
+                            file_name == suffix
+                        }
                     }
                 } else if pattern.starts_with("*.") {
                     // Extension match: *.rs — root-level files only (no subdirectory separator)
@@ -458,6 +462,23 @@ mod tests {
         assert!(result_strs.iter().any(|s| s.contains("docker/Dockerfile")));
         assert!(result_strs.iter().any(|s| s.contains("Dockerfile.dev")));
         assert!(result_strs.iter().any(|s| s.contains("Dockerfile.prod")));
+    }
+
+    #[test]
+    fn test_glob_prefix_pattern_matches_file_names_only() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("Dockerfiles")).unwrap();
+        File::create(temp_dir.path().join("Dockerfiles/README.md")).unwrap();
+        std::fs::create_dir(temp_dir.path().join("Dockerfile")).unwrap();
+        File::create(temp_dir.path().join("Dockerfile/notes.txt")).unwrap();
+        File::create(temp_dir.path().join("Dockerfiles/Dockerfile.api")).unwrap();
+
+        let ctx = DetectionContext::new(temp_dir.path()).unwrap();
+        assert_eq!(
+            ctx.glob("**/Dockerfile*"),
+            vec![PathBuf::from("Dockerfiles/Dockerfile.api")]
+        );
+        assert!(ctx.glob("**/Dockerfile").is_empty());
     }
 
     #[test]

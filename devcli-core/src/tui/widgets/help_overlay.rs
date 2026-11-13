@@ -16,17 +16,36 @@ use ratatui::{
 pub struct HelpOverlay {
     /// Whether the help overlay is currently visible
     visible: bool,
+    /// First line shown (the help is longer than most terminals)
+    scroll: u16,
+    /// Largest useful `scroll`, known once rendered
+    max_scroll: std::cell::Cell<u16>,
 }
 
 impl HelpOverlay {
     /// Creates a new help overlay (initially hidden)
     pub fn new() -> Self {
-        Self { visible: false }
+        Self {
+            visible: false,
+            scroll: 0,
+            max_scroll: std::cell::Cell::new(u16::MAX),
+        }
     }
 
-    /// Shows the help overlay
+    /// Shows the help overlay, from the top
     pub fn show(&mut self) {
         self.visible = true;
+        self.scroll = 0;
+    }
+
+    /// Scrolls the help up by `lines`
+    pub fn scroll_up(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_sub(lines);
+    }
+
+    /// Scrolls the help down by `lines` (not past its end)
+    pub fn scroll_down(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_add(lines).min(self.max_scroll.get());
     }
 
     /// Hides the help overlay
@@ -41,7 +60,11 @@ impl HelpOverlay {
 
     /// Toggles the visibility of the help overlay
     pub fn toggle(&mut self) {
-        self.visible = !self.visible;
+        if self.visible {
+            self.hide();
+        } else {
+            self.show();
+        }
     }
 
     /// Renders the help overlay on the screen
@@ -61,133 +84,132 @@ impl HelpOverlay {
 
         // Build the help content
         let lines = self.build_help_content(theme);
+        let visible = popup_area.height.saturating_sub(2);
+        let max_scroll = u16::try_from(lines.len())
+            .unwrap_or(u16::MAX)
+            .saturating_sub(visible);
+        self.max_scroll.set(max_scroll);
+        let scroll = self.scroll.min(max_scroll);
 
-        let paragraph = Paragraph::new(lines).alignment(Alignment::Left).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.style_text_primary())
-                .title(" Keyboard Shortcuts - Press ? or Esc to close "),
-        );
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Left)
+            .scroll((scroll, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.style_text_primary())
+                    .title(" Keyboard Shortcuts - ↑↓/PgUp/PgDn: scroll, any other key: close "),
+            );
 
         frame.render_widget(paragraph, popup_area);
     }
 
     /// Builds the help content with all keyboard shortcuts
     /// Organizes shortcuts by category for easy reference
+    ///
+    /// Written from the key handlers (input/router.rs, main_view/input_handler.rs,
+    /// input/edit_mode.rs, popups/manager.rs, log_viewer/{mod,single_view}.rs):
+    /// keep it in step with them, and with the TUI section of
+    /// docs/commands-reference.md.
     fn build_help_content<'a>(&self, theme: &'a Theme) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
-
-        // Add spacing at top
         lines.push(Line::from(""));
 
-        // Global shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Global Shortcuts",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "q", "Quit application");
-        self.add_shortcut(&mut lines, theme, "Ctrl+C", "Quit application");
-        self.add_shortcut(&mut lines, theme, "Esc", "Go back / Cancel / Close popup");
-        self.add_shortcut(&mut lines, theme, "?", "Show/hide this help overlay");
-
-        lines.push(Line::from(""));
-
-        // Navigation shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Navigation",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "↑ / k", "Move selection up");
-        self.add_shortcut(&mut lines, theme, "↓ / j", "Move selection down");
-        self.add_shortcut(&mut lines, theme, "Tab", "Switch panel focus");
-        self.add_shortcut(&mut lines, theme, "Enter", "Select / Execute / Confirm");
-        self.add_shortcut(&mut lines, theme, "Space", "Expand/collapse project");
-
-        lines.push(Line::from(""));
-
-        // Tab shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Tab Switching",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "1", "Switch to Status tab");
-        self.add_shortcut(&mut lines, theme, "2", "Switch to Commands tab");
-        self.add_shortcut(&mut lines, theme, "3", "Switch to Logs tab");
-
-        lines.push(Line::from(""));
-
-        // Status tab shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Status Tab",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "Enter", "Start app (if stopped)");
-        self.add_shortcut(&mut lines, theme, "s", "Stop running app");
-        self.add_shortcut(&mut lines, theme, "r", "Restart running app");
-
-        lines.push(Line::from(""));
-
-        // Commands tab shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Commands Tab",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "Enter", "Execute selected command");
-
-        lines.push(Line::from(""));
-
-        // Logs tab shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Logs Tab",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "Enter", "Open log viewer");
-        self.add_shortcut(&mut lines, theme, "/", "Search in current view");
-
-        lines.push(Line::from(""));
-
-        // Log viewer shortcuts section
-        lines.push(Line::from(Span::styled(
-            "Log Viewer",
-            Style::default()
-                .fg(theme.primary)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )));
-        lines.push(Line::from(""));
-
-        self.add_shortcut(&mut lines, theme, "↑ / ↓", "Scroll line by line");
-        self.add_shortcut(&mut lines, theme, "PgUp / PgDn", "Scroll page by page");
-        self.add_shortcut(&mut lines, theme, "Home / End", "Jump to start/end");
-        self.add_shortcut(&mut lines, theme, "g / G", "Jump to top/bottom (vim-style)");
-        self.add_shortcut(&mut lines, theme, "/", "Enter search mode");
-        self.add_shortcut(&mut lines, theme, "n / N", "Next/previous search result");
-        self.add_shortcut(&mut lines, theme, "Esc", "Exit viewer");
-
-        lines.push(Line::from(""));
+        let sections: &[(&str, &[(&'static str, &'static str)])] = &[
+            (
+                "Global",
+                &[
+                    ("q", "Quit (not while typing, nor in a popup)"),
+                    ("Ctrl+C", "Quit"),
+                    ("?", "Show this help (↑↓/PgUp/PgDn scroll it)"),
+                    ("Esc", "Close a popup / go back"),
+                ],
+            ),
+            (
+                "App list and panels",
+                &[
+                    ("1 / 2", "Status tab / Config tab"),
+                    ("Tab", "Next tab"),
+                    ("← / →", "Focus the app list / the detail panel"),
+                    ("↑↓ / j k", "Move in the focused panel"),
+                    ("Shift+↑↓", "Move by 10"),
+                    ("Space", "Expand/collapse the project (app list)"),
+                    ("l", "Open the app's latest log (running), else pick a log"),
+                ],
+            ),
+            (
+                "Status tab",
+                &[
+                    ("s", "Start the app (pick the environment) / stop it"),
+                    ("r", "Restart the running app"),
+                    ("Enter", "Open the selected log (detail panel)"),
+                ],
+            ),
+            (
+                "Config tab",
+                &[
+                    ("Enter", "Run the selected command (detail panel)"),
+                    ("a", "Add a command"),
+                    ("e", "Edit the selected command (detail panel)"),
+                    ("s", "Make the selected command its default (detail panel)"),
+                    ("d", "Delete the selected command (detail) / the app (list)"),
+                    ("E", "Edit the app (type, path, default commands)"),
+                    ("D", "Dependencies: a add, d remove"),
+                    ("f", "Env files: a add, e edit, d delete"),
+                    ("r", "Restart the running app (app list)"),
+                ],
+            ),
+            (
+                "Forms",
+                &[
+                    ("Tab", "Next field (↑↓ too in Edit app)"),
+                    ("← / →", "Move the cursor"),
+                    ("Space", "Next environment (Add command, environment field)"),
+                    ("Enter", "Save"),
+                    ("Esc", "Cancel"),
+                    ("y / n", "Confirm / cancel a deletion"),
+                ],
+            ),
+            (
+                "Command popup",
+                &[
+                    ("← / →", "Choose the environment (start)"),
+                    ("Enter", "Confirm / close once done"),
+                    ("↑↓ / j k", "Scroll the output"),
+                    ("Home / End", "Top / follow the output"),
+                    ("Esc", "Close"),
+                ],
+            ),
+            (
+                "Log viewer",
+                &[
+                    ("↑↓ / j k", "Move line by line (Shift: by 10)"),
+                    ("PgUp / PgDn", "Move by 20 lines"),
+                    ("g / G", "Top / bottom (Home / End)"),
+                    ("/", "Search: type, ↑↓ results, Enter keep, Esc cancel"),
+                    ("n / N", "Next / previous result of the kept search"),
+                    ("Esc", "Clear the kept search, else leave the viewer"),
+                    ("n", "Add a panel (no search kept; up to 4)"),
+                    ("L", "Show another log in this panel"),
+                    ("Tab", "Next panel"),
+                    ("w", "Close the panel (when there are several)"),
+                    ("J", "Show/hide the JSON panel (JSON lines)"),
+                ],
+            ),
+        ];
+        for (title, shortcuts) in sections {
+            lines.push(Line::from(Span::styled(
+                *title,
+                Style::default()
+                    .fg(theme.primary)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )));
+            lines.push(Line::from(""));
+            for (key, description) in *shortcuts {
+                self.add_shortcut(&mut lines, theme, key, description);
+            }
+            lines.push(Line::from(""));
+        }
 
         // Status indicators section
         lines.push(Line::from(Span::styled(
@@ -307,12 +329,21 @@ mod tests {
             .collect::<Vec<String>>()
             .join("\n");
 
-        assert!(content_str.contains("Global Shortcuts"));
-        assert!(content_str.contains("Navigation"));
-        assert!(content_str.contains("Tab Switching"));
-        assert!(content_str.contains("Commands Tab"));
-        assert!(content_str.contains("Logs Tab"));
-        assert!(content_str.contains("Log Viewer"));
-        assert!(content_str.contains("Status Indicators"));
+        for section in [
+            "Global",
+            "App list and panels",
+            "Status tab",
+            "Config tab",
+            "Forms",
+            "Command popup",
+            "Log viewer",
+            "Status Indicators",
+        ] {
+            assert!(content_str.contains(section), "{section}");
+        }
+        // What it used to get wrong.
+        assert!(!content_str.contains("Logs Tab"));
+        assert!(!content_str.contains("Commands Tab"));
+        assert!(!content_str.contains("Switch panel focus"));
     }
 }

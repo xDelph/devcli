@@ -27,6 +27,7 @@ use std::collections::HashMap;
 /// * `apps_only` - If true, only show app names without details
 pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Result<()> {
     let config = load_config()?;
+    ensure_project_exists(&config, project_filter.as_deref())?;
 
     if crate::output::json_enabled() {
         return config_list_json(&config, project_filter, apps_only);
@@ -143,6 +144,25 @@ pub async fn config_list(project_filter: Option<String>, apps_only: bool) -> Res
     }
 
     Ok(())
+}
+
+/// An unknown `--project` is an error, as for every other command: it used to
+/// list nothing and exit 0, as if the project had no apps.
+pub(crate) fn ensure_project_exists(
+    config: &crate::config::Config,
+    project: Option<&str>,
+) -> Result<()> {
+    let Some(project) = project else {
+        return Ok(());
+    };
+    if config.projects.contains_key(project) {
+        return Ok(());
+    }
+    let names: Vec<String> = config.projects.keys().cloned().collect();
+    let hint = config_manager::resolver::fuzzy_match(project, &names, 3)
+        .map(|p| format!(" Did you mean '{p}'?"))
+        .unwrap_or_default();
+    anyhow::bail!("Project '{project}' not found in config.{hint}")
 }
 
 /// Machine-readable `config list` for agents (`devcli --json config list`).

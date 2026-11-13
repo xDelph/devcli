@@ -37,7 +37,7 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         &config,
         &args.app_name,
         args.project.as_deref(),
-        crate::worktrees::Mode::FromCwd,
+        crate::worktrees::Mode::FromCwdStrict,
     )?;
     let project_name = resolved_app.project.clone();
     let actual_app_name = resolved_app.app_name.clone();
@@ -46,10 +46,12 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     let existing_process = if let Some(process) =
         find_process(&store, &project_name, &actual_app_name, args.env.as_deref())?
     {
-        if store.is_running(&process) {
+        // A crash pm-daemon is about to restart is restarted now instead:
+        // deleting its entry here cancelled the daemon's restart.
+        if store.is_running(&process) || store.awaiting_restart(&process) {
             Some(process)
         } else {
-            store.delete(&process.id)?;
+            store.forget(&process.id, process.pid)?;
             emit_line(
                 silent,
                 args.output_tx.as_ref(),
@@ -92,9 +94,9 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
 
     // Until the new instance is recorded, tell the attached session owning
     // the app (if any) that it is being replaced, not gone.
-    let _restarting = store.begin_restart(&process)?;
+    let marker = store.begin_restart(&process)?;
 
-    // Stop current process first
+    // Stop current process first: this instance, in its environment only.
     let stop_args = crate::commands::stop::StopCommandArgs {
         app_name: Some(actual_app_name.clone()),
         project: project.clone(),
@@ -104,7 +106,22 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
         silent: inner_silent,
         output_tx: args.output_tx.clone(),
     };
-    crate::commands::stop::stop_command(stop_args).await?;
+    crate::commands::stop::stop_in_environment(
+        stop_args,
+        process.metadata.get("environment").map(String::as_str),
+    )
+    .await?;
+
+    // An attached restart stays in `start` for its whole session: the marker
+    // goes as soon as the new instance is recorded, not when the session
+    // ends (the previous owner would never notice its app had left).
+    let _marker = drop_marker_once_replaced(
+        marker,
+        project_name.clone(),
+        actual_app_name.clone(),
+        environment.clone(),
+        process.pid,
+    );
 
     // Decide restart path (run vs start)
     let command_variant = process.metadata.get("command_variant").cloned();
@@ -167,6 +184,41 @@ pub async fn restart_command(args: RestartCommandArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Aborts the task on drop.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Hold `marker` until an instance other than `old_pid` is recorded for
+/// `project/app` in `environment` (or the returned guard is dropped).
+fn drop_marker_once_replaced(
+    marker: process_manager::state::RestartMarker,
+    project: String,
+    app: String,
+    environment: String,
+    old_pid: u32,
+) -> AbortOnDrop {
+    AbortOnDrop(tokio::spawn(async move {
+        let _marker = marker;
+        let Ok(store) = state_store() else {
+            // Keep the marker until the restart ends.
+            return std::future::pending().await;
+        };
+        loop {
+            if let Ok(Some(new)) = find_process(&store, &project, &app, Some(&environment))
+                && new.pid != old_pid
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }))
 }
 
 /// The restarted instance of a shared process is shared too.

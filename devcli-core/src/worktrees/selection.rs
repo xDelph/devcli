@@ -6,7 +6,7 @@
 //! a sub-agent inside a worktree would have stopped the main checkout's apps.
 
 use super::git;
-use super::instance::{app_named, resolve_all_readonly, split, Mode, Selector};
+use super::instance::{app_named, resolve_all_readonly, slug_roots, split, Mode, Selector};
 use super::meta;
 use crate::config::models::Config;
 use crate::utils::path::expand_path;
@@ -34,6 +34,16 @@ pub enum Selection {
     AllOf(String),
     /// The instances of a configured project running from one worktree.
     Worktree { base: String, root: PathBuf },
+    /// `proj@slug`: the instances of a configured project running from the
+    /// worktrees called `slug` in its apps' repositories.
+    Slug {
+        base: String,
+        slug: String,
+        /// Those worktrees. Empty when no repository has one by that name:
+        /// processes are then matched by name, and none is an error.
+        roots: Vec<PathBuf>,
+        not_found: String,
+    },
 }
 
 /// The configured project a process belongs to (`proj` for `proj@slug`).
@@ -47,7 +57,7 @@ pub fn base_project(metadata: &HashMap<String, String>) -> Option<&str> {
 impl Selection {
     pub fn of(config: &Config, app: Option<&str>, project: Option<&str>) -> Result<Self> {
         if let Some(app) = app {
-            return match resolve_all_readonly(config, app, project, Mode::FromCwd) {
+            return match resolve_all_readonly(config, app, project, Mode::FromCwdStrict) {
                 Ok(instances) => Ok(Selection::Instances(
                     instances
                         .into_iter()
@@ -85,7 +95,35 @@ impl Selection {
         let (base, selector) = split(project);
         Ok(match selector {
             Selector::Base | Selector::Auto => Selection::Project(base.to_string()),
-            Selector::Slug(_) => Selection::Project(project.to_string()),
+            // A project no longer in the config: its processes, by name.
+            Selector::Slug(_) if !config.projects.contains_key(base) => {
+                Selection::Project(project.to_string())
+            }
+            Selector::Slug(slug) => {
+                let (mut roots, mut slugs) = slug_roots(config, base, &slug)?;
+                // Run from inside one of them, the current one only.
+                let here = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| git::checkout_of(&cwd))
+                    .map(|c| c.root);
+                if let Some(here) = here.filter(|h| roots.contains(h)) {
+                    roots = vec![here];
+                }
+                slugs.sort();
+                let known = if slugs.is_empty() {
+                    "none".to_string()
+                } else {
+                    slugs.join(", ")
+                };
+                Selection::Slug {
+                    base: base.to_string(),
+                    not_found: format!(
+                        "Project '{base}' has no worktree '{slug}' (worktrees: {known})."
+                    ),
+                    slug,
+                    roots,
+                }
+            }
             Selector::All => Selection::AllOf(base.to_string()),
         })
     }
@@ -93,13 +131,23 @@ impl Selection {
     /// For a selection by name of an app that is not in the config, fail
     /// when nothing matches either: a typo used to answer "No processes to
     /// stop" with exit code 0.
+    ///
+    /// The same for a worktree slug no repository of the project has.
     pub fn check_found(&self, matched: usize) -> Result<()> {
-        if let Selection::Named { not_found, .. } = self
-            && matched == 0
-        {
-            anyhow::bail!("{not_found} No process of that name is tracked either.");
+        if matched > 0 {
+            return Ok(());
         }
-        Ok(())
+        match self {
+            Selection::Named { not_found, .. } => {
+                anyhow::bail!("{not_found} No process of that name is tracked either.")
+            }
+            Selection::Slug {
+                roots, not_found, ..
+            } if roots.is_empty() => {
+                anyhow::bail!("{not_found} No process of that name is tracked either.")
+            }
+            _ => Ok(()),
+        }
     }
 
     /// For a selection by name, fail when it matches the processes of
@@ -155,6 +203,15 @@ impl Selection {
                         .map(PathBuf::from)
                         .as_ref()
                         == Some(root)
+            }
+            Selection::Slug {
+                base, slug, roots, ..
+            } => {
+                project == Some(format!("{base}@{slug}").as_str())
+                    && (roots.is_empty()
+                        || metadata
+                            .get(meta::WORKTREE_ROOT)
+                            .is_some_and(|r| roots.contains(&PathBuf::from(r))))
             }
         }
     }
@@ -229,6 +286,39 @@ mod tests {
             root: "/w/other".into(),
         };
         assert!(!other.matches(&feat));
+    }
+
+    #[test]
+    fn a_slug_selects_its_worktrees_only_and_an_unknown_one_is_an_error() {
+        let in_one = meta(&[
+            ("project", "proj@feat"),
+            ("app_config_name", "api"),
+            (meta::BASE_PROJECT, "proj"),
+            (meta::WORKTREE_ROOT, "/one/feat"),
+        ]);
+        // Another repository's unrelated `feat`, not designated here.
+        let in_two = meta(&[
+            ("project", "proj@feat"),
+            ("app_config_name", "web"),
+            (meta::BASE_PROJECT, "proj"),
+            (meta::WORKTREE_ROOT, "/two/feat"),
+        ]);
+        let slug = |roots: Vec<PathBuf>| Selection::Slug {
+            base: "proj".into(),
+            slug: "feat".into(),
+            roots,
+            not_found: "Project 'proj' has no worktree 'feat'.".into(),
+        };
+        let one = slug(vec!["/one/feat".into()]);
+        assert!(one.matches(&in_one) && !one.matches(&in_two));
+        assert!(one.check_found(0).is_ok(), "nothing running there is fine");
+
+        // No such worktree any more: by name, and nothing is an error.
+        let gone = slug(Vec::new());
+        assert!(gone.matches(&in_one) && gone.matches(&in_two));
+        assert!(gone.check_found(1).is_ok());
+        let err = gone.check_found(0).unwrap_err();
+        assert!(err.to_string().contains("no worktree 'feat'"), "{err}");
     }
 
     #[test]

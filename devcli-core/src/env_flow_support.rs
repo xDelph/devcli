@@ -26,15 +26,18 @@ pub struct ContainerEnvFile {
     pub summary: String,
 }
 
-pub fn stage_from_opt(stage: Option<&str>) -> Option<Stage> {
-    stage.map(Stage::from)
-}
-
-/// Config stage when set, otherwise auto-detect from process env (`APP_ENV`, `NODE_ENV`, …).
+/// The stage whose env files are loaded: the one devcli resolved (`--stage`,
+/// the app's `default_stages`, the `default-stage` preference), else none -
+/// the base files only.
+///
+/// Never taken from the caller's shell. It used to fall back to `APP_ENV`,
+/// `RUST_ENV`, `NODE_ENV`, `RAILS_ENV` or `FLASK_ENV`: a `NODE_ENV=production`
+/// exported for another tool silently loaded `.env.production` into every
+/// app, with stages (`production`, `staging`, anything) that `start --stage`
+/// refuses, and only for the cascade - a file pinned in `env_files` was still
+/// looked up under the stage devcli had resolved.
 pub fn effective_stage(stage: Option<&str>) -> Option<Stage> {
-    stage
-        .map(Stage::from)
-        .or_else(env_flow::context::detect_stage)
+    stage.map(Stage::from)
 }
 
 pub fn context_from_env(environment: &str) -> RuntimeContext {
@@ -306,7 +309,7 @@ fn container_env_file_contents(vars: &EnvVars, environment: &str) -> String {
 }
 
 /// Write `contents` to `path` readable by the owner only, in a 0700 `dir`.
-fn write_private(dir: &Path, path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_private(dir: &Path, path: &Path, contents: &str) -> Result<()> {
     use std::io::Write;
 
     fs::create_dir_all(dir)?;
@@ -368,21 +371,6 @@ pub fn resolve_runtime_env_display(
         &cascade_summary(&existing),
         &layer_infos(&layers),
     )))
-}
-
-/// Layer plan for one runtime (includes non-existent layers).
-pub fn resolve_runtime_layers(
-    working_dir: &Path,
-    stage: Option<&str>,
-    environment: &str,
-    dockerfile_path: Option<&str>,
-) -> Result<Vec<LayerInfo>> {
-    Ok(layer_infos(&runtime_layers(
-        working_dir,
-        stage,
-        environment,
-        dockerfile_path,
-    )?))
 }
 
 fn runtime_layers(
@@ -519,6 +507,30 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn the_stage_is_never_read_from_the_shell() {
+        let _guard = crate::test_utils::env_guard();
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".env"), "FROM=base\n").unwrap();
+        fs::write(dir.path().join(".env.production"), "FROM=production\n").unwrap();
+        let previous = std::env::var_os("NODE_ENV");
+        // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+        unsafe { std::env::set_var("NODE_ENV", "production") };
+
+        let stage = effective_stage(None);
+        let loaded = load_local_runtime(dir.path(), None, None);
+
+        match previous {
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            Some(value) => unsafe { std::env::set_var("NODE_ENV", value) },
+            // SAFETY: test code; only std reads the environment here, and std serialises its own accesses.
+            None => unsafe { std::env::remove_var("NODE_ENV") },
+        }
+        assert_eq!(stage, None);
+        let loaded = loaded.unwrap().expect("the base .env is loaded");
+        assert_eq!(loaded.vars["FROM"], "base");
+    }
 
     #[test]
     fn load_file_multiline_and_export() {

@@ -127,6 +127,38 @@ impl Environment {
             .collect::<Vec<_>>()
             .join(", ")
     }
+
+    /// Parse an environment name typed by a user (`--env`, `pref set
+    /// default-env`, `env add --context`): aliases (`compose`, `kubernetes`)
+    /// and any letter case are accepted; anything else is an error naming the
+    /// valid values, with a suggestion when the name is close to one.
+    ///
+    /// Callers keep [`Environment::as_str`] of the result, never the raw value:
+    /// an alias kept as typed reached code matching the canonical name only
+    /// (`compose` started without `--env-file`, under `…compose…` ids).
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        let name = value.trim().to_ascii_lowercase();
+        if let Some(env) = Self::from_string(&name) {
+            return Ok(env);
+        }
+        let mut names: Vec<&str> = Self::all().iter().map(|e| e.as_str()).collect();
+        names.extend(["compose", "kubernetes"]);
+        let hint = config_manager::utils::find_closest_match(&name, &names, 3)
+            .map(|n| format!(" Did you mean '{n}'?"))
+            .unwrap_or_default();
+        Err(format!(
+            "Unknown environment '{value}'. Must be one of: {} (aliases: compose, kubernetes).{hint}",
+            Self::all_names()
+        ))
+    }
+
+    /// The canonical name of `value` if it names an environment (aliases
+    /// included), else `value` unchanged.
+    pub fn canonical_name(value: &str) -> String {
+        Self::parse(value)
+            .map(|env| env.as_str().to_string())
+            .unwrap_or_else(|_| value.to_string())
+    }
 }
 
 // Top-level config structure
@@ -304,6 +336,11 @@ pub struct Commands {
     // CI pipeline commands
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci: Option<HashMap<String, String>>,
+
+    /// Keys that are not an environment (a typo such as `"dokcer"`), kept on
+    /// save and reported by `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -434,6 +471,11 @@ pub struct Defaults {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci: Option<String>,
+
+    /// Keys that are not an environment, kept on save and reported by
+    /// `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Implement Default manually or via derive (we used derive above)
@@ -478,28 +520,6 @@ impl Defaults {
 }
 
 impl App {
-    /// Get the env file path for a specific stage and environment
-    /// Falls back to stage-only or base .env if context-specific not found
-    pub fn get_env_file(&self, stage: Option<&str>, env: &str) -> Option<String> {
-        // Check env_files structure
-        if let Some(ref env_files) = self.env_files
-            && let Some(stage_name) = stage
-        {
-            // Try stage + environment specific
-            if let Some(stage_map) = env_files.get(stage_name) {
-                if let Some(path) = stage_map.get(env) {
-                    return Some(path.clone());
-                }
-                // Try stage with "all" context
-                if let Some(path) = stage_map.get("all") {
-                    return Some(path.clone());
-                }
-            }
-        }
-
-        None
-    }
-
     /// Get the default stage for a specific environment
     /// Falls back to preferences default_stage
     pub fn get_default_stage(
@@ -516,38 +536,6 @@ impl App {
 
         // Fall back to preferences default
         preferences_default.map(|s| s.to_string())
-    }
-
-    /// Set env file for a specific stage and environment
-    pub fn set_env_file(&mut self, stage: &str, env: &str, path: String) {
-        if self.env_files.is_none() {
-            self.env_files = Some(HashMap::new());
-        }
-
-        let env_files = self
-            .env_files
-            .as_mut()
-            .expect("env_files should be Some after initialization");
-        if !env_files.contains_key(stage) {
-            env_files.insert(stage.to_string(), HashMap::new());
-        }
-
-        env_files
-            .get_mut(stage)
-            .expect("stage should exist after insertion")
-            .insert(env.to_string(), path);
-    }
-
-    /// Set default stage for a specific environment
-    pub fn set_default_stage(&mut self, env: &str, stage: String) {
-        if self.default_stages.is_none() {
-            self.default_stages = Some(HashMap::new());
-        }
-
-        self.default_stages
-            .as_mut()
-            .expect("default_stages should be Some after initialization")
-            .insert(env.to_string(), stage);
     }
 }
 
@@ -757,6 +745,11 @@ pub struct RestartPolicy {
     // Exit codes that trigger restart (None = any non-zero code)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_on_exit_codes: Option<Vec<i32>>,
+
+    /// Unknown keys (`"max_restart"`), kept on save and reported by
+    /// `config validate` (see [`App::extra`]).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 // Helper functions for RestartPolicy defaults
@@ -794,6 +787,7 @@ impl Default for RestartPolicy {
             max_backoff_secs: 60,
             backoff_multiplier: 2.0,
             restart_on_exit_codes: None,
+            extra: UnknownFields::new(),
         }
     }
 }

@@ -24,6 +24,18 @@ pub struct StopCommandArgs {
 // Main implementation of the stop command
 #[tracing::instrument(skip(args), fields(app_name = ?args.app_name, project = ?args.project, all = args.all, force = args.force))]
 pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
+    stop_in_environment(args, None).await
+}
+
+/// [`stop_command`], restricted to the processes of `environment` when given.
+///
+/// For `restart APP --env E`: the selection by name matches the app in
+/// every environment, and restarting the docker instance used to stop the
+/// local one too.
+pub(crate) async fn stop_in_environment(
+    args: StopCommandArgs,
+    environment: Option<&str>,
+) -> Result<()> {
     if let Some(agent) = crate::utils::agent::detect() {
         // `--project P` alone, run inside one of the project's worktrees, only
         // reaches that worktree's processes: the agent's own.
@@ -52,9 +64,12 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     );
 
     let processes = store.list()?;
+    // A crashed app that pm-daemon is about to restart counts: skipping it
+    // ("not running") let the daemon bring back an app the user stopped.
     let running_processes: Vec<_> = processes
         .into_iter()
-        .filter(|p| store.is_running(p))
+        .filter(|p| store.is_running(p) || store.awaiting_restart(p))
+        .filter(|p| in_environment(p, environment))
         .collect();
     let processes_to_stop = filter_processes(&args, running_processes)?;
 
@@ -192,6 +207,15 @@ pub async fn stop_command(args: StopCommandArgs) -> Result<()> {
     Ok(())
 }
 
+/// Whether `process` runs in `environment` (any, when `None`).
+fn in_environment(
+    process: &process_manager::state::ManagedProcess,
+    environment: Option<&str>,
+) -> bool {
+    environment
+        .is_none_or(|env| process.metadata.get("environment").map(String::as_str) == Some(env))
+}
+
 // Filter processes based on command arguments
 fn filter_processes(
     args: &StopCommandArgs,
@@ -318,8 +342,10 @@ pub(crate) async fn stop_single_process(
     let process = &current;
     // Dead already (crashed, waiting for a restart): its PID may belong to an
     // unrelated process by now, so signal nothing and forget the entry.
+    // Entries are forgotten by PID throughout: a `start` may record a new
+    // process under the same id once this one is gone.
     if !store.is_running(process) {
-        store.delete(&process.id)?;
+        store.forget(&process.id, process.pid)?;
         return Ok(());
     }
 
@@ -344,12 +370,8 @@ pub(crate) async fn stop_single_process(
         // Wait for graceful shutdown
         for _ in 0..10 {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            if let Some(reloaded) = store.load(&process.id)? {
-                if !store.is_running(&reloaded) {
-                    let _ = store.delete(&process.id);
-                    return Ok(());
-                }
-            } else {
+            if !store.is_running(process) {
+                let _ = store.forget(&process.id, process.pid);
                 return Ok(());
             }
         }
@@ -367,9 +389,7 @@ pub(crate) async fn stop_single_process(
     let _ = engine::terminate(process.pid, process.pgid, true).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    if let Some(reloaded) = store.load(&process.id)?
-        && store.is_running(&reloaded)
-    {
+    if store.is_running(process) {
         anyhow::bail!(
             "Process '{}' (PID: {}) is still running after SIGKILL",
             display_name,
@@ -377,7 +397,7 @@ pub(crate) async fn stop_single_process(
         );
     }
 
-    store.delete(&process.id)?;
+    store.forget(&process.id, process.pid)?;
     Ok(())
 }
 

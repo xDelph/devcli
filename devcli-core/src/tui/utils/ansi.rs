@@ -70,10 +70,12 @@ pub fn parse_ansi_codes(text: &str) -> Vec<Span<'static>> {
         spans.push(Span::styled(current_text, current_style));
     }
 
-    // If no spans were created, return a single span with black background
+    // No visible text (an empty line, or one made only of escape sequences
+    // such as `\x1b[2K`): a single empty span with the black background. It
+    // used to hold the raw input, so the escape codes were shown as `[2K`.
     if spans.is_empty() {
         spans.push(Span::styled(
-            text.to_string(),
+            String::new(),
             Style::default().bg(Color::Rgb(0, 0, 0)),
         ));
     }
@@ -158,4 +160,28 @@ fn apply_sgr_code(code_str: &str, mut style: Style) -> Style {
     }
 
     style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(spans: &[Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn a_line_of_escape_sequences_only_is_empty() {
+        let spans = parse_ansi_codes("\x1b[2K\x1b[1G");
+        assert_eq!(text_of(&spans), "");
+        assert_eq!(spans.len(), 1);
+    }
+
+    #[test]
+    fn styled_text_keeps_its_text_only() {
+        assert_eq!(
+            text_of(&parse_ansi_codes("\x1b[31merror\x1b[0m!")),
+            "error!"
+        );
+    }
 }

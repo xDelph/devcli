@@ -1,6 +1,6 @@
 // Main view module - split into smaller submodules for better organization
 
-mod config_editor;
+pub(crate) mod config_editor;
 mod input_handler;
 mod navigation;
 mod popups;
@@ -22,16 +22,14 @@ mod main_view_core {
         pub(crate) active_tab: MainTab,
         /// Which panel has focus (left app list or right details)
         pub(crate) focus: PanelFocus,
-        /// Scroll offset for the left panel list
-        #[allow(dead_code)]
-        /// Scroll offset for the right panel details
+        /// Scroll offset of the detail panel (reset when switching tabs)
         pub(crate) detail_scroll: usize,
 
         /// Selected log file index in Status tab
         pub(crate) selected_log_idx: usize,
         /// Log manager for discovering log files
         pub(crate) log_manager: LogManager,
-        /// Config editor mode (view, add, edit)
+        /// Config editor mode (view, a form, a popup)
         pub(crate) config_mode: ConfigMode,
         /// Form data for adding/editing apps
         pub(crate) config_form: ConfigForm,
@@ -46,6 +44,13 @@ mod main_view_core {
         pub(crate) delete_confirm_message: String,
         /// Delete confirmation action type
         pub(crate) delete_confirm_type: DeleteType,
+        /// The app the open delete confirmation is about. `y` acts on it
+        /// only while it is still the selected app: the selection can move
+        /// under an open confirmation (a worktree row vanishing), and `y`
+        /// used to delete whatever was selected by then.
+        pub(crate) delete_target: Option<crate::tui::state::AppKey>,
+        /// The command (environment, name) of an open command deletion.
+        pub(crate) delete_command_target: Option<(String, String)>,
     }
 
     /// Type of deletion being confirmed
@@ -61,7 +66,6 @@ mod main_view_core {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ConfigMode {
         View,
-        Add,
         Edit,
         AddCommand,
         EditCommand,
@@ -88,6 +92,14 @@ mod main_view_core {
         pub env_file_stage: crate::tui::widgets::TextEditor,
         pub env_file_context: crate::tui::widgets::TextEditor,
         pub env_file_path: crate::tui::widgets::TextEditor,
+        /// The configured app the "Edit app" form edits.
+        pub editing: Option<crate::tui::state::AppKey>,
+        /// Names of the local / docker commands the "Edit app" form edits
+        /// (`None`: the app has none; a value creates `start`).
+        pub local_cmd_name: Option<String>,
+        pub docker_cmd_name: Option<String>,
+        /// Name of the command the "Edit command" form was opened on.
+        pub edit_command_original: Option<String>,
     }
 
     /// Config form fields
@@ -107,7 +119,7 @@ mod main_view_core {
         EnvFilePath,
     }
 
-    /// The four main tabs in the interface
+    /// The main tabs of the interface
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum MainTab {
         Status,
@@ -140,7 +152,17 @@ mod main_view_core {
                     crate::tui::views::main_view::popups::scroll_manager::PopupScrollManager::new(),
                 delete_confirm_message: String::new(),
                 delete_confirm_type: DeleteType::App,
+                delete_target: None,
+                delete_command_target: None,
             })
+        }
+
+        /// Show `what` failed, with `error`, in the error bar.
+        ///
+        /// The config editor used to `eprintln!` its errors, which wrote
+        /// over the screen the TUI owns (or was lost behind it).
+        pub(crate) fn report(state: &mut AppState, what: &str, error: impl std::fmt::Display) {
+            state.error_message = Some(format!("{what}: {error:#}"));
         }
 
         /// Renders the main view with all its components

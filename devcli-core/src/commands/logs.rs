@@ -47,16 +47,40 @@ struct LogsOutput {
     lines: Vec<String>,
 }
 
+/// The instance whose logs are read.
+struct Instance {
+    project: String,
+    app_name: String,
+}
+
 /// Execute the logs command
 #[tracing::instrument(skip(args), fields(app = %args.app_name, project = ?args.project, env = ?args.environment, lines = args.lines, follow = args.follow))]
 pub async fn logs_command(args: LogsArgs) -> Result<()> {
     let config = load_config()?;
-    let resolved = crate::worktrees::resolve(
+    let resolved = match crate::worktrees::resolve_readonly(
         &config,
         &args.app_name,
         args.project.as_deref(),
-        crate::worktrees::Mode::FromCwd,
-    )?;
+        crate::worktrees::Mode::FromCwdStrict,
+    ) {
+        Ok(resolved) => Instance {
+            project: resolved.project,
+            app_name: resolved.app_name,
+        },
+        // `api@feat` once worktree `feat` is gone: its logs are still there.
+        Err(e) => match crate::worktrees::slug_instance_name(
+            &config,
+            &args.app_name,
+            args.project.as_deref(),
+        ) {
+            Some((project, app_name))
+                if find_latest_log(&project, &app_name, args.environment.as_deref())?.is_some() =>
+            {
+                Instance { project, app_name }
+            }
+            _ => return Err(e),
+        },
+    };
 
     let file = find_latest_log(
         &resolved.project,
@@ -93,13 +117,21 @@ pub async fn logs_command(args: LogsArgs) -> Result<()> {
             .environment
             .clone()
             .or_else(|| environment_from_log_name(&path, &resolved.project, &resolved.app_name));
-        output::print_json(&LogsOutput {
+        let document = LogsOutput {
             project: resolved.project.clone(),
             app: resolved.app_name.clone(),
             environment,
             file: Some(path.display().to_string()),
             lines: tail,
-        })?;
+        };
+        // A stream is newline-delimited JSON throughout: this document on
+        // one line, then one `{"line": ...}` object per new line. A pretty
+        // first document made the stream unreadable line by line.
+        if args.follow {
+            output::print_json_line(&document)?;
+        } else {
+            output::print_json(&document)?;
+        }
     } else {
         for line in &tail {
             println!("{line}");
@@ -134,7 +166,13 @@ fn find_latest_log(project: &str, app: &str, environment: Option<&str>) -> Resul
         // Parse the name instead of matching a prefix: `proj_api_` is also a
         // prefix of app `api_worker`'s logs.
         match environment_from_log_name(&path, project, app) {
-            Some(env) if environment.is_none_or(|wanted| wanted == env) => {}
+            // Compared by canonical name: logs written by an older devcli
+            // started with `--env compose` are named `…_compose_…`.
+            Some(env)
+                if environment.is_none_or(|wanted| {
+                    crate::config::Environment::canonical_name(wanted)
+                        == crate::config::Environment::canonical_name(&env)
+                }) => {}
             _ => continue,
         }
         let modified = entry

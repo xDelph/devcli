@@ -314,6 +314,7 @@ pub fn discover_all_apps(
                     continue;
                 }
 
+                // Members are root-relative paths; a top-level dir's is its name.
                 if workspace_members
                     .as_ref()
                     .is_some_and(|members| members.contains(dir_name_str.as_ref()))
@@ -374,7 +375,15 @@ fn discover_apps_in_container(
                 continue;
             }
 
-            if workspace_members.is_some_and(|members| members.contains(dir_name_str.as_ref())) {
+            // Containers are top-level, so this is the root-relative path.
+            let rel = format!(
+                "{}/{dir_name_str}",
+                container_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            );
+            if workspace_members.is_some_and(|members| members.contains(&rel)) {
                 continue;
             }
 
@@ -786,20 +795,71 @@ pub(super) fn upsert_app(
     if !force {
         anyhow::bail!(
             "app '{project}/{app_name}' already exists; re-run with --force to replace its \
-             detected settings (dependencies, health check, restart policy and alternative \
-             name are kept)"
+             detected settings (what was set by hand - dependencies, port, health check, \
+             restart policy, alternative name, and commands, defaults and env files the \
+             detection does not produce - is kept)"
         );
     }
 
+    keep_hand_made_settings(&mut app, existing);
+    // `insert` on an existing key keeps the app at its position in the file.
+    apps.insert(app_name.to_string(), app);
+    Ok(true)
+}
+
+/// Carry over to the re-detected `app` what the detection cannot produce.
+///
+/// The detector knows nothing of ports, docker-compose or ci commands, or
+/// commands added with `config add-command`: `--force` used to replace them
+/// all, with their defaults. Detected values win where both exist.
+fn keep_hand_made_settings(app: &mut App, existing: &App) {
     app.dependencies = existing.dependencies.clone();
     app.health_check = existing.health_check.clone();
     app.restart_policy = existing.restart_policy.clone();
     app.alternative_name = existing.alternative_name.clone();
     app.default_stages = existing.default_stages.clone();
     app.extra = existing.extra.clone();
-    // `insert` on an existing key keeps the app at its position in the file.
-    apps.insert(app_name.to_string(), app);
-    Ok(true)
+    app.port = app.port.or(existing.port);
+    if app.dockerfile_path.is_none() {
+        app.dockerfile_path = existing.dockerfile_path.clone();
+    }
+
+    let mut old_commands = existing.commands.clone();
+    let mut old_defaults = existing.defaults.clone();
+    for &env in crate::config::Environment::all() {
+        if let Some(old) = old_commands.slot_mut(env).take() {
+            let merged = app.commands.entry(env);
+            for (name, command) in old {
+                merged.entry(name).or_insert(command);
+            }
+        }
+        let default = app.defaults.slot_mut(env);
+        if default.is_none() {
+            *default = old_defaults.slot_mut(env).take();
+        }
+    }
+    for (key, value) in &existing.commands.extra {
+        app.commands
+            .extra
+            .entry(key.clone())
+            .or_insert(value.clone());
+    }
+    for (key, value) in &existing.defaults.extra {
+        app.defaults
+            .extra
+            .entry(key.clone())
+            .or_insert(value.clone());
+    }
+
+    if let Some(old_files) = &existing.env_files {
+        let merged = app.env_files.get_or_insert_with(Default::default);
+        for (stage, contexts) in old_files {
+            let stage_map = merged.entry(stage.clone()).or_default();
+            for (context, file) in contexts {
+                stage_map.entry(context.clone()).or_insert(file.clone());
+            }
+        }
+    }
 }
 
 // Add the detected app to the config and save it to disk

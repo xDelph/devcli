@@ -199,9 +199,30 @@ version = "1.0.0""#,
     fn test_extract_app_name_from_pyproject_toml_quoted() {
         let temp_dir = create_test_dir();
         let pyproject = temp_dir.path().join("pyproject.toml");
-        fs::write(&pyproject, r#"name = "quoted-app""#).unwrap();
+        fs::write(&pyproject, "[project]\nname = 'quoted-app'\n").unwrap();
         let result = extract_app_name(temp_dir.path(), "python").unwrap();
         assert_eq!(result, "quoted-app");
+    }
+
+    #[test]
+    fn test_extract_app_name_ignores_names_in_other_pyproject_tables() {
+        let temp_dir = create_test_dir();
+        fs::write(
+            temp_dir.path().join("pyproject.toml"),
+            r#"[project]
+name = "inference-api"
+
+[tool.setuptools]
+namespaces = false
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cpu"
+"#,
+        )
+        .unwrap();
+        let result = extract_app_name(temp_dir.path(), "python").unwrap();
+        assert_eq!(result, "inference-api");
     }
 
     #[test]

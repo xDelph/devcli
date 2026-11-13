@@ -353,6 +353,76 @@ mod tests {
         assert_eq!(app.dependencies.len(), 1);
     }
 
+    /// --force keeps the port and the commands, defaults and env files the
+    /// detector does not produce; detected commands are refreshed.
+    #[tokio::test]
+    async fn test_auto_add_force_keeps_port_and_hand_added_commands() {
+        use crate::config::models::Environment;
+
+        let _config_dir = crate::test_utils::TempConfigDir::new();
+        let app_dir = create_temp_dir();
+        node_app(app_dir.path(), "api");
+
+        crate::commands::auto_add::auto_add_command(add_args(app_dir.path(), "api"))
+            .await
+            .unwrap();
+        let mut config = crate::config::load_config().unwrap();
+        let detected_local = {
+            let app = config.projects["proj"].apps.get_mut("api").unwrap();
+            app.port = Some(4000);
+            app.commands
+                .entry(Environment::DockerCompose)
+                .insert("up".into(), "docker compose up".into());
+            app.defaults.docker_compose = Some("up".into());
+            app.commands
+                .entry(Environment::Ci)
+                .insert("test".into(), "npm test".into());
+            app.commands
+                .entry(Environment::Local)
+                .insert("e2e".into(), "npm run e2e".into());
+            app.env_files
+                .get_or_insert_with(Default::default)
+                .entry("dev".into())
+                .or_default()
+                .insert("docker-compose".into(), ".env.compose".into());
+            let local = app.commands.local.clone().unwrap();
+            // A stale value of a detected command is refreshed by --force.
+            app.commands
+                .entry(Environment::Local)
+                .insert("dev".into(), "stale".into());
+            local
+        };
+        crate::config::save_config(&config).unwrap();
+
+        let mut forced = add_args(app_dir.path(), "api");
+        forced.force = true;
+        crate::commands::auto_add::auto_add_command(forced)
+            .await
+            .unwrap();
+
+        let config = crate::config::load_config().unwrap();
+        let app = &config.projects["proj"].apps["api"];
+        assert_eq!(app.port, Some(4000));
+        assert_eq!(
+            app.commands.docker_compose.as_ref().unwrap()["up"],
+            "docker compose up"
+        );
+        assert_eq!(app.defaults.docker_compose.as_deref(), Some("up"));
+        assert_eq!(app.commands.ci.as_ref().unwrap()["test"], "npm test");
+        let local = app.commands.local.as_ref().unwrap();
+        assert_eq!(local["e2e"], "npm run e2e");
+        for (name, command) in &detected_local {
+            assert_eq!(
+                &local[name], command,
+                "detected command {name} not refreshed"
+            );
+        }
+        assert_eq!(
+            app.env_files.as_ref().unwrap()["dev"]["docker-compose"],
+            ".env.compose"
+        );
+    }
+
     /// A Python service with a virtualenv and an `app/` package is one app.
     #[test]
     fn test_python_service_with_venv_and_package_is_a_single_app() {

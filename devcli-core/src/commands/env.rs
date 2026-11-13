@@ -1,20 +1,14 @@
 // Environment files management commands
 // Allows users to add, remove, and configure env files for apps
 
-use crate::config::{load_config, save_config};
+use crate::config::models::{Environment, Stage};
+use crate::config::{load_config, resolve_app, save_config, App, Config};
+use crate::output;
 use crate::Result;
 use anyhow::anyhow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-/// Add an environment file to an app's configuration
-///
-/// # Arguments
-/// * `app_name` - Name of the app to configure
-/// * `stage` - Stage name (e.g., "qa", "prod", "dev")
-/// * `context` - Context name (e.g., "local", "docker", "orbstack")
-/// * `file_path` - Path to the env file relative to app root
 fn validate_stage(stage: &str) -> Result<()> {
-    use crate::config::models::Stage;
     if Stage::from_string(stage).is_none() {
         anyhow::bail!(
             "Invalid stage '{stage}'. Must be one of: {} (or `base` for env files of every stage)",
@@ -24,62 +18,87 @@ fn validate_stage(stage: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn add_env_file(app_name: &str, stage: &str, context: &str, file_path: &str) -> Result<()> {
+/// The canonical name of a `--context` (an environment; aliases accepted).
+fn parse_context(context: &str) -> Result<&'static str> {
+    Environment::parse(context)
+        .map(|env| env.as_str())
+        .map_err(|e| anyhow!("Invalid context: {e}"))
+}
+
+/// The app `app_name` designates, resolved like every other command does it:
+/// `alternative_name`, `project/app` and `--project` are understood, and a
+/// name several projects use is an error (or a prompt, on a terminal) instead
+/// of the first app that happened to have that key.
+///
+/// Returns its project and real app key.
+fn locate(config: &Config, app_name: &str, project: Option<&str>) -> Result<(String, String)> {
+    let resolved = resolve_app(config, app_name, project)?;
+    Ok((resolved.project, resolved.app_name))
+}
+
+fn app_mut<'a>(config: &'a mut Config, project: &str, app_name: &str) -> Result<&'a mut App> {
+    config
+        .projects
+        .get_mut(project)
+        .and_then(|p| p.apps.get_mut(app_name))
+        .ok_or_else(|| anyhow!("App '{app_name}' not found in project '{project}'"))
+}
+
+/// Add an environment file to an app's configuration
+///
+/// # Arguments
+/// * `app_name` - Name of the app to configure (or `project/app`, or its alternative name)
+/// * `project` - Project of the app, when the name alone is ambiguous
+/// * `stage` - Stage name (`dev`, `qa`, `preprod`, `prod`, or `base`)
+/// * `context` - Environment the file is for (`local`, `docker`, ...; aliases accepted)
+/// * `file_path` - Path to the env file relative to app root
+///
+/// Only the given context is written. It used to also overwrite the docker,
+/// orbstack and docker-compose entries of the stage when given one of them,
+/// while `env remove` removed only the one named, so the two did not undo
+/// each other.
+pub fn add_env_file(
+    app_name: &str,
+    project: Option<&str>,
+    stage: &str,
+    context: &str,
+    file_path: &str,
+) -> Result<()> {
     // Any other stage was saved, and could then never be used: `start
     // --stage` only knows these. `base` applies to every stage.
     if stage != "base" {
         validate_stage(stage)?;
     }
+    let context = parse_context(context)?;
+    if file_path.trim().is_empty() {
+        anyhow::bail!("The env file path must not be empty");
+    }
+
     let mut config = load_config()?;
+    let (project, app_name) = locate(&config, app_name, project)?;
+    let app = app_mut(&mut config, &project, &app_name)?;
 
-    // Find the app in the config
-    let (_project_name, app) = config
-        .projects
-        .iter_mut()
-        .find_map(|(proj_name, project)| {
-            project
-                .apps
-                .get_mut(app_name)
-                .map(|app| (proj_name.clone(), app))
-        })
-        .ok_or_else(|| anyhow!("App '{}' not found", app_name))?;
-
-    // Initialize env_files if it doesn't exist
-    if app.env_files.is_none() {
-        app.env_files = Some(HashMap::new());
-    }
-
-    let env_files = app
-        .env_files
-        .as_mut()
-        .expect("env_files should be Some after initialization");
-
-    // Initialize stage if it doesn't exist
-    if !env_files.contains_key(stage) {
-        env_files.insert(stage.to_string(), HashMap::new());
-    }
-
-    let stage_map = env_files
-        .get_mut(stage)
-        .expect("stage should exist after insertion");
-
-    // Add the file for this context
-    stage_map.insert(context.to_string(), file_path.to_string());
-
-    // If context is docker or orbstack, also set the other one
-    if context == "docker" {
-        stage_map.insert("orbstack".to_string(), file_path.to_string());
-        stage_map.insert("docker-compose".to_string(), file_path.to_string());
-    } else if context == "orbstack" {
-        stage_map.insert("docker".to_string(), file_path.to_string());
-        stage_map.insert("docker-compose".to_string(), file_path.to_string());
-    } else if context == "docker-compose" {
-        stage_map.insert("docker".to_string(), file_path.to_string());
-        stage_map.insert("orbstack".to_string(), file_path.to_string());
-    }
+    app.env_files
+        .get_or_insert_with(HashMap::new)
+        .entry(stage.to_string())
+        .or_default()
+        .insert(context.to_string(), file_path.to_string());
 
     save_config(&config)?;
 
+    if output::json_enabled() {
+        return output::print_json(&serde_json::json!({
+            "project": project,
+            "app": app_name,
+            "stage": stage,
+            "context": context,
+            "file": file_path,
+        }));
+    }
+    println!("✓ Added env file for {project}/{app_name}");
+    println!("  Stage: {stage}");
+    println!("  Context: {context}");
+    println!("  File: {file_path}");
     Ok(())
 }
 
@@ -87,52 +106,67 @@ pub fn add_env_file(app_name: &str, stage: &str, context: &str, file_path: &str)
 ///
 /// # Arguments
 /// * `app_name` - Name of the app to configure
+/// * `project` - Project of the app, when the name alone is ambiguous
 /// * `stage` - Stage name to remove
 /// * `context` - Optional context name. If None, removes entire stage
-pub fn remove_env_file(app_name: &str, stage: &str, context: Option<&str>) -> Result<()> {
+pub fn remove_env_file(
+    app_name: &str,
+    project: Option<&str>,
+    stage: &str,
+    context: Option<&str>,
+) -> Result<()> {
     let mut config = load_config()?;
-
-    // Find the app in the config
-    let (_project_name, app) = config
-        .projects
-        .iter_mut()
-        .find_map(|(proj_name, project)| {
-            project
-                .apps
-                .get_mut(app_name)
-                .map(|app| (proj_name.clone(), app))
-        })
-        .ok_or_else(|| anyhow!("App '{}' not found", app_name))?;
+    let (project, app_name) = locate(&config, app_name, project)?;
+    let app = app_mut(&mut config, &project, &app_name)?;
 
     let env_files = app
         .env_files
         .as_mut()
-        .ok_or_else(|| anyhow!("No env files configured for app '{}'", app_name))?;
+        .ok_or_else(|| anyhow!("No env files configured for app '{project}/{app_name}'"))?;
+    let stage_map = env_files
+        .get_mut(stage)
+        .ok_or_else(|| anyhow!("Stage '{stage}' not found for app '{project}/{app_name}'"))?;
 
-    if let Some(ctx) = context {
-        // Remove specific context
-        if let Some(stage_map) = env_files.get_mut(stage) {
-            stage_map.remove(ctx);
-
-            // If stage is now empty, remove it
-            if stage_map.is_empty() {
-                env_files.remove(stage);
-            }
-        } else {
-            return Err(anyhow!("Stage '{}' not found", stage));
+    // The canonical name when it is one (`compose` removes `docker-compose`);
+    // any other key is taken as written, so an entry that an older devcli
+    // saved under a bogus name can still be removed.
+    let context = context.map(Environment::canonical_name);
+    let removed: BTreeMap<String, String> = match &context {
+        Some(ctx) => {
+            let file = stage_map.remove(ctx).ok_or_else(|| {
+                anyhow!(
+                    "No env file for context '{ctx}' in stage '{stage}' of '{project}/{app_name}'"
+                )
+            })?;
+            BTreeMap::from([(ctx.clone(), file)])
         }
-    } else {
-        // Remove entire stage
+        None => std::mem::take(stage_map).into_iter().collect(),
+    };
+
+    if stage_map.is_empty() {
         env_files.remove(stage);
     }
-
-    // If env_files is now empty, remove it
     if env_files.is_empty() {
         app.env_files = None;
     }
 
     save_config(&config)?;
 
+    if output::json_enabled() {
+        return output::print_json(&serde_json::json!({
+            "project": project,
+            "app": app_name,
+            "stage": stage,
+            "context": context,
+            "removed": removed,
+        }));
+    }
+    match &context {
+        Some(ctx) => {
+            println!("✓ Removed the {ctx} env file of stage {stage} from {project}/{app_name}")
+        }
+        None => println!("✓ Removed stage {stage} from {project}/{app_name}"),
+    }
     Ok(())
 }
 
@@ -140,49 +174,47 @@ pub fn remove_env_file(app_name: &str, stage: &str, context: Option<&str>) -> Re
 ///
 /// # Arguments
 /// * `app_name` - Name of the app to list env files for
-pub fn list_env_files(app_name: &str) -> Result<()> {
+/// * `project` - Project of the app, when the name alone is ambiguous
+pub fn list_env_files(app_name: &str, project: Option<&str>) -> Result<()> {
     let config = load_config()?;
+    let resolved = resolve_app(&config, app_name, project)?;
+    let (project_name, app_name, app) = (resolved.project, resolved.app_name, resolved.app);
 
-    // Find the app in the config
-    let (project_name, app) = config
-        .projects
+    // Sorted maps, for a stable display and JSON answer.
+    let env_files: BTreeMap<&String, BTreeMap<&String, &String>> = app
+        .env_files
         .iter()
-        .find_map(|(proj_name, project)| project.apps.get(app_name).map(|app| (proj_name, app)))
-        .ok_or_else(|| anyhow!("App '{}' not found", app_name))?;
+        .flatten()
+        .map(|(stage, contexts)| (stage, contexts.iter().collect()))
+        .collect();
+    let default_stages: BTreeMap<&String, &String> = app.default_stages.iter().flatten().collect();
+
+    if output::json_enabled() {
+        return output::print_json(&serde_json::json!({
+            "project": project_name,
+            "app": app_name,
+            "env_files": env_files,
+            "default_stages": default_stages,
+        }));
+    }
 
     println!("Environment files for {}/{}:", project_name, app_name);
     println!();
 
-    if let Some(env_files) = &app.env_files {
-        // Sort stages for consistent display
-        let mut sorted_stages: Vec<_> = env_files.iter().collect();
-        sorted_stages.sort_by_key(|(stage, _)| stage.as_str());
-
-        for (stage, contexts) in sorted_stages {
-            println!("  {}:", stage);
-
-            // Sort contexts for consistent display
-            let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-            sorted_contexts.sort_by_key(|(context, _)| context.as_str());
-
-            for (context, file_path) in sorted_contexts {
-                println!("    • {}: {}", context, file_path);
-            }
-            println!();
-        }
-    } else {
+    if env_files.is_empty() {
         println!("  No env files configured");
     }
+    for (stage, contexts) in &env_files {
+        println!("  {}:", stage);
+        for (context, file_path) in contexts {
+            println!("    • {}: {}", context, file_path);
+        }
+        println!();
+    }
 
-    // Show default stages if configured
-    if let Some(default_stages) = &app.default_stages {
+    if !default_stages.is_empty() {
         println!("Default stages:");
-
-        // Sort contexts for consistent display
-        let mut sorted_defaults: Vec<_> = default_stages.iter().collect();
-        sorted_defaults.sort_by_key(|(context, _)| context.as_str());
-
-        for (context, stage) in sorted_defaults {
+        for (context, stage) in &default_stages {
             println!("  • {}: {}", context, stage);
         }
     }
@@ -194,46 +226,42 @@ pub fn list_env_files(app_name: &str) -> Result<()> {
 ///
 /// # Arguments
 /// * `app_name` - Name of the app to configure
+/// * `project` - Project of the app, when the name alone is ambiguous
 /// * `context` - Context name (e.g., "local", "docker", "orbstack", "k8s")
 /// * `stage` - Stage name to set as default
-pub fn set_default_stage(app_name: &str, context: &str, stage: &str) -> Result<()> {
+pub fn set_default_stage(
+    app_name: &str,
+    project: Option<&str>,
+    context: &str,
+    stage: &str,
+) -> Result<()> {
     validate_stage(stage)?;
+    let context = parse_context(context)?;
     let mut config = load_config()?;
+    let (project, app_name) = locate(&config, app_name, project)?;
+    let app = app_mut(&mut config, &project, &app_name)?;
 
-    // Find the app in the config
-    let (project_name, app) = config
-        .projects
-        .iter_mut()
-        .find_map(|(proj_name, project)| {
-            project
-                .apps
-                .get_mut(app_name)
-                .map(|app| (proj_name.clone(), app))
-        })
-        .ok_or_else(|| anyhow!("App '{}' not found", app_name))?;
-
-    // Initialize default_stages if it doesn't exist
-    if app.default_stages.is_none() {
-        app.default_stages = Some(HashMap::new());
-    }
-
-    let default_stages = app
-        .default_stages
-        .as_mut()
-        .expect("default_stages should be Some after initialization");
-
-    // Set the default stage for the context
-    if let Some(context) = crate::config::Environment::from_string(context) {
-        default_stages.insert(context.as_str().to_string(), stage.to_string());
-    } else {
-        return Err(anyhow!("Unknown context: {}", context));
-    }
+    app.default_stages
+        .get_or_insert_with(HashMap::new)
+        .insert(context.to_string(), stage.to_string());
 
     save_config(&config)?;
 
-    println!("✓ Set default stage for {}/{}", project_name, app_name);
+    if output::json_enabled() {
+        return output::print_json(&serde_json::json!({
+            "project": project,
+            "app": app_name,
+            "context": context,
+            "stage": stage,
+        }));
+    }
+    println!("✓ Set default stage for {}/{}", project, app_name);
     println!("  Context: {}", context);
     println!("  Default stage: {}", stage);
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "env_test.rs"]
+mod tests;

@@ -13,10 +13,12 @@ use std::path::Path;
 /// monorepo root, not in `apps/web`; looking only in the app's own directory
 /// made every workspace app run its scripts with `npm run`.
 pub fn detect_node_package_manager(ctx: &DetectionContext) -> String {
-    let root = ctx
-        .root_path
-        .canonicalize()
-        .unwrap_or_else(|_| ctx.root_path.clone());
+    detect_node_package_manager_at(&ctx.root_path)
+}
+
+/// [`detect_node_package_manager`] for a directory outside a detection run.
+pub fn detect_node_package_manager_at(path: &Path) -> String {
+    let root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     for (depth, dir) in root.ancestors().enumerate() {
         if depth > MAX_PARENT_LEVELS {
             break;
@@ -69,11 +71,33 @@ pub fn node_script_command(package_manager: &str, script: &str) -> String {
     }
 }
 
+/// How to invoke the workspace's own `nx` with the given package manager.
+///
+/// A bare `nx` needs a global install (and then runs whatever version that
+/// is); `npx nx` without a local nx downloads it from the registry. Each of
+/// these only runs the nx the workspace has installed.
+pub fn nx_runner(package_manager: &str) -> &'static str {
+    match package_manager {
+        "pnpm" => "pnpm exec nx",
+        "yarn" => "yarn nx",
+        "bun" => "bun run nx",
+        _ => "npx --no-install nx",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn nx_runner_uses_the_workspace_install() {
+        assert_eq!(nx_runner("npm"), "npx --no-install nx");
+        assert_eq!(nx_runner("pnpm"), "pnpm exec nx");
+        assert_eq!(nx_runner("yarn"), "yarn nx");
+        assert_eq!(nx_runner("bun"), "bun run nx");
+    }
 
     #[test]
     fn detects_package_manager_field() {

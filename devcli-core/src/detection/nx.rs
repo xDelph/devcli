@@ -1,43 +1,87 @@
-// Nx monorepo detection — app-detector hierarchical workspaces + nx show project enhancement
+// Nx monorepo detection — app-detector hierarchical workspaces + the Nx project graph
 
 use crate::utils::path::contract_tilde;
 use crate::Result;
+use app_detector::utils::package_manager::{detect_node_package_manager_at, nx_runner};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::detection::DetectedApp;
 
+/// How long the one `nx graph` call may take before detection goes on
+/// without it (project.json files, then package.json scripts).
+const NX_GRAPH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Targets that make a project something to start rather than only build.
+const RUNNABLE_TARGETS: &[&str] = &["serve", "start", "dev", "preview"];
+
+/// One Nx project, as the project graph (or its project.json) describes it.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct NxProject {
+    name: String,
+    /// `application`, `library` or `e2e` when known.
+    project_type: Option<String>,
+    targets: Vec<String>,
+}
+
+/// What detection knows about the workspace as a whole.
+struct NxWorkspace {
+    /// How to invoke the workspace's own nx (`npx --no-install nx`, ...).
+    runner: &'static str,
+    /// Projects by root directory, relative to the workspace root.
+    projects: HashMap<PathBuf, NxProject>,
+}
+
+impl NxWorkspace {
+    fn load(workspace_root: &Path) -> Self {
+        Self {
+            runner: workspace_nx_runner(workspace_root),
+            projects: nx_project_graph(workspace_root),
+        }
+    }
+}
+
 /// Detect all apps within an Nx monorepo via app-detector Phase 1.5.
+///
+/// Libraries are left out unless they have something to start
+/// (`serve`/`start`/`dev`/`preview`): a buildable lib is not an app
+/// devcli can run.
 pub fn detect_nx_apps(workspace_root: &Path) -> Result<Vec<DetectedApp>> {
     let mut detected_apps = Vec::new();
+    let workspace = NxWorkspace::load(workspace_root);
 
     let report = crate::app_detector_support::detect(workspace_root)?;
-    let child_paths = crate::app_detector_support::workspace_child_paths(&report);
+    let mut child_paths = crate::app_detector_support::workspace_child_paths(&report);
 
-    if !child_paths.is_empty() {
-        for child_path in child_paths {
-            if let Ok(app) = detect_single_nx_app(&child_path, workspace_root) {
-                detected_apps.push(app);
-            }
-        }
-    } else {
+    if child_paths.is_empty() {
         for dir_name in &["apps", "packages", "libs"] {
-            let dir_path = workspace_root.join(dir_name);
-            if !dir_path.exists() {
+            let Ok(entries) = fs::read_dir(workspace_root.join(dir_name)) else {
                 continue;
-            }
-            if let Ok(entries) = fs::read_dir(&dir_path) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir()
-                        && let Ok(app) = detect_single_nx_app(&entry.path(), workspace_root)
-                    {
-                        detected_apps.push(app);
-                    }
-                }
-            }
+            };
+            let mut dirs: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .collect();
+            dirs.sort();
+            child_paths.extend(dirs);
         }
+    }
+
+    for child_path in child_paths {
+        let project = project_for(&child_path, workspace_root, &workspace);
+        let Ok(app) = detect_nx_app_with(&child_path, &workspace, project.as_ref()) else {
+            continue;
+        };
+        if is_library(&child_path, workspace_root, project.as_ref()) && !is_runnable(&app) {
+            continue;
+        }
+        detected_apps.push(app);
     }
 
     if let Ok(workspace_app) = detect_nx_workspace(workspace_root) {
@@ -51,8 +95,18 @@ pub fn detect_nx_apps(workspace_root: &Path) -> Result<Vec<DetectedApp>> {
     Ok(detected_apps)
 }
 
-/// Detect a single Nx app: app-detector env capabilities + `nx show project` targets.
+/// Detect a single Nx app: app-detector env capabilities + its Nx targets.
 pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<DetectedApp> {
+    let workspace = NxWorkspace::load(workspace_root);
+    let project = project_for(app_path, workspace_root, &workspace);
+    detect_nx_app_with(app_path, &workspace, project.as_ref())
+}
+
+fn detect_nx_app_with(
+    app_path: &Path,
+    workspace: &NxWorkspace,
+    project: Option<&NxProject>,
+) -> Result<DetectedApp> {
     let app_name = app_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -60,10 +114,28 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
         .to_string();
 
     let report = crate::app_detector_support::detect_single(app_path)?;
-    let env = crate::app_detector_support::build_detected_app(app_path, &report)?;
+    // A project with only a project.json has no app type app-detector
+    // knows; its Nx targets are what makes it an app.
+    let env = match crate::app_detector_support::build_detected_app(app_path, &report) {
+        Ok(env) => env,
+        Err(err) if project.is_none_or(|p| p.targets.is_empty()) => return Err(err),
+        Err(_) => env_capabilities_only(app_path, &report),
+    };
 
-    let project_name = nx_project_name(app_path, &app_name);
-    let mut local_commands = nx_show_project_commands(&project_name, workspace_root);
+    let mut local_commands: HashMap<String, String> = project
+        .map(|project| {
+            project
+                .targets
+                .iter()
+                .map(|target| {
+                    (
+                        target.clone(),
+                        format!("{} run {}:{}", workspace.runner, project.name, target),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     if local_commands.is_empty() {
         local_commands = env.local_commands.clone().unwrap_or_default();
     }
@@ -93,6 +165,85 @@ pub fn detect_single_nx_app(app_path: &Path, workspace_root: &Path) -> Result<De
     })
 }
 
+/// Docker / OrbStack / k8s detection of a folder with no app type.
+fn env_capabilities_only(app_path: &Path, report: &app_detector::DetectionReport) -> DetectedApp {
+    use crate::app_detector_support as support;
+    let docker_commands = support::extract_docker_commands(report);
+    let orbstack_commands = support::extract_orbstack_commands(report);
+    DetectedApp {
+        app_type: "nx".to_string(),
+        app_name: String::new(),
+        path: contract_tilde(app_path),
+        local_commands: None,
+        suggested_docker_default: support::suggest_docker_default(&docker_commands),
+        suggested_orbstack_default: support::suggest_orbstack_default(&orbstack_commands),
+        docker_commands,
+        orbstack_commands,
+        k8s_commands: support::extract_k8s_commands(report),
+        suggested_local_default: None,
+        dockerfile_path: support::resolve_dockerfile_path(app_path, report),
+        env_files: None,
+    }
+}
+
+/// The project at `app_path`: from the project graph, else from its
+/// project.json (targets declared there; inferred ones need the graph).
+fn project_for(
+    app_path: &Path,
+    workspace_root: &Path,
+    workspace: &NxWorkspace,
+) -> Option<NxProject> {
+    relative_root(app_path, workspace_root)
+        .and_then(|root| workspace.projects.get(&root).cloned())
+        .or_else(|| project_from_project_json(app_path))
+}
+
+fn relative_root(app_path: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    if let Ok(rel) = app_path.strip_prefix(workspace_root) {
+        return Some(rel.to_path_buf());
+    }
+    let app = app_path.canonicalize().ok()?;
+    let root = workspace_root.canonicalize().ok()?;
+    app.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
+fn project_from_project_json(app_path: &Path) -> Option<NxProject> {
+    let content = fs::read_to_string(app_path.join("project.json")).ok()?;
+    let json: Value = serde_json::from_str(&content).ok()?;
+    let folder = app_path.file_name()?.to_str()?;
+    let mut targets: Vec<String> = json
+        .get("targets")
+        .and_then(Value::as_object)
+        .map(|targets| targets.keys().cloned().collect())
+        .unwrap_or_default();
+    targets.sort();
+    Some(NxProject {
+        name: nx_project_name(app_path, folder),
+        project_type: json
+            .get("projectType")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        targets,
+    })
+}
+
+/// A library: Nx says so, or (without Nx's word) it lives under `libs/`.
+fn is_library(app_path: &Path, workspace_root: &Path, project: Option<&NxProject>) -> bool {
+    match project.and_then(|p| p.project_type.as_deref()) {
+        Some(kind) => kind == "library",
+        None => relative_root(app_path, workspace_root)
+            .and_then(|rel| rel.components().next().map(|c| c.as_os_str() == "libs"))
+            .unwrap_or(false),
+    }
+}
+
+fn is_runnable(app: &DetectedApp) -> bool {
+    app.local_commands
+        .as_ref()
+        .is_some_and(|cmds| RUNNABLE_TARGETS.iter().any(|t| cmds.contains_key(*t)))
+        || app.docker_commands.is_some()
+}
+
 /// The Nx project name of `app_path`.
 ///
 /// Nx addresses projects by the name in `project.json` (or `package.json`),
@@ -107,52 +258,136 @@ fn nx_project_name(app_path: &Path, folder_name: &str) -> String {
         .unwrap_or_else(|| folder_name.to_string())
 }
 
-/// `nx show project <name> --json` targets, as `npx nx run <name>:<target>`.
+/// How to invoke the workspace's own nx, for the commands devcli saves.
+fn workspace_nx_runner(workspace_root: &Path) -> &'static str {
+    nx_runner(&detect_node_package_manager_at(workspace_root))
+}
+
+/// Every project with its targets, from one `nx graph --file=stdout`.
 ///
-/// Runs the workspace's own nx binary when installed, otherwise
-/// `npx --no-install nx`: plain `npx nx` with no local nx silently downloaded
-/// it from the registry (stdin is not a terminal, so npx assumes "yes").
-fn nx_show_project_commands(project_name: &str, workspace_root: &Path) -> HashMap<String, String> {
-    let mut local_commands = HashMap::new();
-
+/// One call for the whole workspace instead of one `nx show project` per
+/// folder, bounded by [`NX_GRAPH_TIMEOUT`]. Only the workspace's own nx is
+/// run (its `node_modules/.bin/nx`, else the package manager's runner, which
+/// never downloads one): a global nx may be another major version. Empty
+/// when nx is not installed, fails or takes too long.
+fn nx_project_graph(workspace_root: &Path) -> HashMap<PathBuf, NxProject> {
     let local_bin = workspace_root.join("node_modules/.bin/nx");
-    let mut invocations: Vec<(std::path::PathBuf, Vec<&str>)> = Vec::new();
-    if local_bin.is_file() {
-        invocations.push((local_bin, vec![]));
-    }
-    invocations.push(("npx".into(), vec!["--no-install", "nx"]));
-    invocations.push(("nx".into(), vec![]));
-
-    for (program, prefix) in invocations {
-        let Ok(output) = std::process::Command::new(&program)
-            .args(&prefix)
-            .args(["show", "project", project_name, "--json"])
-            .current_dir(workspace_root)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-        else {
-            continue;
+    let mut command = if local_bin.is_file() {
+        Command::new(local_bin)
+    } else {
+        let mut parts = workspace_nx_runner(workspace_root).split_whitespace();
+        let Some(program) = parts.next() else {
+            return HashMap::new();
         };
-        if !output.status.success() {
-            continue;
-        }
-        let Some(targets) = serde_json::from_slice::<Value>(&output.stdout)
-            .ok()
-            .and_then(|config| config.get("targets")?.as_object().cloned())
-        else {
-            continue;
-        };
-        for target_name in targets.keys() {
-            local_commands.insert(
-                target_name.clone(),
-                format!("npx nx run {}:{}", project_name, target_name),
-            );
-        }
-        break;
-    }
+        let mut command = Command::new(program);
+        command.args(parts);
+        command
+    };
+    command
+        .args(["graph", "--file=stdout"])
+        .current_dir(workspace_root)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
 
-    local_commands
+    output_within(&mut command, NX_GRAPH_TIMEOUT)
+        .map(|stdout| parse_project_graph(&stdout))
+        .unwrap_or_default()
+}
+
+/// Stdout of `command` when it succeeds within `timeout`; killed otherwise.
+fn output_within(command: &mut Command, timeout: Duration) -> Option<Vec<u8>> {
+    let deadline = Instant::now() + timeout;
+    let mut child = command.stdout(Stdio::piped()).spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    // Read on a thread: a full pipe would block the child, and a process the
+    // child leaves behind can keep the pipe open after it exits.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let remaining = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_secs(1));
+    rx.recv_timeout(remaining).ok()
+}
+
+/// Projects by root from `nx graph --file=stdout` output.
+fn parse_project_graph(stdout: &[u8]) -> HashMap<PathBuf, NxProject> {
+    let text = String::from_utf8_lossy(stdout);
+    // Tolerate anything nx prints around the JSON document.
+    let Some(start) = text.find('{') else {
+        return HashMap::new();
+    };
+    let Some(Ok(graph)) = serde_json::Deserializer::from_str(&text[start..])
+        .into_iter::<Value>()
+        .next()
+    else {
+        return HashMap::new();
+    };
+    let Some(nodes) = graph
+        .get("graph")
+        .and_then(|g| g.get("nodes"))
+        .and_then(Value::as_object)
+    else {
+        return HashMap::new();
+    };
+
+    nodes
+        .iter()
+        .filter_map(|(key, node)| {
+            let data = node.get("data")?;
+            let root = data.get("root")?.as_str()?;
+            let mut targets: Vec<String> = data
+                .get("targets")
+                .and_then(Value::as_object)
+                .map(|targets| targets.keys().cloned().collect())
+                .unwrap_or_default();
+            targets.sort();
+            let project_type = data
+                .get("projectType")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    match node.get("type")?.as_str()? {
+                        "app" => Some("application"),
+                        "lib" => Some("library"),
+                        "e2e" => Some("e2e"),
+                        _ => None,
+                    }
+                    .map(str::to_string)
+                });
+            let name = node
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(key)
+                .to_string();
+            Some((
+                PathBuf::from(root),
+                NxProject {
+                    name,
+                    project_type,
+                    targets,
+                },
+            ))
+        })
+        .collect()
 }
 
 /// Workspace-level Nx commands merged with app-detector nx-env targets.
@@ -161,7 +396,10 @@ pub fn detect_nx_workspace(workspace_root: &Path) -> Result<DetectedApp> {
     let env = crate::app_detector_support::build_detected_app(workspace_root, &report)?;
 
     let mut local_commands = HashMap::new();
-    let nx_cmd = "npx nx";
+    // The same runner as the nx-env commands merged below: a bare or
+    // `npx nx` here and there made some commands need a global nx (or
+    // download one) while others did not.
+    let nx_cmd = workspace_nx_runner(workspace_root);
 
     if let Some(nx_env) = report.get("nx-env")
         && let app_detector::DetectionData::NxEnv(info) = &nx_env.data
@@ -435,5 +673,128 @@ mod tests {
         assert_eq!(nx_project_name(dir.path(), "web"), "@org/web-pkg");
         std::fs::write(dir.path().join("project.json"), r#"{"name":"@org/web"}"#).unwrap();
         assert_eq!(nx_project_name(dir.path(), "web"), "@org/web");
+    }
+
+    /// An Nx workspace root of its own repository (the package-manager
+    /// search stops at `.git`).
+    fn nx_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join("nx.json"), r#"{"version": 2}"#).unwrap();
+        dir
+    }
+
+    #[test]
+    fn workspace_commands_all_run_the_workspace_nx() {
+        let dir = nx_repo();
+        fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        fs::write(
+            dir.path().join("nx.json"),
+            r#"{"targetDefaults": {"serve": {}, "e2e": {}, "build": {}}}"#,
+        )
+        .unwrap();
+
+        let commands = detect_nx_workspace(dir.path())
+            .unwrap()
+            .local_commands
+            .unwrap();
+        assert_eq!(commands["serve"], "pnpm exec nx run-many --target=serve");
+        assert_eq!(
+            commands["affected-e2e"],
+            "pnpm exec nx affected --target=e2e"
+        );
+        assert_eq!(
+            commands["build"],
+            "pnpm exec nx run-many --target=build --all"
+        );
+        for (key, cmd) in &commands {
+            assert!(cmd.starts_with("pnpm exec nx "), "{key}: {cmd}");
+        }
+    }
+
+    #[test]
+    fn project_json_targets_are_used_without_an_nx_install() {
+        let dir = nx_repo();
+        let app = dir.path().join("apps/web");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            app.join("project.json"),
+            r#"{"name":"@org/web","projectType":"application","targets":{"serve":{},"build":{}}}"#,
+        )
+        .unwrap();
+
+        let detected = detect_single_nx_app(&app, dir.path()).unwrap();
+        let commands = detected.local_commands.unwrap();
+        assert_eq!(commands["serve"], "npx --no-install nx run @org/web:serve");
+        assert_eq!(commands["build"], "npx --no-install nx run @org/web:build");
+        assert_eq!(detected.suggested_local_default.as_deref(), Some("serve"));
+    }
+
+    #[test]
+    fn libraries_without_anything_to_start_are_not_apps() {
+        let dir = nx_repo();
+        let write_project = |path: &str, json: &str| {
+            let project = dir.path().join(path);
+            fs::create_dir_all(&project).unwrap();
+            fs::write(project.join("project.json"), json).unwrap();
+        };
+        write_project(
+            "apps/web",
+            r#"{"name":"web","projectType":"application","targets":{"serve":{}}}"#,
+        );
+        write_project(
+            "libs/ui",
+            r#"{"name":"ui","projectType":"library","targets":{"build":{},"test":{}}}"#,
+        );
+        write_project(
+            "libs/storybook",
+            r#"{"name":"storybook","projectType":"library","targets":{"serve":{}}}"#,
+        );
+
+        let names: Vec<String> = detect_nx_apps(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|app| app.app_name)
+            .collect();
+        assert!(names.contains(&"web".to_string()), "{names:?}");
+        assert!(names.contains(&"storybook".to_string()), "{names:?}");
+        assert!(!names.contains(&"ui".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn project_graph_output_is_parsed_by_root() {
+        let stdout = br#"
+ NX  Daemon is not running
+{"graph":{"nodes":{
+  "web":{"name":"web","type":"app","data":{"root":"apps/web","targets":{"serve":{},"build":{}}}},
+  "ui":{"name":"ui","type":"lib","data":{"root":"libs/ui","projectType":"library","targets":{"build":{}}}}
+},"dependencies":{}}}
+"#;
+        let projects = parse_project_graph(stdout);
+        assert_eq!(
+            projects[Path::new("apps/web")],
+            NxProject {
+                name: "web".to_string(),
+                project_type: Some("application".to_string()),
+                targets: vec!["build".to_string(), "serve".to_string()],
+            }
+        );
+        assert_eq!(
+            projects[Path::new("libs/ui")].project_type.as_deref(),
+            Some("library")
+        );
+        assert!(parse_project_graph(b"command not found").is_empty());
+    }
+
+    #[test]
+    fn a_hanging_command_is_killed_at_the_timeout() {
+        let started = Instant::now();
+        let output = output_within(Command::new("sleep").arg("10"), Duration::from_millis(200));
+        assert!(output.is_none());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            output_within(Command::new("echo").arg("{}"), Duration::from_secs(5)).as_deref(),
+            Some(&b"{}\n"[..])
+        );
     }
 }

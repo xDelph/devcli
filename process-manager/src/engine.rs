@@ -136,49 +136,42 @@ async fn spawn_inner(task: &Task, keep_child: bool) -> Result<RunningProcess> {
 
 /// Terminate a process or its entire group.
 pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool> {
-    #[cfg(unix)]
-    {
-        use std::time::Duration;
+    use std::time::Duration;
 
-        let alive = pid_alive(pid) || pgid.is_some_and(crate::state::group_has_live_member);
+    let alive = pid_alive(pid) || pgid.is_some_and(crate::state::group_has_live_member);
 
-        if !alive {
-            return Ok(false);
-        }
-
-        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
-
-        // Signal the whole group so children of a wrapper die with it, but treat
-        // it as best effort: a group signal can report success without
-        // terminating anything (observed on CI runners), which would make us
-        // report success on a process that is still running.
-        if let Some(g) = pgid.filter(|g| *g > 1) {
-            send_signal(-g, signal);
-        }
-
-        // The PID itself is the reliable target. Failure is not an error: the
-        // group signal above may already have killed it.
-        if let Ok(target) = i32::try_from(pid) {
-            send_signal(target, signal);
-        }
-
-        // Confirm the process is actually gone instead of trusting the exit status.
-        // When the leader had already exited we must also wait for the group to
-        // empty out, otherwise children of the app keep serving unnoticed.
-        for _ in 0..10 {
-            let gone = !pid_alive(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
-            if gone {
-                return Ok(true);
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-
-        Ok(false)
+    if !alive {
+        return Ok(false);
     }
-    #[cfg(not(unix))]
-    {
-        anyhow::bail!("Termination not yet implemented for this platform");
+
+    let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+
+    // Signal the whole group so children of a wrapper die with it, but treat
+    // it as best effort: a group signal can report success without
+    // terminating anything (observed on CI runners), which would make us
+    // report success on a process that is still running.
+    if let Some(g) = pgid.filter(|g| *g > 1) {
+        send_signal(-g, signal);
     }
+
+    // The PID itself is the reliable target. Failure is not an error: the
+    // group signal above may already have killed it.
+    if let Ok(target) = i32::try_from(pid) {
+        send_signal(target, signal);
+    }
+
+    // Confirm the process is actually gone instead of trusting the exit status.
+    // When the leader had already exited we must also wait for the group to
+    // empty out, otherwise children of the app keep serving unnoticed.
+    for _ in 0..10 {
+        let gone = !pid_alive(pid) && !pgid.is_some_and(crate::state::group_has_live_member);
+        if gone {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    Ok(false)
 }
 
 /// Whether the OS still knows about this PID.
@@ -186,26 +179,17 @@ pub async fn terminate(pid: u32, pgid: Option<i32>, force: bool) -> Result<bool>
 /// Signal-0 probe through kill(2): no signal is delivered, and unlike spawning
 /// `kill -0` it costs no fork/exec and prints nothing on the user's stderr.
 pub fn pid_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        let Ok(pid) = i32::try_from(pid) else {
-            return false;
-        };
-        // SAFETY: kill(2) with signal 0 performs no action beyond permission and
-        // existence checks.
-        let rc = unsafe { libc::kill(pid, 0) };
-        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true
-    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: kill(2) with signal 0 performs no action beyond permission and
+    // existence checks.
+    let rc = unsafe { libc::kill(pid, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// Deliver `signal` to a PID (positive) or a process group (negative).
-#[cfg(unix)]
-fn send_signal(target: i32, signal: libc::c_int) {
+pub(crate) fn send_signal(target: i32, signal: libc::c_int) {
     // SAFETY: kill(2) has no memory-safety preconditions; errors are ignored on
     // purpose (the target may already be gone).
     unsafe {
@@ -213,8 +197,6 @@ fn send_signal(target: i32, signal: libc::c_int) {
     }
 }
 
-/// How long ago the OS started `pid`, if it is running.
-///
 /// The current working directory of `pid`, wherever it is now: a directory
 /// moved with `mv` is reported at its new path, a deleted one is not.
 /// `None` when it cannot be read.
@@ -240,6 +222,8 @@ pub fn process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     }
 }
 
+/// How long ago the OS started `pid`, if it is running.
+///
 /// Used to tell our process apart from an unrelated one that was given the same
 /// PID after ours exited. Parses `ps -o etime=` (`[[dd-]hh:]mm:ss`), the only
 /// elapsed-time format both macOS and Linux `ps` print.
@@ -271,22 +255,6 @@ fn parse_etime(etime: &str) -> Option<std::time::Duration> {
     Some(std::time::Duration::from_secs(
         ((days * 24 + h) * 60 + m) * 60 + sec,
     ))
-}
-
-/// Restart a managed process.
-pub async fn restart(
-    task: &Task,
-    old_pid: u32,
-    old_pgid: Option<i32>,
-    backoff: std::time::Duration,
-) -> Result<RunningProcess> {
-    let _ = terminate(old_pid, old_pgid, true).await;
-
-    if !backoff.is_zero() {
-        tokio::time::sleep(backoff).await;
-    }
-
-    spawn(task).await
 }
 
 /// Size above which a log file is rotated.
