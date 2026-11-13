@@ -9,66 +9,22 @@
 //!   `packages/<name>/project.json` → `targets` keys
 //!   These reflect every target that actually exists across all projects.
 //!
-//! The union of both sources yields the command set:
+//! The union of both sources yields the command set, run through the
+//! workspace's own nx (see [`nx_runner`]):
 //! ```text
-//! nx run-many --target=<target>
+//! npx --no-install nx run-many --target=<target>
 //! ```
+//!
+//! Only a directory with its own `nx.json` (the workspace root) gets here;
+//! per-project commands come from devcli's Nx monorepo detection.
 
+use crate::utils::package_manager::{detect_node_package_manager, nx_runner};
 use crate::{context::DetectionContext, strategy::DetectionStrategy, types::*, Result};
 use std::collections::{BTreeSet, HashMap};
-use std::process::Command;
 
 /// Generates Nx task-runner commands from workspace config files.
 #[derive(Default)]
 pub struct NxEnvStrategy;
-
-fn nx_show_project_targets(ctx: &DetectionContext) -> Option<Vec<String>> {
-    let crate::context::ScopeType::Workspace {
-        monorepo_root,
-        workspace_name,
-    } = &ctx.scope.scope_type
-    else {
-        return None;
-    };
-
-    for nx_cmd in ["npx", "nx"] {
-        let mut cmd = Command::new(nx_cmd);
-        if nx_cmd == "npx" {
-            // Never download nx from the registry just to detect an app.
-            cmd.args(["--no-install", "nx"]);
-        }
-
-        let Ok(output) = cmd
-            .args(["show", "project", workspace_name, "--json"])
-            .current_dir(monorepo_root)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-        else {
-            continue;
-        };
-
-        if !output.status.success() {
-            continue;
-        }
-
-        let json_str = String::from_utf8(output.stdout).ok()?;
-        let project_config = serde_json::from_str::<serde_json::Value>(&json_str).ok()?;
-        let targets = project_config.get("targets")?.as_object()?;
-        let mut names: Vec<String> = targets.keys().cloned().collect();
-        names.sort();
-        return Some(names);
-    }
-
-    None
-}
-
-fn nx_run_prefix(ctx: &DetectionContext) -> &'static str {
-    let crate::context::ScopeType::Workspace { .. } = &ctx.scope.scope_type else {
-        return "nx";
-    };
-    "npx nx"
-}
 
 impl DetectionStrategy for NxEnvStrategy {
     fn id(&self) -> &str {
@@ -99,17 +55,6 @@ impl DetectionStrategy for NxEnvStrategy {
         let mut targets: BTreeSet<String> = BTreeSet::new();
         let mut metadata = HashMap::new();
 
-        let show_targets = nx_show_project_targets(ctx).unwrap_or_default();
-        if !show_targets.is_empty() {
-            for t in &show_targets {
-                targets.insert(t.clone());
-            }
-        }
-        metadata.insert(
-            "targets_from_show_project".to_string(),
-            serde_json::json!(show_targets.len()),
-        );
-
         // ── Source A: nx.json → targetDefaults ───────────────────────────────
         let from_defaults = collect_targets_from_nx_json(ctx, &mut targets);
         metadata.insert(
@@ -126,25 +71,20 @@ impl DetectionStrategy for NxEnvStrategy {
 
         // ── Build commands ────────────────────────────────────────────────────
         let sorted_targets: Vec<String> = targets.into_iter().collect(); // BTreeSet is already sorted
-        let nx_cmd = nx_run_prefix(ctx);
+                                                                         // A bare `nx` only works with a global install: `serve`, `e2e` and
+                                                                         // every `affected-*` failed with "nx: command not found" without one.
+        let nx_cmd = nx_runner(&detect_node_package_manager(ctx));
 
         let mut commands: HashMap<String, String> = HashMap::new();
-
-        if let crate::context::ScopeType::Workspace { workspace_name, .. } = &ctx.scope.scope_type {
-            for t in &sorted_targets {
-                commands.insert(t.clone(), format!("{nx_cmd} run {workspace_name}:{t}"));
-            }
-        } else {
-            for t in &sorted_targets {
-                commands.insert(t.clone(), format!("nx run-many --target={t}"));
-            }
-            // Bonus: if any targets found, add an `affected` meta-command keyed per target
-            for target in &sorted_targets {
-                commands.insert(
-                    format!("affected-{target}"),
-                    format!("nx affected --target={target}"),
-                );
-            }
+        for t in &sorted_targets {
+            commands.insert(t.clone(), format!("{nx_cmd} run-many --target={t}"));
+        }
+        // Bonus: if any targets found, add an `affected` meta-command keyed per target
+        for target in &sorted_targets {
+            commands.insert(
+                format!("affected-{target}"),
+                format!("{nx_cmd} affected --target={target}"),
+            );
         }
 
         // Suggested default: prefer serve > dev > build > test > first alphabetically
@@ -300,8 +240,14 @@ mod tests {
                 assert!(info.targets.contains(&"build".to_string()));
                 assert!(info.targets.contains(&"test".to_string()));
                 assert!(info.targets.contains(&"lint".to_string()));
-                assert_eq!(info.commands["build"], "nx run-many --target=build");
-                assert_eq!(info.commands["test"], "nx run-many --target=test");
+                assert_eq!(
+                    info.commands["build"],
+                    "npx --no-install nx run-many --target=build"
+                );
+                assert_eq!(
+                    info.commands["test"],
+                    "npx --no-install nx run-many --target=test"
+                );
                 assert!(info.metadata["targets_from_defaults"].as_u64().unwrap() >= 3);
                 assert_eq!(info.metadata["targets_from_projects"].as_u64().unwrap(), 0);
             }
@@ -424,6 +370,39 @@ mod tests {
         // Context without the nx result stored — simulates non-Nx project
         let ctx = DetectionContext::new(dir.path()).unwrap();
         assert!(!NxEnvStrategy.can_apply(&ctx));
+    }
+
+    #[test]
+    fn every_command_runs_the_workspace_nx() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        fs::write(
+            dir.path().join("nx.json"),
+            r#"{"targetDefaults": {"serve": {}, "e2e": {}}}"#,
+        )
+        .unwrap();
+
+        let ctx = make_nx_context(&dir);
+        let DetectionData::NxEnv(info) = NxEnvStrategy.detect(&ctx).unwrap().data else {
+            panic!("Expected NxEnv data");
+        };
+        assert_eq!(
+            info.commands["serve"],
+            "pnpm exec nx run-many --target=serve"
+        );
+        assert_eq!(info.commands["e2e"], "pnpm exec nx run-many --target=e2e");
+        assert_eq!(
+            info.commands["affected-e2e"],
+            "pnpm exec nx affected --target=e2e"
+        );
+        assert!(
+            info.commands
+                .values()
+                .all(|cmd| cmd.starts_with("pnpm exec nx ")),
+            "{:?}",
+            info.commands
+        );
     }
 
     #[test]

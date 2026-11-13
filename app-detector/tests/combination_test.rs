@@ -589,10 +589,19 @@ fn test_nx_monorepo_task_runner() {
                 "Should discover 'serve' target from project.json"
             );
 
-            // Commands must be nx run-many --target=X (no hardcoding)
-            assert_eq!(info.commands["build"], "nx run-many --target=build");
-            assert_eq!(info.commands["test"], "nx run-many --target=test");
-            assert_eq!(info.commands["serve"], "nx run-many --target=serve");
+            // Commands must be <workspace nx> run-many --target=X (no hardcoding)
+            assert_eq!(
+                info.commands["build"],
+                "npx --no-install nx run-many --target=build"
+            );
+            assert_eq!(
+                info.commands["test"],
+                "npx --no-install nx run-many --target=test"
+            );
+            assert_eq!(
+                info.commands["serve"],
+                "npx --no-install nx run-many --target=serve"
+            );
 
             // Affected variants must also be generated
             assert!(
