@@ -10,8 +10,8 @@ pub mod runtime;
 mod selection;
 
 pub use instance::{
-    pinned, resolve, resolve_all, resolve_readonly, slug_instance_name, split, Instance, Mode,
-    Selector, PORT_STRIDE,
+    apps_of_worktree, pinned, resolve, resolve_all, resolve_readonly, slug_instance_name, split,
+    Instance, Mode, Selector, PORT_STRIDE,
 };
 pub use selection::{base_project, Selection};
 

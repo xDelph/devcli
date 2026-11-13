@@ -488,3 +488,14 @@ fn an_instance_of_a_moved_worktree_can_still_be_named() {
     let logs = sb.json(&elsewhere, &["logs", "api@agent-1"]);
     assert_eq!(logs["project"], "shop@agent-1");
 }
+
+/// A worktree that does not exist is an error, like an unknown app, not
+/// "nothing to stop".
+#[test]
+fn an_unknown_worktree_of_a_project_is_an_error() {
+    let sb = Sandbox::new();
+    sb.add_worktree("agent-1");
+    let message = sb.error(&sb.root(), &["stop", "--project", "shop@typo"]);
+    assert!(message.contains("no worktree 'typo'"), "{message}");
+    assert!(message.contains("agent-1"), "{message}");
+}

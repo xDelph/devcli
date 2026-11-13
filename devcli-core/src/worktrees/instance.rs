@@ -263,6 +263,75 @@ pub fn slug_instance_name(
     Some((format!("{}@{slug}", base.project), base.app_name))
 }
 
+/// The worktrees `project@slug` designates, without recording slots.
+///
+/// Each repository numbers and names its own worktrees, so in a project
+/// whose apps live in several repositories, `feat` is looked up in each
+/// app's own repository: two unrelated worktrees both called `feat` are two
+/// roots, never one app's worktree taken for another's. Also returns every
+/// slug of those repositories, for an error naming them.
+pub(crate) fn slug_roots(
+    config: &Config,
+    project: &str,
+    slug: &str,
+) -> Result<(Vec<PathBuf>, Vec<String>)> {
+    let mut roots = Vec::new();
+    let mut slugs = Vec::new();
+    let mut seen = Vec::new();
+    let Some(p) = config.projects.get(project) else {
+        return Ok((roots, slugs));
+    };
+    for name in p.apps.keys() {
+        let base = resolve_app(config, name, Some(project))?;
+        let Some(view) = View::of(&base, false)? else {
+            continue;
+        };
+        if seen.contains(&view.home.common_dir) {
+            continue;
+        }
+        seen.push(view.home.common_dir.clone());
+        if let Some((worktree, _, _)) = view.find(slug)
+            && !roots.contains(&worktree.root)
+        {
+            roots.push(worktree.root.clone());
+        }
+        for (_, s) in view.slots.iter().chain(&view.gone) {
+            if !slugs.contains(&s.slug) {
+                slugs.push(s.slug.clone());
+            }
+        }
+    }
+    Ok((roots, slugs))
+}
+
+/// The apps of `project` that live in the repository of the worktree at
+/// `root`: those a row `project@slug` for that worktree can run. The others
+/// live in other repositories, whose worktree of the same name (if any) is
+/// unrelated. Works for a worktree that is gone, while git still lists it.
+pub fn apps_of_worktree(config: &Config, project: &str, root: &Path) -> Vec<String> {
+    let Some(p) = config.projects.get(project) else {
+        return Vec::new();
+    };
+    let here = git::checkout_of(root);
+    let mut apps: Vec<String> = p
+        .apps
+        .iter()
+        .filter(|(_, app)| {
+            let Some(home) = git::checkout_of(&expand_path(&app.path)) else {
+                return false;
+            };
+            match &here {
+                Some(here) => here.common_dir == home.common_dir,
+                None => git::list(&home.common_dir)
+                    .is_ok_and(|worktrees| worktrees.iter().any(|w| w.root == root)),
+            }
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    apps.sort();
+    apps
+}
+
 /// The app name, project and selector of `app_name` and `project`, their
 /// suffixes removed. A name that really contains `@` in the config is taken
 /// as is.
@@ -747,6 +816,47 @@ mod tests {
         let started =
             resolve_all_at(&config, "api", None, Mode::FromCwd, false, Some(&here)).unwrap();
         assert_eq!(started[0].project, "proj");
+    }
+
+    /// Each repository names its own worktrees: in a project spanning two,
+    /// `feat` is a worktree of each, and each app runs in its own.
+    #[test]
+    fn a_slug_is_looked_up_in_each_apps_own_repository() {
+        let _env = crate::test_utils::TempConfigDir::new();
+        let dir = tempfile::TempDir::new().unwrap();
+        let one = init_repo(&dir.path().join("one"));
+        let two = init_repo(&dir.path().join("two"));
+        for repo in [&one, &two] {
+            run_git(repo, &["worktree", "add", "-q", "../wt/feat", "-b", "feat"]);
+        }
+        let app = |path: PathBuf| {
+            serde_json::json!({
+                "type": "custom", "path": path,
+                "commands": { "local": { "start": "true" } },
+                "defaults": { "local": "start" }
+            })
+        };
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "projects": { "proj": { "apps": {
+                "api": app(one.join("apps/api")),
+                "web": app(two.join("apps/api")),
+            } } }
+        }))
+        .unwrap();
+        let feat_one = git::canonical(&dir.path().join("one/wt/feat"));
+        let feat_two = git::canonical(&dir.path().join("two/wt/feat"));
+
+        let web = resolve(&config, "web@feat", None, Mode::Exact).unwrap();
+        assert_eq!(web.worktree.unwrap().root, feat_two);
+        let (mut roots, slugs) = slug_roots(&config, "proj", "feat").unwrap();
+        roots.sort();
+        assert_eq!(roots, vec![feat_one.clone(), feat_two.clone()]);
+        assert_eq!(slugs, vec!["feat".to_string()]);
+        assert!(slug_roots(&config, "proj", "nope").unwrap().0.is_empty());
+
+        // What a TUI row for `proj@feat` of repository one can run.
+        assert_eq!(apps_of_worktree(&config, "proj", &feat_one), vec!["api"]);
+        assert_eq!(apps_of_worktree(&config, "proj", &feat_two), vec!["web"]);
     }
 
     #[test]
