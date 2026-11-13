@@ -462,12 +462,15 @@ pub enum EnvAction {
         #[arg(
             short,
             long,
-            help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')"
+            help = "Context, i.e. the environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         context: String,
 
         #[arg(short, long, help = "Path to env file relative to app root")]
         file: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "Remove an environment file or stage from an app")]
@@ -480,12 +483,18 @@ pub enum EnvAction {
 
         #[arg(short, long, help = "Context name (if omitted, removes entire stage)")]
         context: Option<String>,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "List environment files for an app")]
     List {
         #[arg(help = "App name")]
         app_name: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "Set default stage for a context")]
@@ -496,12 +505,15 @@ pub enum EnvAction {
         #[arg(
             short,
             long,
-            help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')"
+            help = "Context, i.e. the environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         context: String,
 
         #[arg(short, long, help = "Stage name to set as default")]
         stage: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 }
 
@@ -719,6 +731,7 @@ mod tests {
                     stage: "qa".into(),
                     context: "local".into(),
                     file: ".env.qa".into(),
+                    project: None,
                 }
             }
         );

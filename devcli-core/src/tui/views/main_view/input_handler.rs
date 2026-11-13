@@ -506,8 +506,9 @@ impl NavigationHandler for MainView {
                         || self.config_mode == ConfigMode::EditEnvFile
                     {
                         if let Some(app) = state.selected_app() {
+                            let project = app.project.clone();
                             let app_name = app.name.clone();
-                            if let Err(e) = self.save_env_file(&app_name) {
+                            if let Err(e) = self.save_env_file(&project, &app_name) {
                                 eprintln!("Error saving env file: {}", e);
                             }
                         }

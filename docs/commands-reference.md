@@ -852,8 +852,15 @@ devcli env add <app-name> --stage <STAGE> --context <CONTEXT> --file <FILE>
 - `-s, --stage <STAGE>` - Stage: `dev`, `qa`, `preprod`, `prod`, or `base`
   (a file for every stage); any other value is refused
 - `-c, --context <CONTEXT>` - Context, i.e. the environment: `local`, `docker`,
-  `orbstack`, `docker-compose`, `k8s`, `ci`
+  `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`),
+  `ci`; any other value is refused
 - `-f, --file <FILE>` - Path to env file (relative to app path)
+- `-p, --project <PROJECT>` - Project name (required if the app name is ambiguous)
+
+The app is found like every other command finds it: by name, alternative name
+or `project/app`; a name used by several projects is refused unless
+`--project` says which. Only the given context is written: a file shared by
+`docker` and `orbstack` is added once for each.
 
 **Examples**:
 ```bash
@@ -869,8 +876,11 @@ Remove an environment file mapping.
 
 **Usage**:
 ```bash
-devcli env remove <app-name> --stage <STAGE> [--context <CONTEXT>]
+devcli env remove <app-name> --stage <STAGE> [--context <CONTEXT>] [--project <PROJECT>]
 ```
+
+Removes exactly what `env add` wrote for that context, or the whole stage
+without `--context`. A stage or context that has no entry is an error.
 
 **Examples**:
 ```bash
@@ -889,7 +899,7 @@ List environment files for an app.
 
 **Usage**:
 ```bash
-devcli env list <app-name>
+devcli env list <app-name> [--project <PROJECT>]
 ```
 
 **Examples**:
@@ -919,7 +929,7 @@ Set default stage for a context.
 
 **Usage**:
 ```bash
-devcli env set-default <app-name> --context <CONTEXT> --stage <STAGE>
+devcli env set-default <app-name> --context <CONTEXT> --stage <STAGE> [--project <PROJECT>]
 ```
 
 **Examples**:

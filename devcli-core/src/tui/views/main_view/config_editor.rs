@@ -439,7 +439,7 @@ impl MainView {
         Ok(())
     }
     /// Saves a new or edited environment file configuration
-    pub(crate) fn save_env_file(&mut self, app_name: &str) -> Result<()> {
+    pub(crate) fn save_env_file(&mut self, project: &str, app_name: &str) -> Result<()> {
         use super::ConfigMode;
         use crate::commands::env::add_env_file;
 
@@ -451,7 +451,7 @@ impl MainView {
             return Err(anyhow::anyhow!("All fields are required"));
         }
 
-        add_env_file(app_name, stage, context, file_path)?;
+        add_env_file(app_name, Some(project), stage, context, file_path)?;
 
         self.config_mode = ConfigMode::EditEnvFiles;
         Ok(())

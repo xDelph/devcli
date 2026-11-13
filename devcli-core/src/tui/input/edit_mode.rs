@@ -163,9 +163,10 @@ impl EditModeHandler for MainView {
             }
             ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
                 if let Some(app) = state.selected_app() {
+                    let project = app.project.clone();
                     let app_name = app.name.clone();
 
-                    if let Err(e) = self.save_env_file(&app_name) {
+                    if let Err(e) = self.save_env_file(&project, &app_name) {
                         eprintln!("Error saving env file: {}", e);
                         return Ok(true);
                     }
@@ -436,7 +437,12 @@ impl EditModeHandler for MainView {
                             if let Some((stage, context, _)) =
                                 entries.get(self.popup_scroll_manager.selected_env_file_idx)
                             {
-                                if let Err(e) = remove_env_file(&app.name, stage, Some(context)) {
+                                if let Err(e) = remove_env_file(
+                                    &app.name,
+                                    Some(&app.project),
+                                    stage,
+                                    Some(context),
+                                ) {
                                     eprintln!("Error removing env file: {}", e);
                                 } else {
                                     // Adjust selection if needed
