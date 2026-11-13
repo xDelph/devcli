@@ -640,6 +640,11 @@ devcli start frontend
 3. api
 4. frontend
 
+Missing dependencies start in waves (database and redis together, then api),
+and each wave is waited for until its health checks pass, 30 seconds at most,
+before the next wave or the app asked for starts. A dependency without a
+health check is only waited for until it is spawned.
+
 ### Transitive Dependencies
 
 Dependencies of dependencies are automatically included:

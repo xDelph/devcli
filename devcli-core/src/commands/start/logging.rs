@@ -100,16 +100,34 @@ pub fn release_owned() {
     }
 }
 
-/// `(project, app)` of every dependency of the running apps this command
-/// does not own.
-fn needed_by_others(
-    store: &StateStore,
-    owner: &str,
-) -> std::collections::HashSet<(String, String)> {
-    let mut needed = std::collections::HashSet::new();
-    let Ok(config) = crate::config::load_config() else {
-        return needed;
-    };
+/// What the running apps this command does not own depend on.
+#[derive(Debug, Default)]
+pub(super) struct Needed {
+    /// `(project, app)` of their dependencies.
+    pub(super) deps: std::collections::HashSet<(String, String)>,
+    /// One of them depends on something that cannot be told (its app left
+    /// the config): every dependency counts as needed.
+    pub(super) unknown: bool,
+}
+
+impl Needed {
+    /// Whether `process`, owned by this command, must keep running when the
+    /// command ends.
+    pub(super) fn keeps(&self, process: &ManagedProcess, started_apps: &[String]) -> bool {
+        process.is_shared()
+            || process
+                .metadata
+                .get("project")
+                .zip(process.metadata.get("app_config_name"))
+                .is_some_and(|(proj, app)| self.deps.contains(&(proj.clone(), app.clone())))
+            || (self.unknown && !is_started_app(process, started_apps))
+    }
+}
+
+/// What the running apps this command does not own depend on.
+fn needed_by_others(store: &StateStore, owner: &str) -> Needed {
+    let mut needed = Needed::default();
+    let config = crate::config::load_config().ok();
     for process in store.list().unwrap_or_default() {
         let ours = process.metadata.get(OWNER_PID_KEY).map(String::as_str) == Some(owner);
         if ours || process.is_stopping() || !store.is_running(&process) {
@@ -121,21 +139,65 @@ fn needed_by_others(
         ) else {
             continue;
         };
-        let Ok(resolved) = crate::worktrees::resolve(
-            &config,
-            app,
-            Some(&crate::worktrees::pinned(&config, project)),
-            crate::worktrees::Mode::Exact,
-        ) else {
+        let Some(config) = &config else {
+            // Unreadable config: what it depends on cannot be told.
+            needed.unknown = true;
             continue;
         };
-        for dep in crate::config::dependencies::resolve_dependency_chain(&config, &resolved)
+        let Ok(resolved) = crate::worktrees::resolve(
+            config,
+            app,
+            Some(&crate::worktrees::pinned(config, project)),
+            crate::worktrees::Mode::Exact,
+        ) else {
+            // Its instance no longer resolves (worktree moved or deleted)
+            // while it still runs: it still needs its dependencies.
+            if !add_dependencies_of_configured_app(config, &process, app, &mut needed.deps) {
+                needed.unknown = true;
+            }
+            continue;
+        };
+        for dep in crate::config::dependencies::resolve_dependency_chain(config, &resolved)
             .unwrap_or_default()
         {
-            needed.insert((dep.project, dep.app_name));
+            needed.deps.insert((dep.project, dep.app_name));
         }
     }
     needed
+}
+
+/// Add the dependencies of `app` as configured to `deps`, both as the
+/// configured instances and as the copies in the worktree `process` runs
+/// from. Returns `false` when the app is not in the config any more.
+fn add_dependencies_of_configured_app(
+    config: &crate::config::Config,
+    process: &ManagedProcess,
+    app: &str,
+    deps: &mut std::collections::HashSet<(String, String)>,
+) -> bool {
+    let Some(base) = crate::worktrees::base_project(&process.metadata) else {
+        return false;
+    };
+    let Ok(configured) = crate::worktrees::resolve(
+        config,
+        app,
+        Some(&crate::worktrees::pinned(config, base)),
+        crate::worktrees::Mode::Exact,
+    ) else {
+        return false;
+    };
+    let Ok(chain) = crate::config::dependencies::resolve_dependency_chain(config, &configured)
+    else {
+        return false;
+    };
+    let slug = process.metadata.get(crate::worktrees::meta::WORKTREE);
+    for dep in chain {
+        if let Some(slug) = slug {
+            deps.insert((format!("{}@{slug}", dep.project), dep.app_name.clone()));
+        }
+        deps.insert((dep.project, dep.app_name));
+    }
+    true
 }
 
 async fn wait_until_ended(
@@ -207,13 +269,9 @@ async fn stop_owned(
     // them (another session's app depending on it, or our app restarted by
     // another command, which this session no longer owns).
     let needed = needed_by_others(store, owner);
-    let (kept, owned): (Vec<_>, Vec<_>) = owned.into_iter().partition(|p| {
-        p.is_shared()
-            || p.metadata
-                .get("project")
-                .zip(p.metadata.get("app_config_name"))
-                .is_some_and(|(proj, app)| needed.contains(&(proj.clone(), app.clone())))
-    });
+    let (kept, owned): (Vec<_>, Vec<_>) = owned
+        .into_iter()
+        .partition(|p| needed.keeps(p, started_apps));
     for process in &kept {
         let _ = store.release(&process.id);
         if !quiet {

@@ -521,4 +521,178 @@ mod tests {
         let _ = younger.wait();
         assert!(reused, "the owner's PID was reused");
     }
+
+    /// Only the process an entry still describes is forgotten: a fresh
+    /// `start` may have recorded a new one under the same id meanwhile.
+    #[test]
+    fn test_forget_only_deletes_the_same_process() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        store.save(&create_test_process("app", 222)).unwrap();
+
+        assert!(!store.forget("app", 111).unwrap(), "another process");
+        assert_eq!(store.load("app").unwrap().unwrap().pid, 222);
+        assert!(store.forget("app", 222).unwrap());
+        assert!(store.load("app").unwrap().is_none());
+        assert!(!store.forget("app", 222).unwrap(), "already gone");
+    }
+
+    /// An update computed from an earlier read is dropped when the entry
+    /// changed meanwhile (restarted, or flagged by `stop`).
+    #[test]
+    fn test_update_if_current_drops_stale_updates() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        store.save(&create_test_process("app", 222)).unwrap();
+
+        let bump = |p: &mut ManagedProcess| p.runtime.health_failures += 1;
+        assert!(store.update_if_current("app", 111, bump).unwrap().is_none());
+        assert_eq!(
+            store.load("app").unwrap().unwrap().runtime.health_failures,
+            0
+        );
+
+        let updated = store.update_if_current("app", 222, bump).unwrap().unwrap();
+        assert_eq!(updated.runtime.health_failures, 1);
+        assert_eq!(
+            store.load("app").unwrap().unwrap().runtime.health_failures,
+            1
+        );
+
+        store.mark_stopping("app").unwrap();
+        assert!(store.update_if_current("app", 222, bump).unwrap().is_none());
+        let entry = store.load("app").unwrap().unwrap();
+        assert!(entry.is_stopping(), "the stopping flag was lost");
+        assert_eq!(entry.runtime.health_failures, 1);
+        assert!(store
+            .update_if_current("missing", 1, bump)
+            .unwrap()
+            .is_none());
+    }
+
+    /// `cleanup_dead` leaves an entry someone holds the lock of alone instead
+    /// of deleting it under them (or waiting).
+    #[test]
+    fn test_cleanup_dead_skips_entries_being_worked_on() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        store
+            .save(&create_test_process("busy", 2_000_000_000))
+            .unwrap();
+
+        let guard = store.lock_entry("busy").unwrap();
+        assert!(store.try_lock_entry("busy").unwrap().is_none());
+        assert!(store.cleanup_dead().unwrap().is_empty());
+        assert!(store.load("busy").unwrap().is_some());
+
+        drop(guard);
+        assert_eq!(store.cleanup_dead().unwrap(), vec!["busy".to_string()]);
+    }
+
+    /// Waiting for an entry lock from async code leaves the thread free: on
+    /// a single-threaded runtime the holder still runs and releases it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_lock_entry_async_does_not_block_the_runtime() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = std::sync::Arc::new(StateStore::new(temp_dir.path().to_path_buf()).unwrap());
+        store.save(&create_test_process("app", 222)).unwrap();
+
+        let held = store.lock_entry_async("app").await.unwrap();
+        let waiter = {
+            let store = std::sync::Arc::clone(&store);
+            tokio::spawn(async move { store.mark_stopping_async("app").await })
+        };
+        // The holder keeps working (on the same, only thread) while the
+        // waiter waits, then lets go.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!waiter.is_finished());
+        drop(held);
+
+        let marked = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter never got the lock")
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(marked.is_stopping());
+    }
+
+    /// A stopper whose PID now belongs to a process started after the stop
+    /// began is gone, even though the PID is alive.
+    #[test]
+    fn test_stopper_gone_detects_a_reused_pid() {
+        let mut process = create_test_process("app", 1);
+        assert!(!process.stopper_gone(), "not being stopped");
+
+        process
+            .metadata
+            .insert(STOPPING_KEY.to_string(), std::process::id().to_string());
+        process
+            .metadata
+            .insert(STOPPING_SINCE_KEY.to_string(), Utc::now().to_rfc3339());
+        assert!(!process.stopper_gone(), "the stopper (this test) is alive");
+
+        process
+            .metadata
+            .insert(STOPPING_KEY.to_string(), dead_pid().to_string());
+        assert!(process.stopper_gone(), "the stopper exited");
+
+        let mut younger = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        process
+            .metadata
+            .insert(STOPPING_KEY.to_string(), younger.id().to_string());
+        process.metadata.insert(
+            STOPPING_SINCE_KEY.to_string(),
+            (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339(),
+        );
+        let reused = process.stopper_gone();
+        let _ = younger.kill();
+        let _ = younger.wait();
+        assert!(reused, "the stopper's PID was reused");
+    }
+
+    /// A restart marker counts only while its restarter runs: not once its
+    /// PID went to a process started after the marker was written.
+    #[test]
+    fn test_restart_marker_ignores_a_reused_pid() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+        let mut process = create_test_process("app", 1);
+        process
+            .metadata
+            .insert(OWNER_PID_KEY.to_string(), "4242".to_string());
+
+        let marker = store.begin_restart(&process).unwrap();
+        assert!(store.restart_pending_for_owner("4242"));
+        assert!(!store.restart_pending_for_owner("4243"));
+        drop(marker);
+        assert!(!store.restart_pending_for_owner("4242"));
+
+        // Left behind by a restarter whose PID now belongs to a younger process.
+        let mut younger = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let written = (Utc::now() - chrono::Duration::minutes(5)).timestamp();
+        std::fs::write(
+            temp_dir.path().join("app.restarting"),
+            format!("{} 4242 {written}", younger.id()),
+        )
+        .unwrap();
+        let pending = store.restart_pending_for_owner("4242");
+        // An older version's marker (no time) still counts while the PID lives.
+        std::fs::write(
+            temp_dir.path().join("app.restarting"),
+            format!("{} 4242", younger.id()),
+        )
+        .unwrap();
+        let legacy = store.restart_pending_for_owner("4242");
+        let _ = younger.kill();
+        let _ = younger.wait();
+        assert!(!pending, "a stale marker kept the session alive");
+        assert!(legacy);
+    }
 }

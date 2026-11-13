@@ -229,24 +229,46 @@ async fn test_spawn_streams_to_log_file() {
 
 #[tokio::test]
 #[cfg(unix)]
-async fn test_restart_replaces_process() {
-    let task = sleep_task("restart-me", 120, None);
-    let running = engine::spawn(&task).await.expect("spawn");
-    let old_pid = running.pid;
-    let old_pgid = running.pgid;
-    drop(running.output_rx);
+async fn test_concurrent_starts_of_one_app_spawn_it_once() {
+    use process_manager::state::SpawnOutcome;
 
-    let restarted = engine::restart(&task, old_pid, old_pgid, Duration::from_millis(50))
+    let temp_dir = TempDir::new().unwrap();
+    let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
+    let task = sleep_task("shared-dep", 120, None);
+
+    // `start api` and `start worker` both auto-starting a missing redis.
+    let (first, second) = tokio::join!(
+        store.spawn_unless_running(task.clone(), HashMap::new()),
+        store.spawn_unless_running(task.clone(), HashMap::new()),
+    );
+    let outcomes = [first.unwrap(), second.unwrap()];
+    let started: Vec<_> = outcomes
+        .iter()
+        .filter_map(|o| match o {
+            SpawnOutcome::Started { process, .. } => Some(process.clone()),
+            SpawnOutcome::AlreadyRunning(_) => None,
+        })
+        .collect();
+    assert_eq!(started.len(), 1, "the app was spawned twice");
+    let tracked = store.load("shared-dep").unwrap().expect("tracked");
+    assert_eq!(tracked.pid, started[0].pid, "the running copy is untracked");
+    assert!(outcomes
+        .iter()
+        .any(|o| matches!(o, SpawnOutcome::AlreadyRunning(p) if p.pid == tracked.pid)));
+
+    // A dead entry does not block a new start.
+    let _ = engine::terminate(tracked.pid, tracked.pgid, true).await;
+    wait_until_not_running(&store, &tracked, Duration::from_secs(10)).await;
+    let SpawnOutcome::Started { process, .. } = store
+        .spawn_unless_running(task, HashMap::new())
         .await
-        .expect("restart");
-    let new_pid = restarted.pid;
-    let new_pgid = restarted.pgid;
-
-    assert_ne!(new_pid, old_pid);
-    assert!(restarted.is_alive());
-    drop(restarted.output_rx);
-
-    let _ = engine::terminate(new_pid, new_pgid, true).await;
+        .unwrap()
+    else {
+        panic!("a dead entry blocked the start");
+    };
+    assert_ne!(process.pid, tracked.pid);
+    assert_eq!(store.load("shared-dep").unwrap().unwrap().pid, process.pid);
+    let _ = engine::terminate(process.pid, process.pgid, true).await;
 }
 
 #[tokio::test]

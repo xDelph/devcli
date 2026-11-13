@@ -609,3 +609,199 @@ fn a_closed_pipe_is_not_a_panic() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
+
+impl Sandbox {
+    fn edit_config(&self, edit: impl FnOnce(&mut Value)) {
+        let path = self.path().join("config.json");
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        edit(&mut config);
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    }
+
+    /// Hold pm-daemon's singleton lock, as a running daemon does: a dead
+    /// entry with a restart policy then counts as about to be restarted,
+    /// while no daemon actually restarts anything.
+    fn pretend_daemon_runs(&self) -> std::fs::File {
+        use std::os::unix::io::AsRawFd;
+        let dir = self.path().join("processes");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(".daemon.lock"))
+            .unwrap();
+        // SAFETY: flock(2) on a descriptor we own.
+        let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(rc, 0, "a pm-daemon already holds the lock");
+        lock
+    }
+
+    /// `(app, environment, pid, running)` of every tracked process.
+    fn tracked(&self) -> Vec<(String, String, u32, bool)> {
+        let out = self.devcli(&["--json", "status"]);
+        let status = single_json(&out.stdout, &["--json", "status"]);
+        status["processes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| {
+                (
+                    p["app"].as_str().unwrap_or_default().to_string(),
+                    p["environment"].as_str().unwrap_or_default().to_string(),
+                    p["pid"].as_u64().unwrap_or_default() as u32,
+                    p["running"] == Value::Bool(true),
+                )
+            })
+            .collect()
+    }
+}
+
+fn kill_group(pid: u32) {
+    // SAFETY: kill(2) has no memory-safety preconditions. Apps run in a
+    // session (and process group) of their own.
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+}
+
+/// `stop` reaches a crashed app that pm-daemon is about to restart: it used
+/// to report it "not running" and the daemon brought it back.
+#[test]
+fn stop_reaches_a_crashed_app_awaiting_restart() {
+    let sb = Sandbox::new();
+    sb.edit_config(|config| {
+        config["projects"]["smoke"]["apps"]["ticker"]["restart_policy"] =
+            serde_json::json!({ "enabled": true, "initial_backoff_secs": 60 });
+    });
+    let _daemon = sb.pretend_daemon_runs();
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 1));
+    let pid = sb.running()[0].1;
+
+    kill_group(pid);
+    assert!(wait_for(Duration::from_secs(10), || !pid_alive(pid)));
+    assert_eq!(
+        sb.tracked().len(),
+        1,
+        "the crash awaiting restart is tracked"
+    );
+
+    let stopped = sb.json(&["stop", "ticker", "--project", "smoke"]);
+    assert_eq!(stopped["stopped"], 1, "stop: {stopped}");
+    assert_eq!(sb.tracked(), vec![], "the entry was left to pm-daemon");
+}
+
+/// `restart APP --env E` stops the app in that environment only.
+#[test]
+fn restart_with_env_leaves_the_other_environments_alone() {
+    let sb = Sandbox::new();
+    sb.edit_config(|config| {
+        let ticker = &mut config["projects"]["smoke"]["apps"]["ticker"];
+        ticker["commands"]["orbstack"] =
+            serde_json::json!({ "start": format!("sh -c '{TICKER}'") });
+        ticker["defaults"]["orbstack"] = serde_json::json!("start");
+    });
+    sb.json(&["start", "ticker", "--project", "smoke"]);
+    sb.json(&["start", "ticker", "--project", "smoke", "--env", "orbstack"]);
+    assert!(wait_for(Duration::from_secs(10), || sb.running().len() == 2));
+    let pid_in = |env: &str| {
+        sb.tracked()
+            .into_iter()
+            .find(|(_, e, _, running)| e == env && *running)
+            .map(|(_, _, pid, _)| pid)
+    };
+    let local = pid_in("local").expect("local instance");
+    let orbstack = pid_in("orbstack").expect("orbstack instance");
+
+    sb.json(&[
+        "restart",
+        "ticker",
+        "--project",
+        "smoke",
+        "--env",
+        "orbstack",
+    ]);
+    assert_eq!(
+        pid_in("local"),
+        Some(local),
+        "the local instance was stopped"
+    );
+    assert!(pid_alive(local));
+    assert!(pid_in("orbstack").is_some_and(|pid| pid != orbstack));
+}
+
+/// The apps asked for start once their dependencies are ready, also when
+/// those form the last (here the only) wave of dependencies.
+#[test]
+fn apps_wait_for_their_last_wave_of_dependencies() {
+    let sb = Sandbox::new();
+    let ready = sb.path().join("ticker-ready");
+    let seen = sb.path().join("web-saw");
+    sb.edit_config(|config| {
+        let apps = &mut config["projects"]["smoke"]["apps"];
+        apps["ticker"]["commands"]["local"]["start"] = serde_json::json!(format!(
+            "sh -c 'sleep 2; touch {}; {TICKER}'",
+            ready.display()
+        ));
+        apps["ticker"]["health_check"] = serde_json::json!({
+            "type": "command",
+            "command": format!("test -f {}", ready.display()),
+            "timeout_secs": 1
+        });
+        apps["web"]["commands"]["local"]["start"] = serde_json::json!(format!(
+            "sh -c 'if [ -f {ready} ]; then echo ready; else echo early; fi > {seen}; {TICKER}'",
+            ready = ready.display(),
+            seen = seen.display()
+        ));
+    });
+
+    sb.json(&["start", "web", "--project", "smoke"]);
+    assert!(wait_for(Duration::from_secs(10), || seen.exists()));
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap().trim(),
+        "ready",
+        "web started before its dependency was ready"
+    );
+}
+
+/// `run` tracks its process from the start, and Ctrl+C during its first
+/// seconds leaves the process running and tracked instead of killing devcli
+/// with the process left behind untracked.
+#[test]
+fn run_tracks_its_process_from_the_start() {
+    let sb = Sandbox::new();
+    let out = std::fs::File::create(sb.path().join("run.out")).unwrap();
+    let mut run = sb
+        .command(&["run", "ticker", "start", "--project", "smoke"])
+        .stdin(Stdio::null())
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
+        .spawn()
+        .expect("spawn run");
+    let output = || std::fs::read_to_string(sb.path().join("run.out")).unwrap_or_default();
+    // The app ticks every 0.1s: once it has, it must already be tracked (it
+    // used to be recorded 2s after the spawn).
+    assert!(
+        wait_for(Duration::from_secs(10), || sb.log_lines() >= 1),
+        "the app never ran: {}",
+        output()
+    );
+    assert!(
+        wait_for(Duration::from_millis(500), || sb.running().len() == 1),
+        "running but not tracked: {}",
+        output()
+    );
+
+    send_signal(&run, "-INT");
+    let status = wait_exit(&mut run, Duration::from_secs(10));
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "run did not exit cleanly on Ctrl+C ({status:?}): {}",
+        output()
+    );
+    let running = sb.running();
+    assert_eq!(running.len(), 1, "the process left: {running:?}");
+    assert!(pid_alive(running[0].1));
+}

@@ -17,8 +17,8 @@ use crate::process_manager_support::{
 };
 use crate::utils::path::expand_path;
 use crate::Result;
-use process_manager::state::{ManagedProcess, ProcessRuntime, OWNER_PID_KEY};
-use process_manager::{engine, Task};
+use process_manager::state::{SpawnOutcome, OWNER_PID_KEY};
+use process_manager::Task;
 use std::collections::HashMap;
 
 /// Start all apps in parallel
@@ -76,8 +76,9 @@ pub async fn start_apps_in_parallel(
     // Process the results from all tasks
     for result in results {
         match result {
-            Ok(Ok(app_name)) => started_apps.push(app_name), // App started successfully
-            Ok(Err(e)) => errors.push(e),                    // App failed to start
+            Ok(Ok(Some(app_name))) => started_apps.push(app_name), // App started successfully
+            Ok(Ok(None)) => {}            // Another command started it meanwhile
+            Ok(Err(e)) => errors.push(e), // App failed to start
             Err(e) => errors.push(format!("Task failed: {}", e)), // Task itself failed
         }
     }
@@ -133,7 +134,8 @@ pub async fn start_apps_in_parallel(
 /// Helper function to start a single app process
 ///
 /// This is used by the parallel app starting logic.
-/// Returns the app name on success for reporting.
+/// Returns the app name on success for reporting, `None` when another
+/// command started the app first.
 #[tracing::instrument(
     skip(app, output_tx),
     fields(
@@ -150,7 +152,7 @@ async fn start_single_app_process(
     stage_override: Option<String>,
     output_tx: Option<OutputChannel>,
     owner: Option<u32>,
-) -> Result<String> {
+) -> Result<Option<String>> {
     let AppToStart {
         resolved_app,
         command,
@@ -248,7 +250,7 @@ async fn start_single_app_process(
 
     let id = process_id(&resolved_app.project, &app_name, &environment);
     let task = Task {
-        id: id.clone(),
+        id,
         command: final_command,
         args: vec![],
         working_dir: working_dir.clone(),
@@ -259,20 +261,7 @@ async fn start_single_app_process(
         restart_policy: to_pm_restart_policy(resolved_app.app.restart_policy.as_ref()),
     };
 
-    // Spawn through process-manager
-    let running = engine::spawn(&task).await?;
-    if !running.is_alive() {
-        anyhow::bail!("Failed to start process '{}'", app_name);
-    }
-
-    let process_manager::engine::RunningProcess {
-        pid,
-        pgid,
-        child: _,
-        output_rx,
-    } = running;
-
-    // Persist managed process metadata
+    // Managed process metadata
     let mut metadata = HashMap::new();
     metadata.insert("project".to_string(), resolved_app.project.clone());
     metadata.insert("app_config_name".to_string(), app_name.clone());
@@ -289,18 +278,24 @@ async fn start_single_app_process(
     }
     crate::worktrees::record(&mut metadata, &resolved_app);
 
-    let managed = ManagedProcess {
-        id,
-        pid,
-        pgid,
-        task,
-        start_time: chrono::Utc::now(),
-        metadata,
-        runtime: ProcessRuntime::default(),
-    };
-
+    // Spawn and record in one step, unless another command (a parallel
+    // `start` auto-starting the same dependency) got there first.
     let store = state_store()?;
-    store.save(&managed)?;
+    let output_rx = match store.spawn_unless_running(task, metadata).await? {
+        SpawnOutcome::Started { output_rx, .. } => output_rx,
+        SpawnOutcome::AlreadyRunning(existing) => {
+            tracing::info!(app = %app_name, pid = existing.pid, "Started meanwhile by another command");
+            emit_line(
+                !show_output,
+                output_tx.as_ref(),
+                format!(
+                    "⚠ Process '{}' is already running with PID {}, skipping",
+                    app_name, existing.pid
+                ),
+            );
+            return Ok(None);
+        }
+    };
     store.ensure_daemon_running()?;
 
     // Stream output to terminal and/or TUI if requested
@@ -324,10 +319,10 @@ async fn start_single_app_process(
         drop(output_rx);
     }
 
-    Ok(crate::worktrees::instance_name(
+    Ok(Some(crate::worktrees::instance_name(
         &app_name,
         resolved_app.worktree.as_ref(),
-    ))
+    )))
 }
 
 /// Helper function for internal use (starting dependencies)
@@ -410,17 +405,13 @@ pub async fn start_single_app_internal(
     let store = state_store()?;
     store.cleanup_dead()?;
 
-    // Check if this dependency is already running
+    // Check if this dependency is already running. A dead entry left is
+    // replaced when the new process is recorded.
     if let Some(existing) =
         find_process(&store, &resolved_app.project, app_name, Some(&environment))?
+        && store.is_running(&existing)
     {
-        if store.is_running(&existing) {
-            // Already running - no need to start again
-            return Ok(());
-        } else {
-            // Stale state file - clean it up
-            store.delete(&existing.id)?;
-        }
+        return Ok(());
     }
 
     // Check if this dependency has its own dependencies

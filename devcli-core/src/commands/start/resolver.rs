@@ -101,18 +101,20 @@ pub async fn resolve_apps_to_start(args: StartCommandArgs) -> Result<(Vec<AppToS
                 }
                 continue;
             } else {
+                // The new process replaces the dead entry when it is recorded,
+                // under the entry lock. Deleting it here, unlocked, could
+                // remove the entry another command had just recorded.
                 tracing::debug!(
                     app = %app_name,
                     pid = existing.pid,
-                    "Cleaning up stale process"
+                    "Replacing stale process entry"
                 );
                 if crate::output::human(silent) {
                     println!(
-                        "Cleaning up stale process '{}' (PID {} is no longer running)",
+                        "Replacing stale process '{}' (PID {} is no longer running)",
                         app_name, existing.pid
                     );
                 }
-                store.delete(&existing.id)?;
             }
         }
 

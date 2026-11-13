@@ -90,7 +90,8 @@ pub async fn start_command(args: StartCommandArgs) -> Result<()> {
     };
 
     // An interrupt during start-up (which can wait up to 30s per wave of
-    // dependencies) ends it right away and stops what was already launched.
+    // dependencies, the dependencies of a wave being waited for together)
+    // ends it right away and stops what was already launched.
     let started = match signals.as_mut() {
         Some(signals) => tokio::select! {
             result = start_apps(&args, owner) => result,
