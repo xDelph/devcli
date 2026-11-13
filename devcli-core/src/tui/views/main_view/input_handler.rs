@@ -271,24 +271,28 @@ impl NavigationHandler for MainView {
                     Ok(false)
                 }
             }
-            // Quick log view shortcut
+            // Quick log view shortcut: the running app's latest log, else
+            // the log viewer on its log selector.
             KeyCode::Char('l') => {
-                if let Some(app) = state.selected_app() {
-                    // Only open logs if app is running
-                    if app.status.is_running()
-                        && let Ok(log_files) =
-                            self.log_manager.list_logs_for_app(&app.project, &app.name)
-                        && let Some(log_file) = log_files.first()
-                    {
-                        let prev = state.current_view.clone();
-                        state.view_history.push(prev);
-                        state.current_view = crate::tui::state::ViewType::LogViewer {
-                            log_paths: vec![log_file.path.clone()],
-                        };
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
+                let Some(app) = state.selected_app() else {
+                    return Ok(false);
+                };
+                let latest = app
+                    .status
+                    .is_running()
+                    .then(|| {
+                        self.log_manager
+                            .list_logs_for_app(&app.project, &app.name)
+                            .ok()
+                    })
+                    .flatten()
+                    .and_then(|logs| logs.first().map(|log| log.path.clone()));
+                let prev = state.current_view.clone();
+                state.view_history.push(prev);
+                state.current_view = crate::tui::state::ViewType::LogViewer {
+                    log_paths: latest.into_iter().collect(),
+                };
+                Ok(true)
             }
             _ => Ok(false),
         }
