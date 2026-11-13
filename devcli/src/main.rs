@@ -57,12 +57,27 @@ fn exit_on_parse_error(err: clap::Error) -> ! {
     let wants_json = std::env::args_os().any(|a| a == "--json");
     let informational = matches!(
         err.kind(),
-        ErrorKind::DisplayHelp
-            | ErrorKind::DisplayVersion
-            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
     );
     if !wants_json || informational {
         err.exit();
+    }
+
+    // A missing subcommand (`devcli --json config`) is an error like any
+    // other: it used to print clap's help on stdout and exit 2 under --json.
+    if err.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+        let words: Vec<String> = std::env::args()
+            .skip(1)
+            .filter(|a| !a.starts_with('-'))
+            .collect();
+        let command = std::iter::once("devcli".to_string())
+            .chain(words)
+            .collect::<Vec<_>>()
+            .join(" ");
+        devcli_core::output::print_json_error(&format!(
+            "'{command}' requires a subcommand; run '{command} --help' to list them"
+        ));
+        std::process::exit(1);
     }
 
     let rendered = err.render().to_string();

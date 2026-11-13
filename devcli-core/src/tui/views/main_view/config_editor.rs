@@ -472,7 +472,7 @@ impl MainView {
         Ok(())
     }
     /// Saves a new or edited environment file configuration
-    pub(crate) fn save_env_file(&mut self, app_name: &str) -> Result<()> {
+    pub(crate) fn save_env_file(&mut self, project: &str, app_name: &str) -> Result<()> {
         use super::ConfigMode;
         use crate::commands::env::add_env_file;
 
@@ -484,7 +484,7 @@ impl MainView {
             return Err(anyhow::anyhow!("All fields are required"));
         }
 
-        add_env_file(app_name, stage, context, file_path)?;
+        add_env_file(app_name, Some(project), stage, context, file_path)?;
 
         self.config_mode = ConfigMode::EditEnvFiles;
         Ok(())
@@ -650,7 +650,7 @@ fn move_app(config: &mut Config, from: &AppKey, to: &AppKey, app: App) -> Result
 
 /// An app's env files as the env-files popup lists them:
 /// `(stage, context, file)`, by stage then context.
-fn env_file_entries(
+pub(crate) fn env_file_entries(
     env_files: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 ) -> Vec<(String, String, String)> {
     let mut entries: Vec<(String, String, String)> = env_files

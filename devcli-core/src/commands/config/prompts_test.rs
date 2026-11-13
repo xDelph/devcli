@@ -66,6 +66,52 @@ mod prompts_tests {
     }
 
     #[test]
+    fn command_choices_cover_every_environment_and_mark_its_default() {
+        use crate::commands::config::prompts::command_choices;
+        use crate::config::models::Environment;
+
+        let mut app = AppBuilder::new("nodejs", "/test/path")
+            .with_orbstack_command("run", "docker run x")
+            .with_orbstack_command("build", "docker build .")
+            .with_orbstack_default("run")
+            .build();
+        app.commands
+            .entry(Environment::DockerCompose)
+            .insert("up".into(), "docker compose up".into());
+        app.defaults.docker_compose = Some("up".into());
+        app.commands
+            .entry(Environment::Ci)
+            .insert("test".into(), "npm test".into());
+
+        assert_eq!(
+            command_choices(&app, Environment::OrbStack).unwrap(),
+            vec!["build".to_string(), "run (default)".to_string()]
+        );
+        assert_eq!(
+            command_choices(&app, Environment::DockerCompose).unwrap(),
+            vec!["up (default)".to_string()]
+        );
+        assert_eq!(
+            command_choices(&app, Environment::Ci).unwrap(),
+            vec!["test".to_string()]
+        );
+        assert!(command_choices(&app, Environment::K8s).is_err());
+    }
+
+    #[test]
+    fn prompts_are_refused_under_json_and_without_a_terminal() {
+        use crate::commands::config::prompts::prompt_refusal;
+
+        assert_eq!(prompt_refusal("the app name (APP_NAME)", false, true), None);
+        let json = prompt_refusal("the app name (APP_NAME)", true, true).unwrap();
+        assert!(json.contains("Missing the app name (APP_NAME)"), "{json}");
+        assert!(json.contains("--json"), "{json}");
+        let no_tty = prompt_refusal("the environment (ENVIRONMENT)", false, false).unwrap();
+        assert!(no_tty.contains("Missing the environment"), "{no_tty}");
+        assert!(no_tty.contains("terminal"), "{no_tty}");
+    }
+
+    #[test]
     fn test_empty_config_handling() {
         let empty_config = Config {
             projects: Default::default(),

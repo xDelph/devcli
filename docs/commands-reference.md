@@ -39,6 +39,8 @@ Complete reference for all devcli CLI commands.
   - [pref reset](#pref-reset) - Reset preferences
 - [Utilities](#utilities)
   - [auto-add](#auto-add) - Auto-detect and add app
+  - [install-agents](#install-agents) - Teach AI coding agents to use devcli
+  - [uninstall-agents](#uninstall-agents) - Remove devcli's agent rules
 
 ---
 
@@ -72,7 +74,7 @@ devcli start <app-names>... [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (overrides preference)
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci` (overrides preference)
 - `--skip-deps` - Skip starting dependencies
 - `-s, --stage <STAGE>` - Deployment stage: `dev`, `qa`, `preprod` or `prod` (overrides the app's `default_stages` and the `default-stage` preference)
 - `--detached` - Leave the apps running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
@@ -195,7 +197,7 @@ devcli restart <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment of the instance to restart: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci` (defaults to the one it runs in)
+- `-e, --env <ENV>` - Environment of the instance to restart: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci` (defaults to the one it runs in)
 - `--skip-deps` - Skip restarting dependencies
 - `--detached` - Leave the app running in the background and return immediately (overrides the detached-mode preference). `--json` also implies this.
 
@@ -240,7 +242,7 @@ devcli run <app-name> <command-variant> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`
 - `--skip-deps` - Skip dependencies
 
 **Examples**:
@@ -354,7 +356,7 @@ devcli logs <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`)
 - `-n, --lines <N>` - Number of trailing lines to show (default `200`)
 - `-f, --follow` - Follow the file and stream new lines (blocks)
 
@@ -378,7 +380,9 @@ devcli --json logs api -n 100
   `~/.devcli/logs/<project>_<app>_<env>_<YYYYMMDD>.log`
 - Lines are the app's raw stdout/stderr; devcli adds no timestamps
 - `--json` returns `{ project, app, environment, file, lines: [...] }`
-- Use `--json` for agents; `--follow` is meant for humans
+- Use `--json` for agents; `--follow` is meant for humans. With both, the
+  output is newline-delimited JSON: the usual document on one line, then one
+  `{"line": "..."}` object per new line
 
 ---
 
@@ -469,7 +473,7 @@ devcli health-check <app-name> [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name (if app name is ambiguous)
-- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`
+- `-e, --env <ENV>` - Environment: `local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`
 
 **Examples**:
 ```bash
@@ -504,7 +508,8 @@ Display process, system and performance metrics. Fetched from the metrics API
 when `devcli monitor --daemon` is running (`DEVCLI_METRICS_ADDR`, default
 `127.0.0.1:9090`), computed from the state store otherwise (pm-daemon, the
 monitor `start` spawns, serves no API; the monitor and performance counters
-are then 0).
+are then 0). Anything else on that address - another program, a server that
+does not answer within 2 seconds - is ignored the same way.
 
 **Usage**:
 ```bash
@@ -764,8 +769,8 @@ Environment Files:
   local: .env
 ```
 
-The port, health check and restart policy are printed after the path when
-configured. `--json` gives the full resolved app, including `env_files` and
+The port, health check and restart policy are printed after the defaults
+line when configured. `--json` gives the full resolved app, including `env_files` and
 `default_stages` (see [AGENTS.md](../AGENTS.md)).
 
 ---
@@ -847,7 +852,7 @@ devcli config list-commands [app-name] [OPTIONS]
 
 **Options**:
 - `-p, --project <NAME>` - Project name
-- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s`, `ci`)
+- `-e, --env <ENV>` - Filter by environment (`local`, `docker`, `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`), `ci`)
 
 ---
 
@@ -877,8 +882,15 @@ devcli env add <app-name> --stage <STAGE> --context <CONTEXT> --file <FILE>
 - `-s, --stage <STAGE>` - Stage: `dev`, `qa`, `preprod`, `prod`, or `base`
   (a file for every stage); any other value is refused
 - `-c, --context <CONTEXT>` - Context, i.e. the environment: `local`, `docker`,
-  `orbstack`, `docker-compose`, `k8s`, `ci`
+  `orbstack`, `docker-compose` (alias `compose`), `k8s` (alias `kubernetes`),
+  `ci`; any other value is refused
 - `-f, --file <FILE>` - Path to env file (relative to app path)
+- `-p, --project <PROJECT>` - Project name (required if the app name is ambiguous)
+
+The app is found like every other command finds it: by name, alternative name
+or `project/app`; a name used by several projects is refused unless
+`--project` says which. Only the given context is written: a file shared by
+`docker` and `orbstack` is added once for each.
 
 **Examples**:
 ```bash
@@ -894,8 +906,11 @@ Remove an environment file mapping.
 
 **Usage**:
 ```bash
-devcli env remove <app-name> --stage <STAGE> [--context <CONTEXT>]
+devcli env remove <app-name> --stage <STAGE> [--context <CONTEXT>] [--project <PROJECT>]
 ```
+
+Removes exactly what `env add` wrote for that context, or the whole stage
+without `--context`. A stage or context that has no entry is an error.
 
 **Examples**:
 ```bash
@@ -914,7 +929,7 @@ List environment files for an app.
 
 **Usage**:
 ```bash
-devcli env list <app-name>
+devcli env list <app-name> [--project <PROJECT>]
 ```
 
 **Examples**:
@@ -944,7 +959,7 @@ Set default stage for a context.
 
 **Usage**:
 ```bash
-devcli env set-default <app-name> --context <CONTEXT> --stage <STAGE>
+devcli env set-default <app-name> --context <CONTEXT> --stage <STAGE> [--project <PROJECT>]
 ```
 
 **Examples**:
@@ -970,7 +985,8 @@ devcli pref set <key> <value>
 
 **Available Keys**:
 - `default-env` - Default environment (`local`, `docker`, `orbstack`,
-  `docker-compose`, `k8s`, `ci`; default `local`)
+  `docker-compose`, `k8s`, `ci`; default `local`). The aliases `compose` and
+  `kubernetes` are accepted and saved as `docker-compose` and `k8s`.
 - `detached-mode` - `start`/`restart`/`run` return right away instead of
   staying attached (`true`, `false`; default `false`)
 - `auto-start-deps` - Auto-start dependencies (`true`, `false`; default `true`)
@@ -1043,8 +1059,11 @@ devcli auto-add [OPTIONS]
 - `-n, --name <NAME>` - App name to register (non-interactive)
 - `--type <TYPE>` - App type override (non-interactive): `nodejs`, `nx`,
   `nx-workspace`, `rust`, `python`, `docker`, `redis`, `traefik`
-- `--force` - Replace an app that already exists (keeps its dependencies,
-  health check, restart policy and alternative name)
+- `--force` - Replace the detected settings of an app that already exists.
+  What was set by hand is kept: dependencies, port, health check, restart
+  policy, alternative name, default stages, and the commands, defaults and env
+  files the detection does not produce (docker-compose and ci commands, commands
+  added with `config add-command`). Detected commands are refreshed.
 
 **Examples**:
 ```bash
@@ -1071,6 +1090,78 @@ devcli --json auto-add --path ./apps/api --yes --project awesome-project --name 
 - Rust (`Cargo.toml`, including workspaces)
 - Python (`setup.py`, `pyproject.toml`, including uv workspaces)
 - Redis (`redis.conf`) and Traefik (`traefik.yml`/`traefik.toml`) configs
+
+---
+
+### `install-agents`
+
+Teach AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, pi, OpenCode,
+Devin, ...) to use devcli.
+
+**Usage**:
+```bash
+devcli install-agents [--local <PATH>]
+devcli install-agents --global [--agent <AGENT>]...
+```
+
+**Options**:
+- `--local <PATH>` - Install into the project at `<PATH>` (default: the
+  current directory)
+- `--global` - Install into the user-level files of your agents instead of a
+  project (conflicts with `--local`)
+- `--agent <AGENT>` - With `--global` only: just this agent (repeatable;
+  default: every agent found): `claude`, `codex`, `gemini`, `cursor`, `pi`,
+  `opencode`, `devin`
+
+By default devcli's rules (the content of [AGENTS.md](../AGENTS.md)) are
+written into the project's `AGENTS.md`, inside a fenced block devcli
+maintains, and imported from the project's `CLAUDE.md` (when there is one) and
+`GEMINI.md` (when there is one or Gemini CLI is installed).
+
+With `--global`, a short block is written into the user-level rules of every
+agent found (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.gemini/GEMINI.md`, `~/.cursor/rules/devcli.mdc`, `~/.pi/agent/AGENTS.md`,
+`~/.config/opencode/AGENTS.md`, `~/.config/devin/AGENTS.md`), pointing at the
+full rules written to `~/.devcli/AGENTS.md`.
+
+Files are written through symlinks, and the previous version of every file
+changed is saved under `~/.devcli/backups/agents` (the last five are kept). Re-run after
+upgrading devcli to refresh the rules.
+
+**Examples**:
+```bash
+devcli install-agents                     # this project
+devcli install-agents --local ~/code/shop # another project
+devcli install-agents --global            # every agent found
+devcli install-agents --global --agent claude --agent codex
+```
+
+**Output**:
+```text
+installed  project    /Users/me/code/shop/AGENTS.md
+updated    claude     /Users/me/.claude/CLAUDE.md
+```
+
+With `--json`: `{ "targets": [...], "reference": ... }` (see
+[AGENTS.md](../AGENTS.md#install-agents--uninstall-agents)).
+
+---
+
+### `uninstall-agents`
+
+Remove the rules `install-agents` wrote: devcli's block from each file (a
+file devcli owns as a whole, such as the Cursor rule, is deleted), and the
+imports it added.
+
+**Usage**:
+```bash
+devcli uninstall-agents [--local <PATH>]
+devcli uninstall-agents --global [--agent <AGENT>]...
+```
+
+**Options**: the same as `install-agents` (`--local <PATH>`, `--global`,
+`--agent <AGENT>`). `~/.devcli/AGENTS.md` is removed once no agent's rules
+point at it any more.
 
 ---
 

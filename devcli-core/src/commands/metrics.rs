@@ -41,23 +41,56 @@ pub async fn metrics_command() -> Result<()> {
     Ok(())
 }
 
-/// Metrics from a running metrics server, or `None` if none is listening.
+/// How long to wait for the metrics server before computing the metrics here.
+const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Metrics from a running metrics server, or `None` if none answers.
 async fn fetch_from_api() -> Result<Option<crate::metrics::AllMetrics>> {
     let url = format!("http://{}/metrics", crate::metrics::server::metrics_addr());
+    Ok(fetch_from(&url, API_TIMEOUT).await)
+}
 
-    let response = match reqwest::get(&url).await {
-        Ok(response) => response,
-        Err(e) if e.is_connect() => {
-            tracing::debug!(url = %url, "No metrics server, collecting locally");
-            return Ok(None);
-        }
-        Err(e) => anyhow::bail!("Failed to fetch metrics from {}: {}", url, e),
+/// The metrics document served at `url`, or `None` when what answers there is
+/// not devcli's metrics server.
+///
+/// Only a refused connection used to fall back to local metrics: whatever else
+/// listened on the port (Prometheus' own 9090) failed the command with a JSON
+/// decode error, and a listener that never answered hung it forever. Any
+/// failure - timeout, error status, another content type, a document that does
+/// not decode - now falls back.
+async fn fetch_from(url: &str, timeout: std::time::Duration) -> Option<crate::metrics::AllMetrics> {
+    let fallback = |reason: String| {
+        tracing::debug!(url = %url, reason = %reason, "No devcli metrics server, collecting locally");
+        None
     };
 
+    let client = match reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(timeout)
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => return fallback(e.to_string()),
+    };
+    let response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(e) => return fallback(e.to_string()),
+    };
     if !response.status().is_success() {
-        anyhow::bail!("Metrics API at {} returned {}", url, response.status());
+        return fallback(format!("status {}", response.status()));
     }
-    Ok(Some(response.json().await?))
+    let is_json = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if !is_json {
+        return fallback("not a JSON response".to_string());
+    }
+    match response.json().await {
+        Ok(metrics) => Some(metrics),
+        Err(e) => fallback(e.to_string()),
+    }
 }
 
 /// Display metrics in a human-readable format
@@ -204,9 +237,56 @@ fn display_metrics(metrics: &crate::metrics::AllMetrics) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_metrics_command_exists() {
-        // Basic compilation test
-        // No assertions needed - if this compiles, the test passes
+    use super::*;
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A one-connection HTTP server answering `response` (or never, if `None`).
+    async fn serve_once(response: Option<&'static str>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            match response {
+                Some(response) => {
+                    let _ = socket.write_all(response.as_bytes()).await;
+                }
+                None => tokio::time::sleep(Duration::from_secs(30)).await,
+            }
+        });
+        format!("http://{addr}/metrics")
+    }
+
+    #[tokio::test]
+    async fn another_server_on_the_port_falls_back() {
+        let url = serve_once(Some(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\
+             Content-Length: 12\r\nConnection: close\r\n\r\nup{job=\"x\"} 1",
+        ))
+        .await;
+        assert!(fetch_from(&url, Duration::from_secs(2)).await.is_none());
+
+        let url = serve_once(Some(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: 12\r\nConnection: close\r\n\r\n{\"up\": true}",
+        ))
+        .await;
+        assert!(fetch_from(&url, Duration::from_secs(2)).await.is_none());
+
+        let url = serve_once(Some(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ))
+        .await;
+        assert!(fetch_from(&url, Duration::from_secs(2)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_silent_listener_times_out_and_falls_back() {
+        let url = serve_once(None).await;
+        let started = Instant::now();
+        assert!(fetch_from(&url, Duration::from_millis(300)).await.is_none());
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }

@@ -58,15 +58,18 @@ Colors are automatically disabled when stdout is not a TTY.
 
 On error with `--json`, a JSON object `{"error": "..."}` is written to stderr
 and the process exits `1`. This includes command-line usage errors (unknown
-subcommand or flag); without `--json`, those usage errors print clap's message
-and exit `2`.
+or missing subcommand, unknown flag, invalid value); without `--json`, those
+usage errors print clap's message and exit `2`.
 
 An app name that is neither configured nor tracked is an error (exit `1`) for
 every command taking one, with a "did you mean" suggestion when a configured
 name is close.
 
 `--env` takes `local`, `docker`, `orbstack`, `docker-compose` (alias
-`compose`), `k8s` or `ci`. `--stage` takes `dev`, `qa`, `preprod` or `prod`.
+`compose`), `k8s` (alias `kubernetes`) or `ci`; an alias is replaced by the
+canonical name before anything runs (process ids, log files and JSON answers
+always carry the canonical name), and any other value is a usage error.
+`--stage` takes `dev`, `qa`, `preprod` or `prod`.
 
 ## Commands and JSON output
 
@@ -173,7 +176,8 @@ devcli logs api --follow                     # human streaming mode
 ```
 
 `--follow` is for humans; it blocks and streams. Agents should poll `logs`
-instead.
+instead. With `--json`, `--follow` writes newline-delimited JSON: the document
+above on one line, then one `{"line": "..."}` object per new line.
 
 ### `config`
 
@@ -194,6 +198,57 @@ devcli --json config validate
   { "<env>": { "default", "commands" } } }`.
 - `config validate` → `{ "valid", "errors": [{ "field", "message" }],
   "warnings": [...], "projects", "apps" }`.
+- `config add-command APP ENV NAME VALUE` → `{ "project", "app",
+  "environment", "command", "value" }` (an existing command of that name is
+  replaced).
+- `config remove-command APP ENV NAME` → `{ "project", "app", "environment",
+  "command", "default_cleared" }`.
+- `config set-default APP ENV NAME` → `{ "project", "app", "environment",
+  "default" }`.
+- `config init` → `{ "created": "<path of config.json>" }`.
+- `config edit` (opens `$VISUAL`/`$EDITOR`) → `{ "path", "editor" }`;
+  `config edit-command` always prompts for the new value and is refused with
+  `--json` (use `config add-command`).
+
+Every argument these commands would prompt for must be given: with `--json`,
+or without a terminal on stdin, a missing one is an error naming it
+(`Missing the app name (APP_NAME): ...`).
+
+### `env`
+
+```bash
+devcli --json env add APP --stage dev --context local --file .env.dev [--project P]
+devcli --json env remove APP --stage dev [--context local] [--project P]
+devcli --json env list APP [--project P]
+devcli --json env set-default APP --context docker --stage qa [--project P]
+```
+
+The app is found like everywhere else (`--project`, `project/app`,
+alternative name; an ambiguous name is an error). `--context` is an
+environment (aliases accepted, stored canonical); `env add` writes only that
+context.
+
+- `env add` → `{ "project", "app", "stage", "context", "file" }`
+- `env remove` → `{ "project", "app", "stage", "context", "removed":
+  { "<context>": "<file>" } }` (`context` is `null` when the whole stage was
+  removed)
+- `env list` → `{ "project", "app", "env_files": { "<stage>": { "<context>":
+  "<file>" } }, "default_stages": { "<context>": "<stage>" } }`
+- `env set-default` → `{ "project", "app", "context", "stage" }`
+
+### `pref`
+
+```bash
+devcli --json pref show
+devcli --json pref set default-env docker
+devcli --json pref reset
+```
+
+- `pref show` and `pref reset` → `{ "default-env", "detached-mode",
+  "auto-start-deps", "docker-platform", "default-stage" }` (the keys `pref
+  set` takes; `default-stage` is `null` when unset)
+- `pref set KEY VALUE` → `{ "key", "value" }` with the value as saved
+  (`compose` is saved as `docker-compose`)
 
 ### `health-check`
 
@@ -218,8 +273,10 @@ devcli --json metrics
 
 Returns the metrics document (process, system, performance). Works without a
 running metrics server: process and system metrics are then computed from the
-state (the performance counters stay at zero). Only `devcli monitor --daemon`
-serves the metrics API; pm-daemon, which `start` spawns, does not.
+state (the performance counters stay at zero), also when something else
+listens on the metrics address or nothing answers within 2 seconds. Only
+`devcli monitor --daemon` serves the metrics API; pm-daemon, which `start`
+spawns, does not.
 
 ### `auto-add` (non-interactive)
 
@@ -232,13 +289,36 @@ detected defaults are accepted without prompting, and env files with an
 ambiguous context are skipped. Without a TTY and without `--yes`, the command
 fails with a clear message. Monorepos and multi-app directories require the
 interactive mode. An app that already exists is not replaced unless `--force`
-is given; its dependencies, health check, restart policy and alternative name
-are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
+is given; what was set by hand is then kept: dependencies, port, health check,
+restart policy, alternative name, default stages, and the commands, defaults
+and env files the detection does not produce (detected ones are refreshed). `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
 `python`, `docker`, `redis`, `traefik`; `path` in the answer is absolute.
 
 ```json
 { "project": "proj", "app": "api", "type": "nodejs", "path": "/abs/apps/api" }
 ```
+
+### `install-agents` / `uninstall-agents`
+
+```bash
+devcli --json install-agents [--local PATH]
+devcli --json install-agents --global [--agent claude --agent codex ...]
+devcli --json uninstall-agents [--global] [--local PATH] [--agent ...]
+```
+
+```json
+{ "targets": [
+    { "agent": "claude", "path": "/Users/me/.claude/CLAUDE.md",
+      "action": "updated", "backup": "/Users/me/.devcli/backups/agents/..." } ],
+  "reference": "/Users/me/.devcli/AGENTS.md" }
+```
+
+`action` is one of `installed`, `updated`, `unchanged`, `removed`, `absent`.
+`agent` names the agent a file is for, `null` for a project's `AGENTS.md`
+and for the reference file; `backup` is the saved previous version (`null`
+when there was none to save).
+`reference` is the full rules file the global blocks point at, `null`
+without `--global`.
 
 ## Git worktrees
 

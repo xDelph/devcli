@@ -6,6 +6,37 @@
 
 use crate::Result;
 use inquire::{Select, Text};
+use std::io::IsTerminal;
+
+/// Why the value of `argument` cannot be prompted for, if it cannot.
+///
+/// With `--json` stdout must hold one JSON document and nobody may be there to
+/// answer, and without a terminal on stdin the prompt fails with an opaque
+/// "not a TTY": both now get an error saying which argument to pass.
+pub(crate) fn prompt_refusal(argument: &str, json: bool, terminal: bool) -> Option<String> {
+    let reason = if json {
+        "devcli does not prompt with --json"
+    } else if !terminal {
+        "devcli cannot prompt without a terminal"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "Missing {argument}: pass it on the command line ({reason})"
+    ))
+}
+
+/// Fail with [`prompt_refusal`]'s message when prompting is not possible.
+fn ensure_can_prompt(argument: &str) -> Result<()> {
+    match prompt_refusal(
+        argument,
+        crate::output::json_enabled(),
+        std::io::stdin().is_terminal(),
+    ) {
+        Some(message) => Err(anyhow::anyhow!(message)),
+        None => Ok(()),
+    }
+}
 
 /// Prompt user to select a project first, then an app
 ///
@@ -21,6 +52,7 @@ pub(crate) fn prompt_for_app(
     config: &crate::config::Config,
     project_filter: Option<&str>,
 ) -> Result<(String, String)> {
+    ensure_can_prompt("the app name (APP_NAME)")?;
     let project_name = if let Some(project) = project_filter {
         // Project already specified, use it
         project.to_string()
@@ -77,6 +109,7 @@ pub(crate) fn prompt_for_project(config: &crate::config::Config) -> Result<Strin
 /// The selected environment name (local, docker, orbstack, or k8s)
 pub(crate) fn prompt_for_environment() -> Result<String> {
     use crate::config::models::Environment;
+    ensure_can_prompt("the environment (ENVIRONMENT)")?;
 
     let environments: Vec<&str> = Environment::all().iter().map(|e| e.as_str()).collect();
     let selection = Select::new("Select environment:", environments).prompt()?;
@@ -94,24 +127,35 @@ pub(crate) fn prompt_for_environment() -> Result<String> {
 ///
 /// The selected command name
 pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) -> Result<String> {
-    let commands = match environment {
-        "local" => app.commands.local.as_ref(),
-        "docker" => app.commands.docker.as_ref(),
-        "orbstack" => app.commands.orbstack.as_ref(),
-        "k8s" => app.commands.k8s.as_ref(),
-        _ => {
-            use crate::config::models::Environment;
-            if Environment::from_string(environment).is_none() {
-                return Err(anyhow::anyhow!("Invalid environment: {}", environment));
-            }
-            return Err(anyhow::anyhow!(
-                "Environment '{}' not supported in this context",
-                environment
-            ));
-        }
-    };
+    use crate::config::models::Environment;
 
-    let commands = commands
+    // Every environment: this used to handle local/docker/orbstack/k8s only,
+    // so `config set-default api docker-compose` (or ci) failed with "not
+    // supported in this context", and the "(default)" marker ignored orbstack.
+    let env = Environment::parse(environment).map_err(|e| anyhow::anyhow!(e))?;
+    let names = command_choices(app, env)?;
+    ensure_can_prompt("the command name (COMMAND_NAME)")?;
+    let selection = Select::new("Select command:", names).prompt()?;
+
+    // Remove the " (default)" suffix if present
+    Ok(selection
+        .strip_suffix(DEFAULT_MARKER)
+        .map(str::to_string)
+        .unwrap_or(selection))
+}
+
+/// Suffix marking the environment's default command in [`command_choices`].
+const DEFAULT_MARKER: &str = " (default)";
+
+/// The sorted command names of `env`, the default one marked.
+pub(crate) fn command_choices(
+    app: &crate::config::App,
+    env: crate::config::models::Environment,
+) -> Result<Vec<String>> {
+    let environment = env.as_str();
+    let commands = app
+        .commands
+        .get(environment)
         .ok_or_else(|| anyhow::anyhow!("No commands configured for {} environment", environment))?;
 
     if commands.is_empty() {
@@ -121,39 +165,20 @@ pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) ->
         ));
     }
 
-    // Create sorted list of command names with default indicator
-    let default_command = match environment {
-        "local" => app.defaults.local.as_ref(),
-        "docker" => app.defaults.docker.as_ref(),
-        "k8s" => app.defaults.k8s.as_ref(),
-        _ => None,
-    };
-
+    let default_command = app.defaults.get(environment);
     let mut command_names: Vec<String> = commands.keys().cloned().collect();
     command_names.sort();
 
-    // Add default indicator to the display
-    let display_names: Vec<String> = command_names
-        .iter()
+    Ok(command_names
+        .into_iter()
         .map(|name| {
-            if Some(name) == default_command {
-                format!("{} (default)", name)
+            if Some(&name) == default_command {
+                format!("{name}{DEFAULT_MARKER}")
             } else {
-                name.clone()
+                name
             }
         })
-        .collect();
-
-    let selection = Select::new("Select command:", display_names).prompt()?;
-
-    // Remove the " (default)" suffix if present
-    let clean_selection = if selection.ends_with(" (default)") {
-        selection.trim_end_matches(" (default)").to_string()
-    } else {
-        selection
-    };
-
-    Ok(clean_selection)
+        .collect())
 }
 
 /// Prompt user for a text input
@@ -166,7 +191,13 @@ pub(crate) fn prompt_for_command(app: &crate::config::App, environment: &str) ->
 /// # Returns
 ///
 /// The user's input
-pub(crate) fn prompt_for_text(message: &str, default: Option<&str>) -> Result<String> {
+/// * `argument` - What the value is, for the error when prompting is not possible
+pub(crate) fn prompt_for_text(
+    message: &str,
+    default: Option<&str>,
+    argument: &str,
+) -> Result<String> {
+    ensure_can_prompt(argument)?;
     let mut prompt = Text::new(message);
     if let Some(default_val) = default {
         prompt = prompt.with_default(default_val);

@@ -259,6 +259,8 @@ impl EnvFlow {
             let mut vars = EnvVars(map);
             if self.interpolate {
                 interpolator::interpolate_all(&mut vars.0)?;
+            } else {
+                interpolator::unescape_all(&mut vars.0);
             }
             return Ok(vars);
         }
@@ -293,6 +295,8 @@ impl EnvFlow {
 
         if self.interpolate {
             interpolator::interpolate_all(&mut vars.0)?;
+        } else {
+            interpolator::unescape_all(&mut vars.0);
         }
 
         tracing::debug!(var_count = vars.len(), "env-flow load complete");

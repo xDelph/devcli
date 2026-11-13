@@ -1,6 +1,6 @@
 // Main view module - split into smaller submodules for better organization
 
-mod config_editor;
+pub(crate) mod config_editor;
 mod input_handler;
 mod navigation;
 mod popups;

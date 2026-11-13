@@ -168,9 +168,10 @@ impl EditModeHandler for MainView {
             }
             ConfigMode::AddEnvFile | ConfigMode::EditEnvFile => {
                 if let Some(app) = state.selected_app() {
+                    let project = app.project.clone();
                     let app_name = app.name.clone();
 
-                    if let Err(e) = self.save_env_file(&app_name) {
+                    if let Err(e) = self.save_env_file(&project, &app_name) {
                         MainView::report(state, "Cannot save the env file", e);
                         return Ok(true);
                     }
@@ -441,27 +442,21 @@ impl EditModeHandler for MainView {
                         if let Some(app) = state.selected_app()
                             && let Some(env_files) = &app.env_files
                         {
-                            // Build flat list of entries
-                            let mut entries: Vec<(String, String, String)> = Vec::new();
-                            for (stage, contexts) in env_files {
-                                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
-
-                                for (context, file_path) in sorted_contexts {
-                                    entries.push((
-                                        stage.clone(),
-                                        context.clone(),
-                                        file_path.clone(),
-                                    ));
-                                }
-                            }
-                            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                            let entries =
+                                crate::tui::views::main_view::config_editor::env_file_entries(
+                                    env_files,
+                                );
 
                             if let Some((stage, context, _)) =
                                 entries.get(self.popup_scroll_manager.selected_env_file_idx)
                             {
-                                if let Err(e) = remove_env_file(&app.name, stage, Some(context)) {
-                                    eprintln!("Error removing env file: {}", e);
+                                if let Err(e) = remove_env_file(
+                                    &app.name,
+                                    Some(&app.project),
+                                    stage,
+                                    Some(context),
+                                ) {
+                                    MainView::report(state, "Cannot remove the env file", e);
                                 } else {
                                     // Adjust selection if needed
                                     let total_entries: usize =

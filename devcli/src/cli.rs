@@ -1,4 +1,17 @@
 use clap::{Parser, Subcommand};
+use devcli_core::config::Environment;
+
+/// `--env` / environment arguments: the canonical name of the environment
+/// (`compose` becomes `docker-compose`, `kubernetes` becomes `k8s`), or a
+/// usage error listing the valid values.
+///
+/// Done here, once, so that no command sees an alias: kept as typed, an alias
+/// passed the config lookups (which accept it) but not the code comparing
+/// against the canonical name, and the app started without its platform,
+/// env file or worktree project name, under ids naming `compose`.
+pub fn parse_environment(value: &str) -> Result<String, String> {
+    Environment::parse(value).map(|env| env.as_str().to_string())
+}
 
 #[derive(Parser)]
 #[command(name = "devcli")]
@@ -30,7 +43,8 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides preference)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (overrides preference)"
         )]
         env: Option<String>,
 
@@ -62,7 +76,8 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides existing config)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (overrides existing config)"
         )]
         env: Option<String>,
 
@@ -108,7 +123,8 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (overrides preference)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (overrides preference)"
         )]
         env: Option<String>,
 
@@ -139,7 +155,8 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment filter: local, docker, orbstack, docker-compose (compose), k8s, ci"
+            value_parser = parse_environment,
+            help = "Environment filter: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         env: Option<String>,
 
@@ -178,7 +195,7 @@ pub enum Commands {
 
         #[arg(
             long,
-            help = "Replace an app that already exists (keeps its dependencies, health check, restart policy and alternative name)"
+            help = "Replace the detected settings of an app that already exists (keeps what was set by hand: dependencies, port, health check, restart policy, alternative name, and commands, defaults and env files the detection does not produce)"
         )]
         force: bool,
     },
@@ -269,7 +286,8 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         env: Option<String>,
     },
@@ -340,7 +358,8 @@ pub enum ConfigAction {
         app_name: Option<String>,
 
         #[arg(
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (prompted for when omitted)"
         )]
         environment: Option<String>,
 
@@ -360,7 +379,8 @@ pub enum ConfigAction {
         app_name: Option<String>,
 
         #[arg(
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (prompted for when omitted)"
         )]
         environment: Option<String>,
 
@@ -377,7 +397,8 @@ pub enum ConfigAction {
         app_name: Option<String>,
 
         #[arg(
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (prompted for when omitted)"
         )]
         environment: Option<String>,
 
@@ -399,7 +420,8 @@ pub enum ConfigAction {
         #[arg(
             short,
             long,
-            help = "Filter by environment: local, docker, orbstack, docker-compose (compose), k8s, ci"
+            value_parser = parse_environment,
+            help = "Filter by environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         env: Option<String>,
     },
@@ -410,7 +432,8 @@ pub enum ConfigAction {
         app_name: Option<String>,
 
         #[arg(
-            help = "Environment: local, docker, orbstack, docker-compose (compose), k8s, ci (prompted for when omitted)"
+            value_parser = parse_environment,
+            help = "Environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci (prompted for when omitted)"
         )]
         environment: Option<String>,
 
@@ -439,12 +462,15 @@ pub enum EnvAction {
         #[arg(
             short,
             long,
-            help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')"
+            help = "Context, i.e. the environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         context: String,
 
         #[arg(short, long, help = "Path to env file relative to app root")]
         file: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "Remove an environment file or stage from an app")]
@@ -457,12 +483,18 @@ pub enum EnvAction {
 
         #[arg(short, long, help = "Context name (if omitted, removes entire stage)")]
         context: Option<String>,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "List environment files for an app")]
     List {
         #[arg(help = "App name")]
         app_name: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 
     #[command(about = "Set default stage for a context")]
@@ -473,12 +505,15 @@ pub enum EnvAction {
         #[arg(
             short,
             long,
-            help = "Context name (e.g., 'local', 'docker', 'orbstack', 'k8s')"
+            help = "Context, i.e. the environment: local, docker, orbstack, docker-compose (alias compose), k8s (alias kubernetes), ci"
         )]
         context: String,
 
         #[arg(short, long, help = "Stage name to set as default")]
         stage: String,
+
+        #[arg(short, long, help = "Project name (required if app name is ambiguous)")]
+        project: Option<String>,
     },
 }
 
@@ -696,6 +731,7 @@ mod tests {
                     stage: "qa".into(),
                     context: "local".into(),
                     file: ".env.qa".into(),
+                    project: None,
                 }
             }
         );
@@ -712,6 +748,66 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn environment_aliases_are_canonicalised_everywhere() {
+        let start = Cli::try_parse_from(["devcli", "start", "api", "--env", "compose"])
+            .expect("parse start")
+            .command;
+        assert!(matches!(start, Commands::Start { env: Some(ref e), .. } if e == "docker-compose"));
+
+        let run = Cli::try_parse_from(["devcli", "run", "api", "build", "-e", "kubernetes"])
+            .expect("parse run")
+            .command;
+        assert!(matches!(run, Commands::Run { env: Some(ref e), .. } if e == "k8s"));
+
+        let logs = Cli::try_parse_from(["devcli", "logs", "api", "--env", "Docker"])
+            .expect("parse logs")
+            .command;
+        assert!(matches!(logs, Commands::Logs { env: Some(ref e), .. } if e == "docker"));
+
+        let add = Cli::try_parse_from([
+            "devcli",
+            "config",
+            "add-command",
+            "api",
+            "compose",
+            "up",
+            "docker compose up",
+        ])
+        .expect("parse add-command")
+        .command;
+        assert!(matches!(
+            add,
+            Commands::Config {
+                action: ConfigAction::AddCommand { environment: Some(ref e), .. }
+            } if e == "docker-compose"
+        ));
+    }
+
+    #[test]
+    fn unknown_environment_is_a_usage_error_naming_the_valid_ones() {
+        let err = match Cli::try_parse_from(["devcli", "start", "api", "--env", "dokcer"]) {
+            Ok(_) => panic!("an unknown environment must not parse"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("Unknown environment 'dokcer'"),
+            "{message}"
+        );
+        assert!(message.contains("docker-compose"), "{message}");
+        assert!(message.contains("Did you mean 'docker'?"), "{message}");
+
+        for args in [
+            &["devcli", "restart", "api", "--env", "nope"][..],
+            &["devcli", "health-check", "api", "--env", "nope"][..],
+            &["devcli", "config", "list-commands", "api", "--env", "nope"][..],
+            &["devcli", "config", "set-default", "api", "nope", "start"][..],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?} parsed");
+        }
     }
 
     #[test]
