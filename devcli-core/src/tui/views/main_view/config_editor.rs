@@ -500,17 +500,7 @@ impl MainView {
         if let Some(app) = state.selected_app()
             && let Some(env_files) = &app.env_files
         {
-            // Build flat list of entries
-            let mut entries: Vec<(String, String, String)> = Vec::new();
-            for (stage, contexts) in env_files {
-                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
-
-                for (context, file_path) in sorted_contexts {
-                    entries.push((stage.clone(), context.clone(), file_path.clone()));
-                }
-            }
-            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            let entries = env_file_entries(env_files);
 
             if let Some((stage, context, file_path)) =
                 entries.get(self.popup_scroll_manager.selected_env_file_idx)
@@ -536,17 +526,7 @@ impl MainView {
         if let Some(app) = state.selected_app()
             && let Some(env_files) = &app.env_files
         {
-            // Build flat list of entries
-            let mut entries: Vec<(String, String, String)> = Vec::new();
-            for (stage, contexts) in env_files {
-                let mut sorted_contexts: Vec<_> = contexts.iter().collect();
-                sorted_contexts.sort_by_key(|(context, _)| context.as_str());
-
-                for (context, file_path) in sorted_contexts {
-                    entries.push((stage.clone(), context.clone(), file_path.clone()));
-                }
-            }
-            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            let entries = env_file_entries(env_files);
 
             if let Some((stage, context, file_path)) =
                 entries.get(self.popup_scroll_manager.selected_env_file_idx)
@@ -666,4 +646,21 @@ fn move_app(config: &mut Config, from: &AppKey, to: &AppKey, app: App) -> Result
         }
     }
     Ok(())
+}
+
+/// An app's env files as the env-files popup lists them:
+/// `(stage, context, file)`, by stage then context.
+fn env_file_entries(
+    env_files: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Vec<(String, String, String)> {
+    let mut entries: Vec<(String, String, String)> = env_files
+        .iter()
+        .flat_map(|(stage, contexts)| {
+            contexts
+                .iter()
+                .map(move |(context, file)| (stage.clone(), context.clone(), file.clone()))
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    entries
 }
