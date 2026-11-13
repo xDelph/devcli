@@ -487,9 +487,14 @@ mod tests {
 
         let detected = detect_app(dir.path()).unwrap();
         let docker = detected.docker_commands.unwrap();
-        assert!(docker.contains_key("build"));
-        assert!(docker.contains_key("test"));
+        // Stage commands are namespaced: the `build` stage must not replace
+        // the generic `build`, whose image `run` starts.
+        assert!(!docker["build"].contains("--target"));
+        assert!(docker["build:build"].contains("--target build"));
+        assert!(docker.contains_key("build:test"));
+        assert!(docker.contains_key("run:test"));
         assert!(docker.contains_key("run"));
+        assert_eq!(detected.suggested_docker_default.as_deref(), Some("run"));
     }
 
     #[test]

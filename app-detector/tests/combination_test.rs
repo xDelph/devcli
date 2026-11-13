@@ -237,7 +237,7 @@ fn test_rust_docker() {
                 "Should have build command"
             );
             assert!(
-                info.commands.contains_key("builder"),
+                info.commands.contains_key("build:builder"),
                 "Should have stage-specific builder command"
             );
         }
