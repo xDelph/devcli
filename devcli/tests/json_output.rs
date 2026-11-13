@@ -174,3 +174,19 @@ fn missing_arguments_are_an_error_instead_of_a_prompt() {
     );
     assert!(err.contains("add-command"), "{err}");
 }
+
+#[test]
+fn a_missing_subcommand_is_a_json_error() {
+    let sb = Sandbox::new();
+    let err = json_err(&sb, &["--json", "config"]);
+    assert!(
+        err.contains("'devcli config' requires a subcommand"),
+        "{err}"
+    );
+    let err = json_err(&sb, &["--json"]);
+    assert!(err.contains("'devcli' requires a subcommand"), "{err}");
+
+    // Without --json it stays clap's usage error.
+    let out = sb.devcli(&["config"]);
+    assert_eq!(out.status.code(), Some(2));
+}

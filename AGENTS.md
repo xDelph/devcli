@@ -56,8 +56,8 @@ Colors are automatically disabled when stdout is not a TTY.
 
 On error with `--json`, a JSON object `{"error": "..."}` is written to stderr
 and the process exits `1`. This includes command-line usage errors (unknown
-subcommand or flag); without `--json`, those usage errors print clap's message
-and exit `2`.
+or missing subcommand, unknown flag, invalid value); without `--json`, those
+usage errors print clap's message and exit `2`.
 
 An app name that is neither configured nor tracked is an error (exit `1`) for
 every command taking one, with a "did you mean" suggestion when a configured
