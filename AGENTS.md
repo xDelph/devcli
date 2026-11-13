@@ -27,7 +27,9 @@ shapes, and non-interactive behaviour.
    worktree's apps.
 6. **In a git worktree, just run devcli from it.** `devcli start api` run
    inside a worktree starts *that worktree's* copy of the app, on its own
-   ports, and `stop`/`status`/`logs` act on that copy only. See
+   ports, and `stop`/`restart`/`status`/`logs`/`health-check` act on that
+   copy only (an error when the worktree's branch has no such app; name the
+   configured checkout's `api@` explicitly). See
    [Git worktrees](#git-worktrees).
 
 ```bash
@@ -243,9 +245,12 @@ are then kept. `--type` must be one of `nodejs`, `nx`, `nx-workspace`, `rust`,
 An app is configured once, with the path of one checkout; devcli runs it
 from **any git worktree of that repository**, wherever the worktree lives
 (`.claude/worktrees/x`, `.worktrees/x`, a sibling directory, ...). Nothing
-is added to the config. A worktree instance is named `project@slug` (slug:
-the worktree's name in git), so its process id, state and log file never
-collide with another checkout's.
+is added to the config. A worktree instance is named `project@slug`, so
+its process id, state and log file never collide with another checkout's.
+The slug is the worktree's name in git (its admin directory name) with
+every character other than letters, digits, `-` and `_` replaced by `-`,
+and `-2`, `-3`, ... appended when that name is taken in the repository;
+`devcli worktrees` shows it. Each repository names its own worktrees.
 
 | Name | Designates |
 | ---- | ---------- |
@@ -254,26 +259,41 @@ collide with another checkout's.
 | `api@` | the configured checkout, from anywhere |
 | `api@*` | every checkout (`start`, `stop`, `status`) |
 
-The suffix also works on `--project` (`--project shop@slug`). From inside a
-worktree, `stop --project shop` only selects that worktree's processes.
+Run inside a worktree whose branch has no `api`, `start api` starts the
+configured checkout's (with a note); every other command fails instead,
+since it would act on the main checkout's instance: name it `api@`. The
+same holds for an app inside a git submodule run from a worktree of the
+superproject: the submodule's worktrees are not the superproject's.
+
+The suffix also works on `--project` (`--project shop@slug`); an unknown
+slug is an error (exit code 1). In a project whose apps live in several
+repositories, `shop@slug` is the worktree `slug` of each app's own
+repository. From inside a worktree, `stop --project shop` only selects that
+worktree's processes.
 
 Each instance gets its own ports and variables:
 
 | Variable | Value |
 | -------- | ----- |
 | `DEVCLI_WORKTREE` | slug (empty in the configured checkout) |
-| `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists) |
+| `DEVCLI_WORKTREE_INDEX` | 0 for the configured checkout, then 1, 2, ... (stable while the worktree exists, and while an app still runs from a worktree that was moved or deleted) |
 | `DEVCLI_PORT_OFFSET` | index × 100 |
 | `DEVCLI_WORKTREE_PATH`, `DEVCLI_WORKTREE_BRANCH` | in a worktree |
 | `PORT`, `DEVCLI_PORT` | the app's port + offset: its env files' `PORT`, else its configured `port` |
-| `DEVCLI_PORT_<APP>` | the port of each dependency with a configured `port`, as it runs for this instance (shifted when it runs in the same worktree), e.g. `DEVCLI_PORT_API` |
+| `DEVCLI_PORT_<APP>` | the port each dependency listens on, as it runs for this instance: its running process's, else its env files' `PORT` or configured `port`, shifted when it runs in the same worktree; e.g. `DEVCLI_PORT_API` |
 
-Without a `port` in the config, a `PORT` from the app's env files is shifted
-in worktrees. Health checks follow the shifted port. In a fresh worktree
-without env files (they are usually gitignored), the configured checkout's
-are used. Dependencies in the same repository start in the same worktree.
-When a worktree directory is deleted, pm-daemon stops the apps that ran
-from it.
+A `PORT` from the app's env files wins over its configured `port`; either
+is shifted in worktrees. Docker, OrbStack and Compose instances get it too:
+in a worktree the container's env file carries the shifted `PORT`, and
+Compose interpolates `${PORT}` from it (a compose file's own `env_file:`
+is read by Compose, unshifted: pass `PORT: ${PORT}` in `environment:`).
+Health checks follow the shifted port. In a fresh worktree without env
+files (they are usually gitignored), the configured checkout's are used.
+Dependencies in the same repository start in the same worktree. When a
+worktree directory is deleted, pm-daemon stops the apps that ran from it.
+A worktree moved with `mv` keeps its apps running: they stay reachable as
+`api@slug` (`stop`, `logs`, `status`), and their logs remain readable as
+`logs api@slug` after the worktree is gone.
 
 ### `worktrees`
 
@@ -296,8 +316,10 @@ devcli --json worktrees [--project P]
                    "running": false }] } ] } ] }
 ```
 
-`stale` worktrees were deleted without `git worktree remove`; devcli never
-prunes them.
+`stale` worktrees were deleted (or moved) without `git worktree remove`;
+devcli never prunes them. One an app still runs from keeps its `slug`,
+`index` and `port_offset` and lists that app; the others have a `null`
+index.
 
 ## Environment
 

@@ -48,9 +48,11 @@ Complete reference for all devcli CLI commands.
 > git worktree of the app's repository, against that worktree's copy of the
 > app (project `proj@slug`). `APP@slug` names a worktree's instance from
 > anywhere, `APP@` the configured checkout, and `APP@*` every checkout
-> (`start`, `stop`, `status`). The suffix also works on `--project`. See
-> [`worktrees`](#worktrees). Under an AI agent, `start` and `stop` refuse
-> `@*`.
+> (`start`, `stop`, `status`). The suffix also works on `--project`; an
+> unknown worktree is an error. When the worktree's branch has no such app,
+> `start` falls back to the configured checkout and the other commands fail
+> (name it `APP@`). See [`worktrees`](#worktrees). Under an AI agent, `start`
+> and `stop` refuse `@*`.
 >
 > **Unknown names.** An app name that is neither configured nor running is an
 > error (exit code 1, with a "did you mean" suggestion when a configured name
@@ -432,10 +434,14 @@ marks the current directory's worktree. `--json` gives the full document
 
 **Behavior**:
 - Worktrees are found through git (`git worktree list`), wherever they live
-- Each worktree keeps a slot (1, 2, ...) while it exists; `DEVCLI_PORT_OFFSET`
-  is slot × 100 and an app's configured `port` is shifted by it
-- Worktrees deleted without `git worktree remove` are shown as stale; run
-  `git worktree prune` to forget them (devcli never does)
+- A worktree's name is git's name for it, sanitized (letters, digits, `-`,
+  `_`), with `-2`, `-3`, ... on a clash
+- Each worktree keeps a slot (1, 2, ...) while it exists, or while an app
+  still runs from it after a `mv` or a deletion; `DEVCLI_PORT_OFFSET` is
+  slot × 100 and an app's port (its env files' `PORT`, else its configured
+  `port`) is shifted by it
+- Worktrees deleted or moved without `git worktree remove` / `move` are shown
+  as stale; run `git worktree prune` to forget them (devcli never does)
 
 **Examples**:
 ```bash

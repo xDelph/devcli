@@ -412,7 +412,10 @@ devcli exports `PORT` and `DEVCLI_PORT` to the app. In a git worktree they
 are shifted by `DEVCLI_PORT_OFFSET` (100 per worktree slot), so the copies of
 several worktrees run side by side; health checks on this port are shifted
 too. A `PORT` set by the app's env files wins over `port` (and is the one
-shifted in worktrees).
+shifted in worktrees). Docker, OrbStack and Compose instances get it too: in
+a worktree, the env file handed to the container carries the shifted `PORT`,
+and Compose interpolates `${PORT}` from it (a compose file's own `env_file:`
+is read unshifted by Compose; use `PORT: ${PORT}` under `environment:`).
 
 ```json
 {
@@ -420,9 +423,10 @@ shifted in worktrees).
 }
 ```
 
-Every app also gets `DEVCLI_PORT_<APP>` for each of its dependencies that
-declares a `port` (as that dependency runs for this app, shifted when it runs in
-the same worktree), and `DEVCLI_WORKTREE` (the worktree's slug, empty in the
+Every app also gets `DEVCLI_PORT_<APP>` for each of its dependencies with a
+port: the one it listens on as it runs for this app (its running process's,
+else its env files' `PORT` or its `port`, shifted when it runs in the same
+worktree), and `DEVCLI_WORKTREE` (the worktree's slug, empty in the
 configured checkout), `DEVCLI_WORKTREE_INDEX` and `DEVCLI_PORT_OFFSET`, plus
 `DEVCLI_WORKTREE_PATH` and `DEVCLI_WORKTREE_BRANCH` in a worktree. Health
 check URLs, hosts and commands can use `${DEVCLI_PORT}` and the other
